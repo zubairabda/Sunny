@@ -1,0 +1,6 @@
+#include "gpu.h"
+#include "dma.h"
+#include "cdrom.h"
+#include "timers.h"
+#include "pad.h"
+#include "cpu.h"
