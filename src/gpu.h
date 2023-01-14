@@ -1,10 +1,15 @@
+#include "gpu_common.h"
+
 enum command_type
 {
-    COMMAND_TYPE_NONE,
-    COMMAND_TYPE_DRAW_POLYGON,
-    COMMAND_TYPE_DRAW_TEXTURED_POLYGON,
-    COMMAND_TYPE_COPY_TO_VRAM,
-    COMMAND_TYPE_COPY_TO_CPU
+    COMMAND_TYPE_MISC = 0x0,
+    COMMAND_TYPE_DRAW_POLYGON = 0x1,
+    COMMAND_TYPE_DRAW_LINE = 0x2,
+    COMMAND_TYPE_DRAW_RECT = 0x3,
+    COMMAND_TYPE_VRAM_TO_VRAM = 0x4,
+    COMMAND_TYPE_CPU_TO_VRAM = 0x5,
+    COMMAND_TYPE_VRAM_TO_CPU = 0x6,
+    COMMAND_TYPE_ENV = 0x7
 };
 
 typedef union
@@ -68,6 +73,11 @@ typedef union
 struct gpu_state
 {
     enum command_type command_state;
+    union
+    {
+        enum polygon_render_flags polygon_flags;
+        enum rectangle_render_flags rect_flags;
+    };
     u32 fifo[16];
     u32 fifo_len;
     u32 read;
@@ -84,7 +94,8 @@ struct gpu_state
 
     u8* vram;
     Rectangle2i drawing_area;
-    vec2i draw_offset;
+    s16 draw_offset_x;
+    s16 draw_offset_y;
     b8 pending_load;
     b8 pending_store;
     u32 pending_words;

@@ -57,7 +57,7 @@ static inline u8 cdrom_read(struct cdrom_state* cdrom, u32 offset)
     {
     case 0: // reg 0 is always the status
         result = cdrom->status;
-        printf("CDROM read status register\n");
+        debug_log("CDROM read status register\n");
         break;
     case 1: // reg 1 is always the response fifo
         // TODO: clear to zero every reset?
@@ -68,23 +68,23 @@ static inline u8 cdrom_read(struct cdrom_state* cdrom, u32 offset)
             cdrom->status &= ~(0x20);
             cdrom->response_fifo_count = 0;
             cdrom->response_fifo_current = 0;
-            printf("CDROM read last response byte\n");
+            debug_log("CDROM read last response byte\n");
         }
-        printf("CDROM read response fifo: %02xh\n", value);
+        debug_log("CDROM read response fifo: %02xh\n", value);
         break;
     case 2: // reg 2 is always the data fifo
-        printf("CDROM read data fifo\n");
+        debug_log("CDROM read data fifo\n");
         break;
     case 3:
         if (cdrom->status & 0x1) // index 1 or 3 = interrupt flag reg
         {
             result = cdrom->interrupt_flag |= ~0x1f;
-            printf("CDROM read interrupt flag register: %08x\n", cdrom->interrupt_flag);
+            debug_log("CDROM read interrupt flag register: %08x\n", cdrom->interrupt_flag);
         }
         else // 0 or 2 = interrupt enable register
         {
             result = cdrom->interrupt_enable |= ~0x1f;
-            printf("CDROM read interrupt enable register\n");
+            debug_log("CDROM read interrupt enable register\n");
         }
         break;
     SY_INVALID_CASE;
@@ -103,27 +103,27 @@ static inline void cdrom_store(struct cpu_state* cpu, u32 offset, u8 value)
     case 8:
     case 12:
         cdrom->status = (cdrom->status & ~0x3) | (value & 0x3); // bits 0-1 writable
-        printf("CDROM store status register: %02x\n", value);
+        debug_log("CDROM store status register: %02x\n", value);
         break;
     case 1:
         SY_ASSERT(!(cdrom->interrupt_flag & 0x1f)); // interrupts must be acknowledged before sending a new command
-        printf("CDROM send command: %02x\n", value);
+        debug_log("CDROM send command: %02x\n", value);
         cdrom_command(cpu, value);
         break;
     case 2:
         cdrom->param_fifo[cdrom->param_fifo_count++] = value;
         cdrom->status &= ~(0x8);
-        printf("CDROM send parameter: %02x\n", value);
+        debug_log("CDROM send parameter: %02x\n", value);
         break;
     case 3:
-        printf("CDROM request register\n");
+        debug_log("CDROM request register\n");
         break;
     case 5:
-        printf("CDROM sound map data out\n");
+        debug_log("CDROM sound map data out\n");
         break;
     case 6:
         cdrom->interrupt_enable = value & 0x1f;
-        printf("CDROM set interrupt enable register: %02x\n", value);
+        debug_log("CDROM set interrupt enable register: %02x\n", value);
         break;
     case 7:
         // NOTE: response interrupts are queued
@@ -133,25 +133,25 @@ static inline void cdrom_store(struct cpu_state* cpu, u32 offset, u8 value)
             cdrom->param_fifo_count = 0;
             cdrom->status |= 0x8; // bit 3 set when param_fifo empty
         }
-        printf("CDROM acknowledge interrupts: %02x\n", value);
+        debug_log("CDROM acknowledge interrupts: %02x\n", value);
         break;
     case 9:
-        printf("CDROM sound map coding info\n");
+        debug_log("CDROM sound map coding info\n");
         break;
     case 10:
-        printf("CDROM left-CD to left-SPU volume\n");
+        debug_log("CDROM left-CD to left-SPU volume\n");
         break;
     case 11:
-        printf("CDROM left-CD to right-SPU volume\n");
+        debug_log("CDROM left-CD to right-SPU volume\n");
         break;
     case 13:
-        printf("CDROM right-CD to right-SPU volume\n");
+        debug_log("CDROM right-CD to right-SPU volume\n");
         break;
     case 14:
-        printf("CDROM right-CD to left-SPU volume\n");
+        debug_log("CDROM right-CD to left-SPU volume\n");
         break;
     case 15:
-        printf("CDROM audio volume apply changes\n");
+        debug_log("CDROM audio volume apply changes\n");
         break;
     SY_INVALID_CASE;
     }

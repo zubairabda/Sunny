@@ -5,7 +5,7 @@ static void set_interrupt(struct cpu_state* cpu, s32 interrupt)
 
 static inline void gpu_tick(struct cpu_state* cpu, u32 count)
 {
-    cpu->gpu.video_cycles += count * (11.0f / 7.0f);
+    cpu->gpu.video_cycles += count;//count * (11.0f / 7.0f);
     if (cpu->gpu.video_cycles >= cpu->gpu.horizontal_timing)
     {
         cpu->gpu.video_cycles = 0.0f;
@@ -55,7 +55,7 @@ struct tick_event
 
 static inline void remove_event(struct tick_event* event)
 {
-    printf("Removing event...\n");
+    debug_log("Removing event...\n");
     event->next->prev = event->prev;
     event->prev->next = event->next;
 }
@@ -89,7 +89,7 @@ static inline void tick_events(struct cpu_state* cpu, u32 count)
         {
             if (ticks >= event->system_cycles_at_event)
             {
-                printf("Executing event....\n");
+                debug_log("Executing event....\n");
                 event->callback(cpu, event->data);
                 remove_event(event);
                 pool_dealloc(&cpu->event_pool, event);

@@ -3,7 +3,7 @@
 
 #define MAX_PHYSICAL_DEVICE_COUNT 4
 #define MAX_DEVICE_MEMORY_OBJECTS 2
-#define VERTEX_ARRAY_LEN 65536
+#define VERTEX_ARRAY_LEN 65536 * 4
 #define MAX_RENDER_ENTRY_COUNT 32
 
 struct gpu_allocation
@@ -17,12 +17,14 @@ struct gpu_allocation
 
 enum render_entry_type
 {
-    RENDER_ENTRY_TYPE_INVALID,
-    RENDER_ENTRY_TYPE_SHADED,
-    RENDER_ENTRY_TYPE_TEXTURED,
-    RENDER_ENTRY_TYPE_CPU_TO_VRAM,
-    RENDER_ENTRY_TYPE_VRAM_TO_CPU,
-    RENDER_ENTRY_TYPE_VRAM_TO_VRAM
+    RENDER_ENTRY_TYPE_INVALID = 0x0,
+    RENDER_ENTRY_TYPE_SHADED = 0x1,
+    RENDER_ENTRY_TYPE_TEXTURED = 0x2,
+    RENDER_ENTRY_TYPE_DRAW_PRIMITIVE = RENDER_ENTRY_TYPE_SHADED | RENDER_ENTRY_TYPE_TEXTURED,
+    RENDER_ENTRY_TYPE_CPU_TO_VRAM = 0x4,
+    RENDER_ENTRY_TYPE_VRAM_TO_CPU = 0x8,
+    RENDER_ENTRY_TYPE_VRAM_TO_VRAM = 0x10,
+    RENDER_ENTRY_TYPE_SET_SCISSOR = 0x20
 };
 
 struct render_entry
@@ -45,6 +47,7 @@ struct render_entry
             u16 height;
             u32 offset; // offset into staging buffer
         } transfer;
+        VkRect2D scissor;
     };
 };
 

@@ -1,5 +1,7 @@
+#ifndef SY_COMMON_H
+#define SY_COMMON_H
+
 #include <stdint.h>
-//#include <stdatomic.h>
 
 typedef uint8_t     u8;
 typedef uint16_t    u16;
@@ -39,3 +41,5 @@ typedef s32         b32;
 
 #define SY_TRUE     1u
 #define SY_FALSE    0u
+
+#endif

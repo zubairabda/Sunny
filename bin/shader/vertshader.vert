@@ -12,7 +12,7 @@ layout (location = 0) out struct
 } vtx_out;
 */
 
-layout (location = 0) in vec2 in_pos;
+layout (location = 0) in ivec2 in_pos;
 layout (location = 1) in vec2 in_uv;
 layout (location = 2) in ivec2 in_texpage;
 layout (location = 3) in ivec2 in_clut;
@@ -25,7 +25,8 @@ layout (location = 3) out vec4 out_color;
 
 void main()
 {
-    gl_Position = vec4(in_pos, 0.0f, 1.0f);
+    vec2 pos = vec2((float(in_pos.x) / 512.0f) - 1.0f, (float(in_pos.y) / 256.0f) - 1.0f);
+    gl_Position = vec4(pos, 0.0f, 1.0f);
     out_uv = in_uv;
     out_texpage = in_texpage;
     out_clut = in_clut;

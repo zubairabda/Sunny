@@ -153,10 +153,10 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 }
                 u32 size = cpu->registers[6];
                 while (size--)
-                    putchar(*str++);
+                    debug_putchar(*str++);
                 break;
             case 0x3d:
-                putchar(cpu->registers[4]);
+                debug_putchar(cpu->registers[4]);
                 break;
             }
         }
@@ -667,7 +667,7 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
             }
             break;
         default:
-            printf("WARNING: Unknown opcode: %x\n", ins.op);
+            debug_log("WARNING: Unknown opcode: %x\n", ins.op);
             handle_exception(cpu, EXCEPTION_CODE_RESERVED_INSTRUCTION);
             break;
         }
@@ -690,7 +690,7 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
 
         cpu->registers[0] = 0;
 
-        gpu_tick(cpu, 1);
+        //gpu_tick(cpu, 1);
 
         // TODO: remove
         for (int j = 0; j < 3; ++j)
@@ -699,6 +699,6 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
         tick_events(cpu, 1);
 
         handle_interrupts(cpu);
-        size_t j = i;
     }
+    gpu_tick(cpu, 300);
 }

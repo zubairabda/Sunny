@@ -22,7 +22,8 @@ void main()
         out_color = in_color;
         break;
     case 1:
-        out_color = (texture(vram, in_uv) * in_color);
+        ivec2 direct_uv = ivec2(int(in_uv.x), int(in_uv.y)) + in_texpage;
+        out_color = (texelFetch(vram, direct_uv, 0) * in_color);
         break;
     case 2: // 4bpp
         ivec2 uv = ivec2(int(in_uv.x), int(in_uv.y));
@@ -35,7 +36,7 @@ void main()
         int clut_index = (clut >> shift) & 0xf;
 
         ivec2 clut_coord = ivec2(in_clut.x + clut_index, in_clut.y);
-        out_color = (texelFetch(vram, clut_coord, 0) * in_color) * 2.0f;
+        out_color = (texelFetch(vram, clut_coord, 0) * in_color);
         break;
     }
     if (out_color == vec4(0))

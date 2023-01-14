@@ -12,7 +12,8 @@ struct pipeline_config
     struct shader_program fragment_shader;
     VkPipelineLayout pipeline_layout;
     VkRenderPass renderpass;
-    b8 dynamic_viewports;
+    b8 dynamic_scissor;
+    b8 dynamic_viewport;
     b8 vertex_input;
 };
 
@@ -94,7 +95,7 @@ static void initialize_pipeline(struct pipeline_config* config, VkPipeline* pipe
     VkVertexInputAttributeDescription pos = {0};
     pos.location = 0;
     pos.binding = 0;
-    pos.format = VK_FORMAT_R32G32_SFLOAT;
+    pos.format = VK_FORMAT_R16G16_SINT;
     pos.offset = offsetof(Vertex, pos);
 
     VkVertexInputAttributeDescription uv = {0};
@@ -118,7 +119,7 @@ static void initialize_pipeline(struct pipeline_config* config, VkPipeline* pipe
     VkVertexInputAttributeDescription color = {0};
     color.location = 4;
     color.binding = 0;
-    color.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    color.format = VK_FORMAT_R8G8B8_UNORM;//VK_FORMAT_R32G32B32A32_SFLOAT;
     color.offset = offsetof(Vertex, color);
 
     VkVertexInputAttributeDescription vtx_attrib[] = {pos, uv, texpage, clut, color};
@@ -151,7 +152,7 @@ static void initialize_pipeline(struct pipeline_config* config, VkPipeline* pipe
     blend_info.attachmentCount = 1;
     blend_info.pAttachments = &blend_attachment;
 
-    VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}; // VK_DYNAMIC_STATE_BLEND_CONSTANTS
+    VkDynamicState dynamic_states[2];
     
     VkPipelineShaderStageCreateInfo vertshader_info = {0};
     VkPipelineShaderStageCreateInfo fragshader_info = {0};
@@ -181,17 +182,27 @@ static void initialize_pipeline(struct pipeline_config* config, VkPipeline* pipe
     viewport_info.viewportCount = 1;
     viewport_info.scissorCount = 1;
 
-    if (config->dynamic_viewports)
+    dynamic_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+
+    if (config->dynamic_scissor)
     {
-        dynamic_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamic_info.dynamicStateCount = ARRAYCOUNT(dynamic_states);
-        dynamic_info.pDynamicStates = dynamic_states;
+        dynamic_states[dynamic_info.dynamicStateCount++] = VK_DYNAMIC_STATE_SCISSOR;
     }
     else
     {
         viewport_info.pScissors = &scissor;
+    }
+
+    if (config->dynamic_viewport)
+    {
+        dynamic_states[dynamic_info.dynamicStateCount++] = VK_DYNAMIC_STATE_VIEWPORT;
+    }
+    else
+    {
         viewport_info.pViewports = &viewport;
     }
+
+    dynamic_info.pDynamicStates = dynamic_states;
 
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipeline_info.stageCount = 2;
@@ -202,7 +213,7 @@ static void initialize_pipeline(struct pipeline_config* config, VkPipeline* pipe
     pipeline_info.pRasterizationState = &raster_info;
     pipeline_info.pMultisampleState = &ms_info;
     pipeline_info.pColorBlendState = &blend_info;
-    pipeline_info.pDynamicState = config->dynamic_viewports ? &dynamic_info : NULL;
+    pipeline_info.pDynamicState = dynamic_info.dynamicStateCount ? &dynamic_info : NULL;
     pipeline_info.layout = config->pipeline_layout;
     pipeline_info.renderPass = config->renderpass;
 

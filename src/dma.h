@@ -1,3 +1,25 @@
+typedef union
+{
+    struct
+    {
+        u32 transfer_from_ram : 1;
+        u32 step_backward : 1;
+        u32 : 6;
+        u32 chopping_enable : 1;
+        u32 sync_mode : 2;
+        u32 : 5;
+        u32 chopping_dma_window : 3;
+        u32 : 1;
+        u32 chopping_cpu_window : 3;
+        u32 : 1;
+        u32 start_busy : 1;
+        u32 : 3;
+        u32 start_trigger : 1;
+        u32 : 3;
+    };
+    u32 value;
+} DHCR;
+
 struct dma_channel
 {
     u32 madr;
