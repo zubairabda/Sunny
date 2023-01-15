@@ -19,7 +19,7 @@ typedef union
 
 struct root_counter
 {
-    u32 value; // TODO: u32
+    u32 value;
     u16 target;
     TimerMode mode;
     u32 cycles_elapsed; // TODO: pull this out?

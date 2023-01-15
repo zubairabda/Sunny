@@ -101,16 +101,40 @@ static char* secondary_op_str_table[] =
 };
 
 
-struct DebugState
+struct debug_state
 {
     struct cpu_state* psx;
     u8* loaded_exe;
+    void* output_handle;
 };
 
-static struct DebugState g_debug;
+static struct debug_state g_debug;
 
 static char* opcode_to_string(Instruction ins)
 {
     char* result = primary_op_str_table[ins.op];
     return result;
 }
+
+static void log_write(int level, char* msg, ...)
+{
+    va_list args;
+    va_start(args, msg);
+    vfprintf(g_debug.output_handle, msg, args);
+    va_end(args);
+}
+
+static void log_char(int c)
+{
+    fputc(c, g_debug.output_handle);
+}
+
+#if SY_DEBUG
+#define log_init() 
+#define debug_log(...) log_write(0, __VA_ARGS__)
+#define debug_putchar(char) log_char(char)
+#else
+#define log_init()
+#define debug_log(...)
+#define debug_putchar(char)
+#endif

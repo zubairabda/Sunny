@@ -1,8 +1,7 @@
 #define EXPORT_LIB
-#include "../common.h"
-#include "../sy_math.h"
 #include <immintrin.h>
 #include <stdio.h>
+
 #include "vulkan_renderer.h"
 
 static struct vulkan_context* g_context;
@@ -454,7 +453,7 @@ static b8 renderer_init(void* hwnd, void* hinstance, u32 width, u32 height)
 
     struct pipeline_config config = {0};
     config.vertex_input = SY_TRUE;
-    config.dynamic_viewports = SY_FALSE;
+    config.dynamic_scissor = SY_TRUE;
     config.renderpass = g_context->renderpass;
     config.fragment_shader.push_constant_size = sizeof(u32);
     build_pipeline_layout(&config, &g_context->descriptor_set_layout);
@@ -466,14 +465,6 @@ static b8 renderer_init(void* hwnd, void* hinstance, u32 width, u32 height)
     g_context->current_entry_type = RENDER_ENTRY_TYPE_INVALID;
 
     return 1;
-}
-
-static inline vec2 temp_cvt(u32 v) // TODO: drawing offsets
-{
-    vec2 result;
-    result.x = (((s16)(v & 0xffff)) / 512.0f) - 1.0f;
-    result.y = (((s16)(v >> 16)) / 256.0f) - 1.0f;
-    return result;
 }
 
 static inline vec2 get_texcoord(u32 texcoord)
@@ -495,324 +486,219 @@ static inline struct render_entry* push_render_entry(enum render_entry_type type
 }
 // NOTE: This is poor man's batching, basically globbing together entries if the previous entry shares the same type.
 // Eventually we'll want to track dirty areas of the vram and sort the draws that way
-static inline void push_textured_primitive(u32 num_vertices, u32 texture_mode)
+static inline void push_primitive(u32 num_vertices, u32 texture_mode)
 {
-    if ((g_context->current_entry_type == RENDER_ENTRY_TYPE_TEXTURED) && (g_context->entries[g_context->entry_count - 1].texture_mode == texture_mode))
+    if ((g_context->current_entry_type & RENDER_ENTRY_TYPE_DRAW_PRIMITIVE) && (g_context->entries[g_context->entry_count - 1].texture_mode == texture_mode))
     {
         g_context->entries[g_context->entry_count - 1].num_vertices += num_vertices;
     }
     else
     {
-        struct render_entry* entry = push_render_entry(RENDER_ENTRY_TYPE_TEXTURED);
+        struct render_entry* entry = push_render_entry(texture_mode ? RENDER_ENTRY_TYPE_TEXTURED : RENDER_ENTRY_TYPE_SHADED);
         entry->num_vertices = num_vertices;
         entry->texture_mode = texture_mode;
-    }  
+    }
 }
 
-static inline void push_shaded_primitive(u32 num_vertices)
+void push_polygon(const u32* commands, u32 flags, vec2 draw_offset)
 {
-    if (g_context->current_entry_type == RENDER_ENTRY_TYPE_SHADED)
+    u32 in_color = commands[0];
+    u32 color[4];
+
+    u32 num_vertices = (flags & POLYGON_FLAG_IS_QUAD) ? 4 : 3;
+    u32 stride = 1;
+
+    u32 mode = 0;
+    vec2i texture_page;
+    vec2i clut_base;
+
+    if (flags & POLYGON_FLAG_TEXTURED)
     {
-        g_context->entries[g_context->entry_count - 1].num_vertices += num_vertices;
+        stride += 1;
+        u32 clut_x = (commands[2] >> 16) & 0x3f;
+        u32 clut_y = (commands[2] >> 22) & 0x1ff;
+
+        u32 page_offset = (flags & POLYGON_FLAG_GOURAUD_SHADED) ? 5 : 4;
+        u32 texpage_x = (commands[page_offset] >> 16) & 0xf;
+        u32 texpage_y = (commands[page_offset] >> 20) & 0x1;
+
+        texture_page.x = texpage_x * 64;
+        texture_page.y = texpage_y * 256;
+
+        clut_base.x = clut_x * 16;
+        clut_base.y = clut_y;
+     
+        switch ((commands[page_offset] >> 23) & 0x3)
+        {
+        case 0: // 4-bit CLUT mode
+            mode = 2;
+            break;
+        case 1: // 8-bit CLUT mode
+            SY_ASSERT(0);
+            break;
+        case 2: // 15-bit direct
+        case 3:
+            mode = 1;
+            break;
+        }
+    }
+
+    if (flags & POLYGON_FLAG_RAW_TEXTURE)
+    {
+        color[0] = 0x00808080;
+        color[3] = color[2] = color[1] = color[0];
     }
     else
     {
-        struct render_entry* entry = push_render_entry(RENDER_ENTRY_TYPE_SHADED);
-        entry->num_vertices = num_vertices;
-        entry->texture_mode = 0;
+        if (flags & POLYGON_FLAG_GOURAUD_SHADED)
+        {
+            stride += 1;
+            for (u32 i = 0; i < num_vertices; ++i)
+            {
+                color[i] = commands[stride * i];
+            }
+        }
+        else
+        {
+            color[3] = color[2] = color[1] = color[0] = in_color;
+        }
     }
-}
-
-void renderer_draw_quad(u32 color, u32 v1, u32 v2, u32 v3, u32 v4)
-{
-    vec4 in_color = {0};
-    in_color.r = ((color >> 3) & 0x1f) / 31.0f;
-    in_color.g = ((color >> 11) & 0x1f) / 31.0f;
-    in_color.b = ((color >> 19) & 0x1f) / 31.0f;
 
     Vertex* v = g_context->vertex_array + g_context->vertex_count;
-    g_context->vertex_count += 6;
+    u32 added_vertices = 3;
 
-    v[0].pos = temp_cvt(v1);
-    v[0].color = in_color;
-
-    v[1].pos = temp_cvt(v2);
-    v[1].color = in_color;
-
-    v[2].pos = temp_cvt(v3);
-    v[2].color = in_color;
-
-    v[3].pos = temp_cvt(v2);
-    v[3].color = in_color;
-
-    v[4].pos = temp_cvt(v3);
-    v[4].color = in_color;
-
-    v[5].pos = temp_cvt(v4);
-    v[5].color = in_color;
-#if 0
-    struct render_entry* entry = push_render_entry(RENDER_ENTRY_TYPE_SHADED);
-    entry->num_vertices = 6;
-    entry->texture_mode = 0;
-#else
-    push_shaded_primitive(6);
-#endif
-}
-
-void renderer_draw_textured_quad(u32 color, u32 v1, u32 t1_palette, u32 v2, u32 t2_page, u32 v3, u32 t3, u32 v4, u32 t4)
-{
-    vec4 in_color = {0}; // TODO: fix
-#if 0
-    in_color.r = ((color >> 3) & 0x1f) / 31.0f;
-    in_color.g = ((color >> 11) & 0x1f) / 31.0f;
-    in_color.b = ((color >> 19) & 0x1f) / 31.0f;
-#else
-    in_color.r = ((color) & 0xff) / 255.0f;
-    in_color.g = ((color >> 8) & 0xff) / 255.0f;
-    in_color.b = ((color >> 16) & 0xff) / 255.0f;
-#endif
-    u32 clut_x = (t1_palette >> 16) & 0x3f;
-    u32 clut_y = (t1_palette >> 22) & 0x1ff;
-
-    u32 texpage_x = (t2_page >> 16) & 0xf;
-    u32 texpage_y = (t2_page >> 20) & 0x1;
-
-    vec2i texture_page = {.x = (texpage_x * 64), .y = (texpage_y * 256)};
-
-    vec2i clut_base = {.x = (clut_x * 16), .y = clut_y};
-
-    u32 mode = 0;
-    
-    switch ((t2_page >> 23) & 0x3)
+    for (u32 i = 0; i < 3; ++i)
     {
-    case 0: // 4-bit CLUT mode
-        mode = 2;
-        break;
-    case 1: // 8-bit CLUT mode
-        SY_ASSERT(0);
-        break;
-    case 2: // 15-bit direct
-    case 3:
-        SY_ASSERT(0);
-        break;
+        v[i].pos = commands[1 + stride * i];//v2add(temp_cvt(commands[1 + stride * i]), draw_offset);
+        if (flags & POLYGON_FLAG_TEXTURED)
+        {
+            v[i].uv = get_texcoord(commands[2 + stride * i]); // NOTE: yucky
+            v[i].texture_page = texture_page;
+            v[i].clut = clut_base;
+        }
+        v[i].color = color[i];
+
     }
 
-    Vertex* v = g_context->vertex_array + g_context->vertex_count;
-    g_context->vertex_count += 6;
-
-    v[0].pos = temp_cvt(v1);
-    v[0].uv = get_texcoord(t1_palette);
-    v[0].texture_page = texture_page;
-    v[0].clut = clut_base;
-    v[0].color = in_color;
-
-    v[1].pos = temp_cvt(v2);
-    v[1].uv = get_texcoord(t2_page);
-    v[1].texture_page = texture_page;
-    v[1].clut = clut_base;
-    v[1].color = in_color;
-
-    v[2].pos = temp_cvt(v3);
-    v[2].uv = get_texcoord(t3);
-    v[2].texture_page = texture_page;
-    v[2].clut = clut_base;
-    v[2].color = in_color;
-
-    v[3].pos = temp_cvt(v2);
-    v[3].uv = get_texcoord(t2_page);
-    v[3].texture_page = texture_page;
-    v[3].clut = clut_base;
-    v[3].color = in_color;
-
-    v[4].pos = temp_cvt(v3);
-    v[4].uv = get_texcoord(t3);
-    v[4].texture_page = texture_page;
-    v[4].clut = clut_base;
-    v[4].color = in_color;
-
-    v[5].pos = temp_cvt(v4);
-    v[5].uv = get_texcoord(t4);
-    v[5].texture_page = texture_page;
-    v[5].clut = clut_base;
-    v[5].color = in_color;
-#if 0
-    struct render_entry* entry = push_render_entry(RENDER_ENTRY_TYPE_TEXTURED);
-    entry->num_vertices = 6;
-    entry->texture_mode = mode;
-#else
-    push_textured_primitive(6, mode);
-#endif
-}
-// TODO: will be removed once we streamline the GP0 command parsing
-void renderer_draw_raw_textured_quad(u32 color, u32 v1, u32 t1_palette, u32 v2, u32 t2_page, u32 v3, u32 t3, u32 v4, u32 t4)
-{
-    vec4 in_color;
-    in_color.r = 1.0f;
-    in_color.g = 1.0f;
-    in_color.b = 1.0f;
-    in_color.a = 1.0f;
-
-    u32 clut_x = (t1_palette >> 16) & 0x3f;
-    u32 clut_y = (t1_palette >> 22) & 0x1ff;
-
-    u32 texpage_x = (t2_page >> 16) & 0xf;
-    u32 texpage_y = (t2_page >> 20) & 0x1;
-
-    vec2i texture_page = {.x = (texpage_x * 64), .y = (texpage_y * 256)};
-
-    vec2i clut_base = {.x = (clut_x * 16), .y = clut_y};
-
-    u32 mode = 0;
-    
-    switch ((t2_page >> 23) & 0x3)
+    if (flags & POLYGON_FLAG_IS_QUAD)
     {
-    case 0: // 4-bit CLUT mode
-        mode = 2;
+        added_vertices += 3;
+
+        for (u32 i = 1; i < 4; ++i)
+        {
+            v[i + 2].pos = commands[1 + stride * i];//temp_cvt(commands[1 + stride * i]);
+            if (flags & POLYGON_FLAG_TEXTURED)
+            {
+                v[i + 2].uv = get_texcoord(commands[2 + stride * i]); // NOTE: yucky
+                v[i + 2].texture_page = texture_page;
+                v[i + 2].clut = clut_base;
+            }
+            v[i + 2].color = color[i];
+        }
+    }
+
+    g_context->vertex_count += added_vertices;
+    push_primitive(added_vertices, mode);
+}
+
+void push_rect(const u32* commands, u32 flags, u32 texpage)
+{
+    vec2i texture_page = v2i((texpage & 0xf) * 64, ((texpage >> 4) & 0x1) * 256);
+    vec2i clut_base;
+    u8 uv_x;
+    u8 uv_y;
+    vertex_attrib base_texcoord;
+    u32 color = commands[0] & 0xffffff;
+    u32 offset = 0;
+    u32 mode = 0;
+
+    if (flags & RECT_FLAG_TEXTURED)
+    {
+        ++offset;
+        uv_x = commands[2] & 0xff;
+        uv_y = (u8)(commands[2] >> 8);
+        base_texcoord.x = uv_x;
+        base_texcoord.y = uv_y;
+        u32 clut_x = (commands[2] >> 16) & 0x3f;
+        u32 clut_y = (commands[2] >> 22) & 0x1ff;
+        clut_base.x = clut_x * 16;
+        clut_base.y = clut_y;
+
+        switch ((texpage >> 7) & 0x3)
+        {
+        case 0: // 4-bit CLUT mode
+            mode = 2;
+            break;
+        case 1: // 8-bit CLUT mode
+            SY_ASSERT(0);
+            break;
+        case 2: // 15-bit direct
+        case 3:
+            mode = 1;
+            break;
+        }
+    }
+
+    if (flags & RECT_FLAG_RAW_TEXTURE)
+    {
+        color = 0x00808080;
+    }
+
+    u32 width;
+    u32 height;
+
+    switch ((flags >> 3) & 0x3)
+    {
+    case 0x0: // variable size
+        width = (u16)commands[2 + offset];
+        height = (u16)(commands[2 + offset] >> 16);
         break;
-    case 1: // 8-bit CLUT mode
-        SY_ASSERT(0);
+    case 0x1: // 1x1
+        width = height = 1;
         break;
-    case 2: // 15-bit direct
-    case 3:
-        mode = 1;
+    case 0x2: // 8x8
+        width = height = 8;
+        break;
+    case 0x3: // 16x16
+        width = height = 16;
         break;
     }
 
     Vertex* v = g_context->vertex_array + g_context->vertex_count;
     g_context->vertex_count += 6;
 
-    v[0].pos = temp_cvt(v1);
-    v[0].uv = get_texcoord(t1_palette);
-    v[0].texture_page = texture_page;
-    v[0].clut = clut_base;
-    v[0].color = in_color;
+    height <<= 16;
+    //u32 base_vertex = commands[1];
+    vertex_attrib base_vertex = {.vertex = commands[1]};
+    u32 sizes[] = {0, width, height, width | height};
 
-    v[1].pos = temp_cvt(v2);
-    v[1].uv = get_texcoord(t2_page);
-    v[1].texture_page = texture_page;
-    v[1].clut = clut_base;
-    v[1].color = in_color;
+    u32 loop[] = {0, 1, 2, 1, 2, 3};
+    for (u32 l = 0, i = loop[0]; l < ARRAYCOUNT(loop); ++l, i = loop[l])
+    {
+        vertex_attrib current_vertex = {.vertex = sizes[i]};
+        current_vertex.x += base_vertex.x;
+        current_vertex.y += base_vertex.y;
+        v[l].pos = current_vertex.vertex;
 
-    v[2].pos = temp_cvt(v3);
-    v[2].uv = get_texcoord(t3);
-    v[2].texture_page = texture_page;
-    v[2].clut = clut_base;
-    v[2].color = in_color;
+        if (flags & RECT_FLAG_TEXTURED)
+        {
+            vertex_attrib a = {.vertex = sizes[i]};
 
-    v[3].pos = temp_cvt(v2);
-    v[3].uv = get_texcoord(t2_page);
-    v[3].texture_page = texture_page;
-    v[3].clut = clut_base;
-    v[3].color = in_color;
+            a.x += base_texcoord.x;
+            a.y += base_texcoord.y;
 
-    v[4].pos = temp_cvt(v3);
-    v[4].uv = get_texcoord(t3);
-    v[4].texture_page = texture_page;
-    v[4].clut = clut_base;
-    v[4].color = in_color;
+            vec2 final_uv = v2f(a.x, a.y);
 
-    v[5].pos = temp_cvt(v4);
-    v[5].uv = get_texcoord(t4);
-    v[5].texture_page = texture_page;
-    v[5].clut = clut_base;
-    v[5].color = in_color;
-#if 0
-    struct render_entry* entry = push_render_entry(RENDER_ENTRY_TYPE_TEXTURED);
-    entry->num_vertices = 6;
-    entry->texture_mode = mode;
-#else
-    push_textured_primitive(6, mode);
-#endif
-}
+            v[l].uv = final_uv;
+            v[l].clut = clut_base;
+            v[l].texture_page = texture_page;
+        }
+        
+        v[l].color = color;
 
-void renderer_draw_shaded_quad(u32 c1, u32 v1, u32 c2, u32 v2, u32 c3, u32 v3, u32 c4, u32 v4)
-{
-    vec4 in_color[4] = {0};
+    }
 
-    in_color[0].r = ((c1 >> 3) & 0x1f) / 31.0f;
-    in_color[0].g = ((c1 >> 11) & 0x1f) / 31.0f;
-    in_color[0].b = ((c1 >> 19) & 0x1f) / 31.0f;
-
-    in_color[1].r = ((c2 >> 3) & 0x1f) / 31.0f;
-    in_color[1].g = ((c2 >> 11) & 0x1f) / 31.0f;
-    in_color[1].b = ((c2 >> 19) & 0x1f) / 31.0f;
-
-    in_color[2].r = ((c3 >> 3) & 0x1f) / 31.0f;
-    in_color[2].g = ((c3 >> 11) & 0x1f) / 31.0f;
-    in_color[2].b = ((c3 >> 19) & 0x1f) / 31.0f;
-
-    in_color[3].r = ((c4 >> 3) & 0x1f) / 31.0f;
-    in_color[3].g = ((c4 >> 11) & 0x1f) / 31.0f;
-    in_color[3].b = ((c4 >> 19) & 0x1f) / 31.0f;
-
-    Vertex* v = g_context->vertex_array + g_context->vertex_count;
-    g_context->vertex_count += 6;
-
-    v[0].pos = temp_cvt(v1);
-    v[0].color = in_color[0];
-
-    v[1].pos = temp_cvt(v2);
-    v[1].color = in_color[1];
-
-    v[2].pos = temp_cvt(v3);
-    v[2].color = in_color[2];
-
-    v[3].pos = temp_cvt(v2);
-    v[3].color = in_color[1];
-
-    v[4].pos = temp_cvt(v3);
-    v[4].color = in_color[2];
-
-    v[5].pos = temp_cvt(v4);
-    v[5].color = in_color[3];
-#if 0
-    struct render_entry* entry = push_render_entry(RENDER_ENTRY_TYPE_SHADED);
-    entry->num_vertices = 6;
-    entry->texture_mode = 0;
-#else
-    push_shaded_primitive(6);
-#endif
-}
-
-void renderer_draw_shaded_triangle(u32 c1, u32 v1, u32 c2, u32 v2, u32 c3, u32 v3)
-{
-    vec4 in_color[3] = {0};
-
-    in_color[0].r = ((c1 >> 3) & 0x1f) / 31.0f;
-    in_color[0].g = ((c1 >> 11) & 0x1f) / 31.0f;
-    in_color[0].b = ((c1 >> 19) & 0x1f) / 31.0f;
-
-    in_color[1].r = ((c2 >> 3) & 0x1f) / 31.0f;
-    in_color[1].g = ((c2 >> 11) & 0x1f) / 31.0f;
-    in_color[1].b = ((c2 >> 19) & 0x1f) / 31.0f;
-
-    in_color[2].r = ((c3 >> 3) & 0x1f) / 31.0f;
-    in_color[2].g = ((c3 >> 11) & 0x1f) / 31.0f;
-    in_color[2].b = ((c3 >> 19) & 0x1f) / 31.0f;    
-
-    Vertex* v = g_context->vertex_array + g_context->vertex_count;
-    g_context->vertex_count += 3;
-
-    v[0].pos = temp_cvt(v1);
-    v[0].color = in_color[0];
-
-    v[1].pos = temp_cvt(v2);
-    v[1].color = in_color[1];
-
-    v[2].pos = temp_cvt(v3);
-    v[2].color = in_color[2];
-#if 0
-    struct render_entry* entry = push_render_entry(RENDER_ENTRY_TYPE_SHADED);
-    entry->num_vertices = 3;
-    entry->texture_mode = 0;
-#else
-    push_shaded_primitive(3);
-#endif
-}
-
-void renderer_draw_mono_rect(u32 c1, u32 v1)
-{
-
+    push_primitive(6, mode);
 }
 
 static inline u32 staging_buffer_write(void* data, u32 size)
@@ -861,12 +747,12 @@ void renderer_read_vram(void* dest, u32 src_x, u32 src_y, u32 width, u32 height)
     // NOTE: dont think this is needed
     VkBufferMemoryBarrier buffer_barrier = {0};
     buffer_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    buffer_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    buffer_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    buffer_barrier.srcAccessMask = 0;
+    buffer_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     buffer_barrier.buffer = g_context->staging_buffer;
     buffer_barrier.size = VK_WHOLE_SIZE;
 
-    vkCmdPipelineBarrier(g_context->command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &buffer_barrier, 0, NULL);
+    vkCmdPipelineBarrier(g_context->command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 1, &buffer_barrier, 0, NULL);
 
     vkCmdCopyImageToBuffer(g_context->command_buffer, g_context->render_vram, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_context->staging_buffer, 1, &copy_region);
 
@@ -882,6 +768,15 @@ void renderer_read_vram(void* dest, u32 src_x, u32 src_y, u32 width, u32 height)
     vkWaitForFences(g_context->device, 1, &g_context->render_fence, VK_TRUE, UINT64_MAX);
 
     memcpy(dest, g_context->staging_data, (width * height * 2));
+}
+
+static void push_scissor(s16 x1, s16 y1, s16 x2, s16 y2)
+{
+    VkRect2D* scissor = &push_render_entry(RENDER_ENTRY_TYPE_SET_SCISSOR)->scissor;
+    scissor->offset.x = x1;
+    scissor->offset.y = y1;
+    scissor->extent.width = x2;
+    scissor->extent.height = y2;
 }
 
 static inline void begin_renderpass(void)
@@ -1026,6 +921,11 @@ static void flush_render_commands(b8 submit)
             transition_layout(g_context->render_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
         }   break;
+        case RENDER_ENTRY_TYPE_SET_SCISSOR:
+        {
+            vkCmdSetScissor(g_context->command_buffer, 0, 1, &g_context->entries[entry].scissor);
+        } 
+        break;
         default:
             printf("Encountered invalid render entry type\n");
             break;
@@ -1166,15 +1066,11 @@ SUNNY_API Renderer* load_renderer(void)
     renderer->shutdown = renderer_destroy;
     renderer->render_frame = render_frame;
     renderer->handle_resize = handle_resize;
-    renderer->draw_quad = renderer_draw_quad;
-    renderer->draw_textured_quad = renderer_draw_textured_quad;
-    renderer->draw_raw_textured_quad = renderer_draw_raw_textured_quad;
-    renderer->draw_shaded_quad = renderer_draw_shaded_quad;
-    renderer->draw_shaded_triangle = renderer_draw_shaded_triangle;
-    renderer->draw_mono_rect = renderer_draw_mono_rect;
+    renderer->draw_polygon = push_polygon;
+    renderer->draw_rect = push_rect;
     renderer->transfer = renderer_transfer;
     renderer->read_vram = renderer_read_vram;
     renderer->copy = renderer_copy;
-
+    renderer->set_scissor = push_scissor;
     return renderer;
 }

@@ -9,9 +9,6 @@
 #include "sy_math.h"
 #include "allocator.h"
 #include "filetypes.c"
-#include "renderer/renderer.h"
-
-static Renderer* g_renderer;
 
 struct application_state
 {
@@ -23,6 +20,10 @@ struct application_state
 struct application_state g_app;
 
 #include "psx.h"
+
+#include "renderer/renderer.h"
+
+static Renderer* g_renderer;
 
 #include "debug.c"
 
@@ -102,16 +103,15 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
 {
     AllocConsole();
-    AttachConsole(GetCurrentProcessId());
-    FILE* fDummy;
-    freopen_s(&fDummy, "CONIN$", "r", stdin);
-    freopen_s(&fDummy, "CONOUT$", "w", stderr);
-    freopen_s(&fDummy, "CONOUT$", "w", stdout);
+    FILE* output;
+    freopen_s(&output, "CONOUT$", "w", stderr);
+    g_debug.output_handle = output;
+
     SetConsoleTitleA("Sunny Debugger");
 
     char* class_name = "SunnyWindowClass";
     WNDCLASSA wc = {0};
-    //wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = class_name;
@@ -153,11 +153,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     struct FileInfo bios;
     char* bios_name = "SCPH1001.BIN";
     read_file(bios_name, &bios);
-
-    char* exes[] = {""};
-
+    // test exe's provided by amidog and Jakub
+    char* exes[] = {"psxtest_cpu", "otc-test", "gp0-e1", "dpcr", "chopping", "MemoryTransfer24BPP"};
+    char filename[64];
+    snprintf(filename, 64, "exes/%s.exe", exes[4]);
     struct FileInfo test;
-    //read_file(exes[1], &test);
+
+    read_file(filename, &test);
     g_debug.loaded_exe = test.memory;
 
     struct memory_arena main_arena = allocate_arena(megabytes(16));

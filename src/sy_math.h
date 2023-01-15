@@ -1,3 +1,6 @@
+#ifndef SY_MATH_H
+#define SY_MATH_H
+
 typedef union
 {
     struct
@@ -55,11 +58,11 @@ typedef union vec4u
 
 typedef struct Vertex
 {
-    vec2 pos;
+    u32 pos;
     vec2 uv;
     vec2i texture_page;
     vec2i clut;
-    vec4 color;
+    u32 color;
 } Vertex;
 
 inline vec2 v2sub(vec2 a, vec2 b)
@@ -73,12 +76,13 @@ inline vec2 v2add(vec2 a, vec2 b)
     vec2 result = {.x = a.x + b.x, .y = a.y + b.y};
     return result;
 }
-#if 0
-inline f32 v2len(vec2 a)
+
+inline vec2i v2iadd(vec2i a, vec2i b)
 {
-    return (sqrtf(a.x * a.x + a.y * a.y));
+    vec2i result = {.x = a.x + b.x, .y = a.y + b.y};
+    return result;
 }
-#endif
+
 inline vec4 v4f(f32 x, f32 y, f32 z, f32 w)
 {
     vec4 result = {.x = x, .y = y, .z = z, .w = w};
@@ -117,7 +121,7 @@ inline vec2i v2i(s32 x, s32 y)
 
 inline vec2i v2ifromu32(u32 v)
 {
-    vec2i result = {.x = (v & 0xffff), .y = (v >> 16)};
+    vec2i result = {.x = (s16)(v & 0xffff), .y = (s16)(v >> 16)};
     return result;
 }
 
@@ -132,3 +136,5 @@ static inline int min3(int a, int b, int c)
     int x = b < c ? b : c;
     return a < x ? a : x;
 }
+
+#endif
