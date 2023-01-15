@@ -267,11 +267,25 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
     if (!gpu->pending_words) // get number of remaining words in cmd (includes command itself)
     {
         u8 op = word >> 24;
-        gpu->command_state = (enum command_type)(word >> 29);
-        switch (gpu->command_state)
+        gpu->command_type = (enum gpu_command_type)(word >> 29);
+        switch (gpu->command_type)
         {
         case 0x0:
-            gpu->pending_words = 1;
+            switch (op)
+            {
+            case 0x0:
+                return;
+            case 0x1:
+                gpu->pending_words = 1;
+                break;
+            case 0x2:
+                // TODO: masking
+                gpu->pending_words = 3;
+                break;
+            default:
+                debug_log("Unhandled GP0 MISC: %02xh\n", op);
+                break;
+            }
             break;
         case 0x1:
         {
@@ -371,10 +385,21 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
         if (!gpu->pending_words)
         {
             u32* commands = gpu->fifo;
-            switch (gpu->command_state)
+            switch (gpu->command_type)
             {
             case COMMAND_TYPE_MISC:
             {
+                switch (commands[0] >> 24)
+                {
+                case 0x1:
+                    NoImplementation;
+                    break;
+                case 0x2:
+                    // TODO: masking
+                    g_renderer->draw_rect(commands, 0, 0);
+                    break;
+                SY_INVALID_CASE;
+                }
             }
             break;
             case COMMAND_TYPE_DRAW_POLYGON:
@@ -418,6 +443,7 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                 }
 
                 u32 size = width * height;
+
             #if SOFTWARE_RENDERING
                 SY_ASSERT((width & 0x1) == 0); // TODO: handle odd transfers
             #endif
@@ -425,6 +451,7 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                 gpu->pending_load = 1; // we are now in a pending load, don't push values to the command buffer
                 struct load_params load = {.x = dst_x, .y = dst_y, .width = width, .height = height, .pending_halfwords = size, .left = dst_x};
                 gpu->load = load;
+                //debug_log("[CPU->VRAM] dst x: %d, y: %d | w: %d, h: %d\n", dst_x, dst_y, width, height);
             }
             break;
             case COMMAND_TYPE_VRAM_TO_CPU:
@@ -452,6 +479,7 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                 gpu->pending_store = 1;
                 gpu->store = store;
                 gpu->stat.ready_to_send_vram = 1;
+                //debug_log("[VRAM->CPU] src x: %d, y: %d | w: %d, h: %d\n", src_x, src_y, width, height);
             }
             break;
             case COMMAND_TYPE_ENV:

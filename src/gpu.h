@@ -1,6 +1,6 @@
 #include "gpu_common.h"
 
-enum command_type
+enum gpu_command_type
 {
     COMMAND_TYPE_MISC = 0x0,
     COMMAND_TYPE_DRAW_POLYGON = 0x1,
@@ -72,7 +72,7 @@ typedef union
 
 struct gpu_state
 {
-    enum command_type command_state;
+    enum gpu_command_type command_type;
     union
     {
         enum polygon_render_flags polygon_flags;

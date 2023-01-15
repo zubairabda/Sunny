@@ -119,7 +119,7 @@ static void initialize_pipeline(struct pipeline_config* config, VkPipeline* pipe
     VkVertexInputAttributeDescription color = {0};
     color.location = 4;
     color.binding = 0;
-    color.format = VK_FORMAT_R8G8B8_UNORM;//VK_FORMAT_R32G32B32A32_SFLOAT;
+    color.format = VK_FORMAT_R8G8B8A8_UNORM;//VK_FORMAT_R32G32B32A32_SFLOAT;
     color.offset = offsetof(Vertex, color);
 
     VkVertexInputAttributeDescription vtx_attrib[] = {pos, uv, texpage, clut, color};

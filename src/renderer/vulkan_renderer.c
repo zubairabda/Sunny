@@ -545,7 +545,7 @@ void push_polygon(const u32* commands, u32 flags, vec2 draw_offset)
 
     if (flags & POLYGON_FLAG_RAW_TEXTURE)
     {
-        color[0] = 0x00ffffff;
+        color[0] = 0x00808080;
         color[3] = color[2] = color[1] = color[0];
     }
     else
@@ -605,13 +605,20 @@ void push_rect(const u32* commands, u32 flags, u32 texpage)
 {
     vec2i texture_page = v2i((texpage & 0xf) * 64, ((texpage >> 4) & 0x1) * 256);
     vec2i clut_base;
-    u32 color = commands[0];
+    u8 uv_x;
+    u8 uv_y;
+    vertex_attrib base_texcoord;
+    u32 color = commands[0] & 0xffffff;
     u32 offset = 0;
     u32 mode = 0;
 
     if (flags & RECT_FLAG_TEXTURED)
     {
         ++offset;
+        uv_x = commands[2] & 0xff;
+        uv_y = (u8)(commands[2] >> 8);
+        base_texcoord.x = uv_x;
+        base_texcoord.y = uv_y;
         u32 clut_x = (commands[2] >> 16) & 0x3f;
         u32 clut_y = (commands[2] >> 22) & 0x1ff;
         clut_base.x = clut_x * 16;
@@ -634,11 +641,7 @@ void push_rect(const u32* commands, u32 flags, u32 texpage)
 
     if (flags & RECT_FLAG_RAW_TEXTURE)
     {
-        color = 0x00ffffff;
-    }
-    else
-    {
-
+        color = 0x00808080;
     }
 
     u32 width;
@@ -668,10 +671,6 @@ void push_rect(const u32* commands, u32 flags, u32 texpage)
     //u32 base_vertex = commands[1];
     vertex_attrib base_vertex = {.vertex = commands[1]};
     u32 sizes[] = {0, width, height, width | height};
-    
-    u8 uv_x = commands[2] & 0xff;
-    u8 uv_y = (u8)(commands[2] >> 8);
-    vertex_attrib base_texcoord = {.x = uv_x, .y = uv_y};
 
     u32 loop[] = {0, 1, 2, 1, 2, 3};
     for (u32 l = 0, i = loop[0]; l < ARRAYCOUNT(loop); ++l, i = loop[l])

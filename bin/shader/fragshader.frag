@@ -23,22 +23,23 @@ void main()
         break;
     case 1:
         ivec2 direct_uv = ivec2(int(in_uv.x), int(in_uv.y)) + in_texpage;
-        out_color = (texelFetch(vram, direct_uv, 0) * in_color);
+        out_color = (texelFetch(vram, direct_uv, 0) * in_color) * 2.0f; // for now we treat all raw textures as half brightness and multiply it here
+        if (out_color == vec4(0)) // temporary fix to get around fills ignoring transparency
+            discard;
         break;
     case 2: // 4bpp
         ivec2 uv = ivec2(int(in_uv.x), int(in_uv.y));
         ivec2 texcoord = ivec2(uv.x >> 2, uv.y) + in_texpage; // divide uv x by 4 to get pixel where clut is
-        vec4 texel = texelFetch(vram, texcoord, 0);
+        vec4 texel = (texelFetch(vram, texcoord, 0) * 31.0f) + 0.5f; // 0.5 offset needed to fix clut sampling
 
-        int clut = int(texel.r * 31.0f + 0.5f) | (int(texel.g * 31.0f + 0.5f) << 5) | (int(texel.b * 31.0f + 0.5f) << 10) | (int(texel.a) << 15);
-
+        int clut = int(texel.r) | int(texel.g) << 5 | int(texel.b) << 10 | int(texel.a) << 15;
         int shift = (uv.x & 0x3) << 2; // texcoord gets us the pixel we should look at, shift gets us the index we should look at within that pixel
         int clut_index = (clut >> shift) & 0xf;
 
         ivec2 clut_coord = ivec2(in_clut.x + clut_index, in_clut.y);
-        out_color = (texelFetch(vram, clut_coord, 0) * in_color);
+        out_color = (texelFetch(vram, clut_coord, 0) * in_color) * 2.0f;
+        if (out_color == vec4(0))
+            discard;
         break;
     }
-    if (out_color == vec4(0))
-        discard;
 }

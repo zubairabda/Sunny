@@ -154,10 +154,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     char* bios_name = "SCPH1001.BIN";
     read_file(bios_name, &bios);
     // test exe's provided by amidog and Jakub
-    char* exes[] = {"psxtest_cpu.exe", "otc-test.exe", "gp0-e1.exe", "dpcr.exe", "chopping.exe"};
-
+    char* exes[] = {"psxtest_cpu", "otc-test", "gp0-e1", "dpcr", "chopping", "MemoryTransfer24BPP"};
+    char filename[64];
+    snprintf(filename, 64, "exes/%s.exe", exes[4]);
     struct FileInfo test;
-    read_file(exes[1], &test);
+
+    read_file(filename, &test);
     g_debug.loaded_exe = test.memory;
 
     struct memory_arena main_arena = allocate_arena(megabytes(16));
