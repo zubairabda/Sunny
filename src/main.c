@@ -1,47 +1,31 @@
-#include <stdio.h>
-#include <stdlib.h>
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#define NOMINMAX
+#include <Windows.h>
 
-#define SY_PLATFORM_WIN32
 #include <immintrin.h>
-#include "common.h"
-#include "sy_math.h"
-#include "allocator.h"
-#include "filetypes.c"
+#include <math.h>
 
-struct application_state
-{
-    HWND window;
-    HDC hdc;
-    BITMAPINFO bitmap_info;
-};
+#include "fileio.h"
+#include "platform/sync.h"
 
-struct application_state g_app;
+static s16 *debug_sound_buffer;
+static u32 debug_sound_buffer_index;
+static b8 stopkeypressed;
+
+signal_event_handle g_present_thread_handle;
+u32 g_vblank_counter;
 
 #include "psx.h"
+#include "debug.h"
+#include "allocator.h"
+#include "gpu.h"
+#include "event.h"
+#include "audio/audio.h"
+#include "renderer/win32_renderer.h"
+#include "input/input.h"
 
-#include "renderer/renderer.h"
 
-static Renderer* g_renderer;
-
-#include "debug.c"
-
-#include "bus.c"
-#include "cdrom.c"
-#include "cpu.c"
-#include "gpu.c"
-#include "dma.c"
-#include "timers.c"
-#include "memory.c"
-
-static volatile b32 running = SY_TRUE;
-
-void* platform_alloc(size_t size)
-{
-    return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-}
-
+static volatile b32 g_running = 1;
 // stub functions for the sw rasterizer
 static void renderer_handle_resize(u32 width, u32 height)
 {
@@ -53,27 +37,41 @@ static void renderer_update_display(HDC context, int x, int y, int width, int he
    
 }
 
+struct win32_window_data
+{
+    struct input_state *input;
+    renderer_interface *renderer;
+};
+
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     LRESULT result = 0;
     switch (msg)
     {
-    case WM_ACTIVATE:
-        /* code */
-        break;
+    case WM_CREATE:
+    {
+        CREATESTRUCT *createstruct = (CREATESTRUCT *)lParam;
+        SetLastError(0);
+        if (!SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)createstruct->lpCreateParams) && GetLastError())
+        {
+            debug_log("Failed to set window attribute\n");
+            result = -1;
+        }
+    } break;
     case WM_CLOSE:
-        running = SY_FALSE;
+        g_running = SY_FALSE;
         break;
     case WM_SIZE:
     {
         u32 width = lParam & 0xffff;
         u32 height = (lParam >> 16) & 0xffff;
-        if (g_renderer) // TODO: likely want to check if the renderer is hooked in some other way
+        struct win32_window_data* data = (struct win32_window_data *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+        if (data->renderer) // TODO: likely want to check if the renderer is hooked in some other way
         {
-            g_renderer->handle_resize(width, height);
+            data->renderer->handle_resize(data->renderer, width, height);
         }
         //renderer_handle_resize(width, height);
-    }   break;
+    } break;
 #if 0
     case WM_PAINT:
     {
@@ -90,8 +88,14 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         
     }   break;
 #endif
+    case WM_KEYDOWN:
     case WM_KEYUP:
-        //write_bmp(1024, 512, (u8*)g_debug.psx->gpu.vram, "VRAM.bmp");
+
+        if (wParam < 128)
+        {
+            struct win32_window_data* data = (struct win32_window_data *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+            data->input->keystates[wParam] = !((u32)lParam >> 31);
+        }
         break;
     default:
         result = DefWindowProcA(hwnd, msg, wParam, lParam);
@@ -100,16 +104,46 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     return result;
 }
 
+struct win32_thread_params
+{
+    renderer_interface *renderer;
+};
+
+DWORD WINAPI ThreadProc(LPVOID lpParameter)
+{
+    struct win32_thread_params *params = (struct win32_thread_params *)lpParameter;
+    HANDLE event = (HANDLE)g_present_thread_handle;
+    renderer_interface *renderer = params->renderer;
+    // TODO: resizing?
+    for (;;)
+    {
+        DWORD result = WaitForSingleObject(event, INFINITE);
+        if (result == WAIT_OBJECT_0)
+        {
+            renderer->present(renderer);
+            // NOTE: main thread can set event again before we reset it here
+            ResetEvent(event);
+        }
+    }
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
 {
     AllocConsole();
-    FILE* output;
+    FILE *output;
     freopen_s(&output, "CONOUT$", "w", stderr);
-    g_debug.output_handle = output;
+    g_debug.output = output;
 
-    SetConsoleTitleA("Sunny Debugger");
+    SetConsoleTitleA("Sunny Debug Console");
+    HANDLE conout = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD current_mode = 0;
+    GetConsoleMode(conout, &current_mode);
+    current_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    SetConsoleMode(conout, current_mode);
 
-    char* class_name = "SunnyWindowClass";
+    debug_sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+    char *class_name = "SunnyWindowClass";
     WNDCLASSA wc = {0};
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WindowProc;
@@ -117,13 +151,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     wc.lpszClassName = class_name;
     RegisterClassA(&wc);
 
+    struct input_state input = {0};
+#if 0
+    if (!dinput_init(hInstance, &input)) {
+        debug_log("Failed to initialize DirectInput.\n");
+        //SY_ASSERT(0);
+    }
+#endif
+    struct win32_window_data window_data = {0};
+    window_data.input = &input;
+
     HWND window = CreateWindowExA(0, class_name, "Sunny", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-        CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, hInstance, NULL);
-    if (!window)
-    {
-        printf("Could not create the window handle!\n");
+        CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, hInstance, &window_data);
+    if (!window) {
+        debug_log("Could not create the window handle!\n");
         return -1;
     }
+
 #if SOFTWARE_RENDERING
     HDC hdc = GetDC(window);
 
@@ -139,46 +183,61 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     g_app.bitmap_info = bitmap_info;
     g_app.hdc = hdc;
 #else
-    HMODULE rendererdll = LoadLibrary("vulkan_renderer.dll");
-    fp_load_renderer load_renderer = (fp_load_renderer)GetProcAddress(rendererdll, "load_renderer");
-    if (!load_renderer)
-    {
-        MessageBoxA(window, "Please ensure the renderer dll file is present in the bin directory.\n", "Missing DLL", MB_ICONERROR | MB_OK);
-        return -1;
-    }
-
-    g_renderer = load_renderer();
+    renderer_interface *renderer = win32_load_renderer_from_dll(window, hInstance, "vulkan_renderer.dll");
+    window_data.renderer = renderer;
 #endif
 
     struct FileInfo bios;
     char* bios_name = "SCPH1001.BIN";
     read_file(bios_name, &bios);
     // test exe's provided by amidog and Jakub
-    char* exes[] = {"psxtest_cpu", "otc-test", "gp0-e1", "dpcr", "chopping", "MemoryTransfer24BPP"};
+    char *exes[] = {"psxtest_cpu", "otc-test", "gp0-e1", "dpcr", "chopping", "MemoryTransfer24BPP", "clipping", "padtest", "PlayADPCMSample", "PlaySong", "timing", "access-time"};
     char filename[64];
-    snprintf(filename, 64, "exes/%s.exe", exes[4]);
+    //snprintf(filename, 64, "exes/%s.exe", exes[11]);
+    snprintf(filename, 64, "exes/timers.exe");
+    //snprintf(filename, 64, "exes/cdrom.ps-exe");
     struct FileInfo test;
 
-    read_file(filename, &test);
+    read_file(filename, &test); 
     g_debug.loaded_exe = test.memory;
 
-    struct memory_arena main_arena = allocate_arena(megabytes(16));
+    struct memory_arena main_arena = allocate_arena(MEGABYTES(16));
     memset(main_arena.base, 0, main_arena.size);
-    struct cpu_state* cpu = init_cpu(&main_arena, bios.memory);
-    g_debug.psx = cpu;
 
-    //const s32 target_miliseconds = (s32)((1.0f/59.94f) * 1000.0f);
+    struct psx_state psx;
+    psx_init(&psx, &main_arena, bios.memory);
+    // TODO: reschedule gpu events when display settings are changed
+    schedule_event(gpu_scanline_complete, &psx, 0, (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE), EVENT_ID_GPU_SCANLINE_COMPLETE);
+    //schedule_event(cpu, gpu_hblank_event, 0, cpu->gpu.horizontal_display_x2 - cpu->gpu.horizontal_display_x1, EVENT_ID_GPU_HBLANK);
+    psx.gpu->renderer = renderer;
+
 #if !SOFTWARE_RENDERING
     RECT rect;
     GetClientRect(window, &rect);
-    g_renderer->initialize(window, hInstance, rect.right, rect.bottom);
 #endif
-    u64 accumulated_ticks = 0;
+
+    audio_player *audio = audio_init();
+
+    g_present_thread_handle = CreateEvent(NULL, TRUE, FALSE, NULL);
+    struct win32_thread_params thread_params = {0};
+    thread_params.renderer = renderer;
+    HANDLE present_thread_handle = CreateThread(NULL, 0, ThreadProc, &thread_params, 0, NULL);
+
+    u64 target_dt_us = (u64)((1 / 59.94f) * 1000000);
+
+    u64 accum_dt_us = 0;
+
+    HANDLE timer = CreateWaitableTimerExA(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!timer) {
+        debug_log("Failed to create timer object!\n");
+        return -1;
+    }
+
     LARGE_INTEGER begin_counter, end_counter, frequency;
     QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&begin_counter);
-    
-    while (running)
+    //IAudioClient_Start(audio->client);
+    while (g_running)
     {
         MSG msg = {0};
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE))
@@ -186,30 +245,119 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }
-
-        execute_instruction(cpu, 100);
-        accumulated_ticks += 100;
-        QueryPerformanceCounter(&end_counter);
-#if 1
-        u64 ticks_elapsed = end_counter.QuadPart - begin_counter.QuadPart;
-
-        //s32 sleepms = (s32)(target_miliseconds - (((ticks_elapsed)*1000) / (f32)frequency.QuadPart));
-
-        if (accumulated_ticks > CPU_CLOCK / 100) // temp
+#if 0
+        psx.pad->buttons.value = 0xffff;
+        
+        if (input.keystates['P'] && !stopkeypressed)
         {
-            Sleep(5);
-            accumulated_ticks = 0;
+            stopkeypressed = 1;
+            write_wav_file(debug_sound_buffer, debug_sound_buffer_index * 2, "debugoutput0.wav");
+            win32_play_sound(audio, (u8 *)debug_sound_buffer);
+        }
+#endif
+#if 1
+        emulate_from_audio(audio, &psx);
+#else
+        // get input
+        #if 0
+        dinput_get_data(input);
+        cpu->pad.buttons = input->pad;
+        #endif
+
+        f32 cycles_to_run = 384.0f;
+        // NOTE: leftover_cycles are extra cycles that the cpu ran ahead of the cycles to run
+        f32 leftover_cycles = execute_instruction(cpu, cycles_to_run);
+
+        f32 tick_count = cycles_to_run + leftover_cycles;
+
+        cpu->spu.ticks += tick_count;
+        if (cpu->spu.ticks > 768.0f) {
+            spu_tick(&cpu->spu);
+            cpu->spu.ticks -= 768.0f;
+        }
+        b8 vsync = 0;
+        cpu->gpu.ticks += tick_count * (715909.0f / 451584.0f);
+        if (gpu_run(&cpu->gpu)) {
+            vsync = 1;
+            cpu->i_stat |= INTERRUPT_VBLANK;
+            SetEvent(g_present_thread_handle);
+        }
+#endif
+
+
+        //play_sound_test(audio);
+
+#if 0
+        execute_instruction(cpu, 100);
+        
+        b8 vsync = 0;
+        if (gpu_tick(&cpu->gpu, 300))
+        {
+            vsync = 1;
+            cpu->i_stat |= INTERRUPT_VBLANK;
+            SetEvent(event_handle);
+        }
+#endif  
+        QueryPerformanceCounter(&end_counter);
+
+        u64 ticks_elapsed = (end_counter.QuadPart - begin_counter.QuadPart);
+
+        u64 elapsed_us = (ticks_elapsed * 1000000) / frequency.QuadPart;
+#if 0
+        accum_dt_us += elapsed_us;
+        if (accum_dt_us >= 1000000)
+        {
+            accum_dt_us -= 1000000;
+            //f32 dt_ms = 1000.0f / g_vblank_counter;
+            char buffer[32];
+            snprintf(buffer, 32, "Sunny | VPS: %d", g_vblank_counter);
+            SetWindowText(window, buffer); 
+            g_vblank_counter = 0;
+        }
+#endif
+#if 0
+        accum_dt_us += elapsed_us;
+
+        if (vsync)
+        {
+            f32 dt_ms = 0.0f;
+            if (accum_dt_us < target_dt_us)
+            {
+                //u64 target_ticks = end_counter.QuadPart + 
+                LARGE_INTEGER due;
+                LONGLONG target = (target_dt_us - accum_dt_us) * 10;
+                due.QuadPart = -target;
+                SetWaitableTimer(timer, &due, 0, NULL, NULL, 0);
+                WaitForSingleObject(timer, INFINITE);
+
+                QueryPerformanceCounter(&end_counter);
+
+                dt_ms = (accum_dt_us / 1000.0f) + (((end_counter.QuadPart - begin_counter.QuadPart) * 1000000) / frequency.QuadPart) / 1000.0f;
+            
+            }
+            else
+            {
+                dt_ms = accum_dt_us / 1000.0f;
+            }
+            accum_dt_us = 0;
+            char buffer[32];
+            snprintf(buffer, 32, "ms: %.2f", dt_ms);
+            SetWindowText(window, buffer);
+            //debug_log("%f\n", dt_ms);
         }
 #endif
         begin_counter = end_counter;
     }
+    //IAudioClient_Stop(audio->client);
+    CloseHandle(timer);
 #if SOFTWARE_RENDERING
     ReleaseDC(window, hdc);
 #else
-    g_renderer->shutdown();
-    FreeLibrary(rendererdll);
-#endif
     
+    renderer->shutdown(renderer);
+    //FreeLibrary(rendererdll);
+#endif
+
     free_arena(&main_arena);
 
     return 0;

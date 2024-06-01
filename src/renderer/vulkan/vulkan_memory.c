@@ -1,3 +1,5 @@
+#if 0
+
 static inline void allocate_buffer(VkBuffer buffer, struct gpu_allocation* memory)
 {
     VkResult res;
@@ -36,8 +38,9 @@ static inline u32 get_memory_type_index(VkPhysicalDeviceMemoryProperties* memory
     }
     return 0xffffffff;
 }
+#endif
 
-static void transition_layout(VkImage image, VkImageLayout old_layout, VkImageLayout new_layout)
+static void transition_layout(struct vulkan_context *vk, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout)
 {    
     VkAccessFlags src_access = 0, dst_access = 0;
     VkPipelineStageFlags src_stage = 0, dst_stage = 0;
@@ -99,5 +102,5 @@ static void transition_layout(VkImage image, VkImageLayout old_layout, VkImageLa
     image_barrier.srcAccessMask = src_access;
     image_barrier.dstAccessMask = dst_access;
 
-    vkCmdPipelineBarrier(g_context->command_buffer, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &image_barrier);
+    vkCmdPipelineBarrier(vk->command_buffer, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &image_barrier);
 }

@@ -5,10 +5,13 @@ typedef union
 {
     struct
     {
-        s32 left, top, right, bottom;
+        s32 left;
+        s32 top;
+        s32 right;
+        s32 bottom;
     };
-    s32 coord[4];
-} Rectangle2i;
+    s32 r[4];
+} rect2;
 
 typedef union Bounds16
 {
@@ -55,15 +58,6 @@ typedef union vec4u
     struct {u32 x, y, z, w;};
     u32 data[4];
 } vec4u;
-
-typedef struct Vertex
-{
-    u32 pos;
-    vec2 uv;
-    vec2i texture_page;
-    vec2i clut;
-    u32 color;
-} Vertex;
 
 inline vec2 v2sub(vec2 a, vec2 b)
 {

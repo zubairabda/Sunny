@@ -103,5 +103,5 @@ VK_FUNC_PTR(vkGetInstanceProcAddr)
 VK_FUNC_PTR(vkCreateInstance)
 VK_FUNC_PTR(vkEnumerateInstanceExtensionProperties)
 
-#define VK_LOAD_INSTANCE_FUNC(func) func = (PFN_##func)vkGetInstanceProcAddr(g_context->instance, #func);
-#define VK_LOAD_DEVICE_FUNC(func) func = (PFN_##func)vkGetDeviceProcAddr(g_context->device, #func);
+#define VK_LOAD_INSTANCE_FUNC(func) func = (PFN_##func)vkGetInstanceProcAddr(VK_INSTANCE_VARIABLE, #func);
+#define VK_LOAD_DEVICE_FUNC(func) func = (PFN_##func)vkGetDeviceProcAddr(VK_DEVICE_VARIABLE, #func);

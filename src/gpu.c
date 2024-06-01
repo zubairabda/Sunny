@@ -1,6 +1,13 @@
+#include "gpu.h"
+#include "psx.h"
+#include "cpu.h"
+#include "timers.h"
+#include "event.h"
+#include "debug.h"
+#include "renderer/renderer.h"
+
 static inline u16 swizzle_texel(u16 pixel)
 {
-
     u8 red = (pixel & 0x1f);
     u8 green = ((pixel >> 5) & 0x1f);
     u8 blue = ((pixel >> 10) & 0x1f);
@@ -8,140 +15,7 @@ static inline u16 swizzle_texel(u16 pixel)
     return mask | (u16)(red << 10) | (u16)(green << 5) | (u16)blue;
 }
 
-inline s32 edge(vec2i a, vec2i b, vec2i p)
-{
-    // (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x)
-    return ((p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x));//v1.x * v2.y - v1.y * v2.x;
-}
-
-static void draw_triangle(struct gpu_state* gpu, vec2i v1, vec2i v2, vec2i v3, u16 color)
-{
-    // TODO: clipping
-    u32 minY = min3(v1.y, v2.y, v3.y);
-    u32 minX = min3(v1.x, v2.x, v3.x);
-    u32 maxY = max3(v1.y, v2.y, v3.y);
-    u32 maxX = max3(v1.x, v2.x, v3.x);
-
-    f32 area = (f32)edge(v1, v2, v3);
-    if (area < 0)
-    {
-        vec2i a = v3;
-        v3 = v2;
-        v2 = a;
-        area = -area;
-    }
-
-    for (u32 y = minY; y < maxY; ++y)
-    {
-        for (u32 x = minX; x < maxX; ++x)
-        {
-            vec2i p = {.x = x, .y = y};
-
-            s32 w1 = edge(v2, v3, p);
-            s32 w2 = edge(v3, v1, p);
-            s32 w3 = edge(v1, v2, p);
-
-            if ((w1 | w2 | w3) >= 0)
-            {
-                ((u16*)gpu->vram)[x + (VRAM_WIDTH * y)] = color;
-            }
-        }
-    }
-}
-
-static void draw_shaded_triangle(struct gpu_state* gpu, u16 c1, vec2i v1, u16 c2, vec2i v2, u16 c3, vec2i v3)
-{
-    u32 minY = min3(v1.y, v2.y, v3.y);
-    u32 minX = min3(v1.x, v2.x, v3.x);
-    u32 maxY = max3(v1.y, v2.y, v3.y);
-    u32 maxX = max3(v1.x, v2.x, v3.x);
-
-    f32 area = (f32)edge(v1, v2, v3);
-    if (area < 0)
-    {
-        vec2i a = v3;
-        u16 c = c3;
-        v3 = v2;
-        c3 = c2;
-        v2 = a;
-        c2 = c;
-        area = -area;
-    }
-
-    for (u32 y = minY; y < maxY; ++y)
-    {
-        for (u32 x = minX; x < maxX; ++x)
-        {
-            vec2i p = {.x = x, .y = y};
-            s32 e1 = edge(v2, v3, p);
-            s32 e2 = edge(v3, v1, p);
-            s32 e3 = edge(v1, v2, p);
-            if ((e1 | e2 | e3) >= 0)
-            {
-                f32 w1 = e1 / area;
-                f32 w2 = e2 / area;
-                f32 w3 = e3 / area;
-
-                f32 r = w1 * ((c1 >> 10) & 0x1f) + w2 * ((c2 >> 10) & 0x1f) + w3 * ((c3 >> 10) & 0x1f);
-                f32 g = w1 * ((c1 >> 5) & 0x1f) + w2 * ((c2 >> 5) & 0x1f) + w3 * ((c3 >> 5) & 0x1f);
-                f32 b = w1 * (c1 & 0x1f) + w2 * (c2 & 0x1f) + w3 * (c3 & 0x1f);
-
-                u16 color = ((u16)r << 10) | ((u16)g << 5) | ((u16)b);
-
-                ((u16*)gpu->vram)[x + (VRAM_WIDTH * y)] = color;
-            }
-        }
-    }
-}
-
-static void draw_textured_triangle(u8* vram, u16 c1, vec2i v1, u16 c2, vec2i v2, u16 c3, vec2i v3, vec2i texture_page, vec2i palette)
-{
-    u32 minY = min3(v1.y, v2.y, v3.y);
-    u32 minX = min3(v1.x, v2.x, v3.x);
-    u32 maxY = max3(v1.y, v2.y, v3.y);
-    u32 maxX = max3(v1.x, v2.x, v3.x);
-
-    f32 area = (f32)edge(v1, v2, v3);
-    if (area < 0)
-    {
-        vec2i a = v3;
-        u16 c = c3;
-        v3 = v2;
-        c3 = c2;
-        v2 = a;
-        c2 = c;
-        area = -area;
-    }
-
-    for (u32 y = minY; y < maxY; ++y)
-    {
-        for (u32 x = minX; x < maxX; ++x)
-        {
-            vec2i p = {.x = x, .y = y};
-            s32 e1 = edge(v2, v3, p);
-            s32 e2 = edge(v3, v1, p);
-            s32 e3 = edge(v1, v2, p);
-            if ((e1 | e2 | e3) >= 0)
-            {
-                f32 w1 = e1 / area;
-                f32 w2 = e2 / area;
-                f32 w3 = e3 / area;
-
-                f32 r = w1 * ((c1 >> 10) & 0x1f) + w2 * ((c2 >> 10) & 0x1f) + w3 * ((c3 >> 10) & 0x1f);
-                f32 g = w1 * ((c1 >> 5) & 0x1f) + w2 * ((c2 >> 5) & 0x1f) + w3 * ((c3 >> 5) & 0x1f);
-                f32 b = w1 * (c1 & 0x1f) + w2 * (c2 & 0x1f) + w3 * (c3 & 0x1f);
-
-                //f32 tx = (w1 * )
-
-                u16 color = ((u16)r << 10) | ((u16)g << 5) | ((u16)b);
-
-                ((u16*)vram)[x + (VRAM_WIDTH * y)] = color;
-            }
-        }
-    }
-}
-
-static inline void gp0_cpu_to_vram(struct gpu_state* gpu, u32 word)
+static inline void gp0_cpu_to_vram(struct gpu_state *gpu, u32 word)
 {
     if (gpu->load.x == (gpu->load.left + gpu->load.width)) // TODO: handle odd transfers
     {
@@ -168,7 +42,7 @@ static inline u16 color16from24(u32 color)
 
 // NOTE: not sure how this works, it says if certain gp1 commands are issued, then they are immediately read from GPUREAD,
 // does this mean they interrupt VRAM->CPU transfers and place themselves ahead of the data to be read?
-static inline u32 gpuread(struct gpu_state* gpu)
+u32 gpuread(struct gpu_state *gpu)
 {
 #if SOFTWARE_RENDERING
     // TODO: assumes even number of pixels
@@ -203,19 +77,89 @@ static inline u32 gpuread(struct gpu_state* gpu)
 #endif
 }
 
-static inline void execute_gp1_command(struct gpu_state* gpu, u32 command)
+// event fired on start of hblank (horizontal display x2)
+void gpu_hblank_event(void *data, u32 param, s32 cycles_late)
 {
+    struct psx_state *psx = (struct psx_state *)data;
+    struct gpu_state *gpu = psx->gpu;
+    struct root_counter *counter0 = psx->timers[0];
+    struct root_counter *counter1 = psx->timers[1];
+    if (counter1->mode.clock_source & 0x1) {
+        ++counter1->value;
+    }
+    if (counter0->mode.sync_mode == 3)
+    {
+
+    }
+    // NOTE: does not account for when x1 == x2
+    //s32 hblank_cycles = (s32)video_to_cpu_cycles(3413 - (cpu->gpu.horizontal_display_x2 - cpu->gpu.horizontal_display_x1));
+    s32 ticks_per_scanline = (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE);
+    schedule_event(gpu_hblank_event, psx, 0, ticks_per_scanline - cycles_late, EVENT_ID_GPU_HBLANK);
+}
+
+u64 gpu_tick(struct gpu_state *gpu) // advance gpu cycle count to determine horizontal timings
+{
+    // NOTE: This can probably be done in a much simpler way but it's all I could think of at the time
+    u64 hblanks = 0;
+    u64 elapsed = g_cycles_elapsed - gpu->timestamp;
+    gpu->timestamp = g_cycles_elapsed;
+
+    u64 video_cycles = elapsed * (11 / 7.0f);
+    u32 remaining_ticks = NTSC_VIDEO_CYCLES_PER_SCANLINE - gpu->prev_cycles; // ticks remaining before adding cycles
+    u32 current_ticks = (u32)((gpu->prev_cycles + video_cycles) % NTSC_VIDEO_CYCLES_PER_SCANLINE); // current video cycles
+    
+    if (gpu->prev_cycles >= gpu->horizontal_display_x2)
+    {
+        if (video_cycles >= remaining_ticks)
+        {
+            video_cycles -= remaining_ticks;
+            hblanks = video_cycles / gpu->horizontal_display_x2;
+        }
+    }
+    else
+    {
+        u32 ticks_to_hblank = gpu->horizontal_display_x2 - gpu->prev_cycles;
+        if (video_cycles >= ticks_to_hblank)
+        {
+            hblanks = 1;
+            video_cycles -= ticks_to_hblank;
+            if (video_cycles >= remaining_ticks)
+            {
+                video_cycles -= remaining_ticks;
+                hblanks += video_cycles / gpu->horizontal_display_x2;
+            }
+        }
+    }
+
+
+    SY_ASSERT(gpu->horizontal_display_x2 >= gpu->horizontal_display_x1);
+    //u32 width = gpu->horizontal_display_x2 - gpu->horizontal_display_x1;
+    gpu->prev_cycles = current_ticks;
+
+    return hblanks;
+}
+
+void execute_gp1_command(struct gpu_state *gpu, u32 command)
+{
+    //struct gpu_state *gpu = &cpu->gpu;
     u8 op = command >> 24;
 
     switch (op)
     {
     case 0x0:
+        SY_ASSERT(!gpu->pending_words);
         gpu->fifo_len = 0;
         gpu->pending_load = 0;
         gpu->pending_store = 0;
         gpu->pending_words = 0;
-        gpu->copy_buffer_len = 0;
-        gpu->readback_buffer_len = 0;
+        gpu->vram_display_x = 0;
+        gpu->vram_display_y = 0;
+        gpu->horizontal_display_x1 = 512;
+        gpu->horizontal_display_x2 = 3072;
+        gpu->vertical_display_y1 = 16;
+        gpu->vertical_display_y2 = 256;
+        //gpu->copy_buffer_len = 0;
+        //gpu->readback_buffer_len = 0;
         gpu->stat.value = 0x14802000;
         break;
     case 0x1:
@@ -223,8 +167,8 @@ static inline void execute_gp1_command(struct gpu_state* gpu, u32 command)
         gpu->pending_load = 0;
         gpu->pending_store = 0;
         gpu->pending_words = 0;
-        gpu->copy_buffer_len = 0;
-        gpu->readback_buffer_len = 0;
+        //gpu->copy_buffer_len = 0;
+        //gpu->readback_buffer_len = 0;
         break;
     case 0x2:
         gpu->stat.irq = 0;
@@ -240,6 +184,7 @@ static inline void execute_gp1_command(struct gpu_state* gpu, u32 command)
         gpu->vram_display_y = (command >> 10) & 0x1ff;
         break;
     case 0x6:
+        gpu_tick(gpu);
         gpu->horizontal_display_x1 = command & 0xfff;
         gpu->horizontal_display_x2 = (command >> 12) & 0xfff;
         break;
@@ -253,16 +198,19 @@ static inline void execute_gp1_command(struct gpu_state* gpu, u32 command)
         gpu->stat.value |= (command & 0x40) << 10;
         break;
     case 0x9:
-        gpu->stat.texture_disable = (command & 0x1);
+        //gpu->stat.texture_disable = (command & 0x1);
+        gpu->allow_texture_disable = (command & 0x1);
         break;
     default:
         debug_log("Unknown gp1 command: %x\n", op);
         break;
     }
-    //printf("GP1 command: %02xh\n", op);
+#if LOG_GP1_COMMANDS
+    debug_log("GP1 command: %02xh\n", op);
+#endif
 }
 
-static void execute_gp0_command(struct gpu_state* gpu, u32 word)
+void execute_gp0_command(struct gpu_state *gpu, u32 word)
 {
     if (!gpu->pending_words) // get number of remaining words in cmd (includes command itself)
     {
@@ -356,7 +304,9 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
             debug_log("Unimplemented gp0 command: %x\n", op);
             break;
         }
-        //debug_log("gp0: %02x\n", op);
+        #if LOG_GP0_COMMANDS
+        debug_log("gp0: %02x\n", op);
+        #endif
         gpu->fifo_len = 0;
     }
 
@@ -373,18 +323,18 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
         if (!gpu->pending_words)
         {
             gpu->pending_load = 0;
-            g_renderer->transfer(gpu->copy_buffer, gpu->load.x, gpu->load.y, gpu->load.width, gpu->load.height);
-            gpu->copy_buffer_len = 0;
+            push_cpu_to_vram_copy(gpu->renderer, (void **)gpu->copy_buffer_at, gpu->load.x, gpu->load.y, gpu->load.width, gpu->load.height);
+            //gpu->copy_buffer_len = 0;
         }
 #endif
     }
     else
     {
+        SY_ASSERT(gpu->fifo_len < 16);
         gpu->fifo[gpu->fifo_len++] = word;
-        SY_ASSERT(gpu->fifo_len <= 16);
         if (!gpu->pending_words)
         {
-            u32* commands = gpu->fifo;
+            u32 *commands = gpu->fifo;
             switch (gpu->command_type)
             {
             case COMMAND_TYPE_MISC:
@@ -396,7 +346,12 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                     break;
                 case 0x2:
                     // TODO: masking
-                    g_renderer->draw_rect(commands, 0, 0);
+                    if (gpu->draw_area_changed)
+                    {
+                        push_draw_area(gpu->renderer, gpu->drawing_area);
+                        gpu->draw_area_changed = 0;
+                    }
+                    push_rect(gpu->renderer, commands, 0, 0);
                     break;
                 SY_INVALID_CASE;
                 }
@@ -404,28 +359,52 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
             break;
             case COMMAND_TYPE_DRAW_POLYGON:
             {
-                g_renderer->draw_polygon(commands, gpu->polygon_flags, v2f(gpu->draw_offset_x, gpu->draw_offset_y));
+                // NOTE: textured polygons can change bits in gpustat, not sure if it only changes when the command begins execution.. but we pass the tests for now :p
+                if (gpu->polygon_flags & POLYGON_FLAG_TEXTURED)
+                {
+                    u16 texpage_attribute = (u16)((commands[gpu->polygon_flags & POLYGON_FLAG_GOURAUD_SHADED ? 5 : 4]) >> 16);
+                    gpu->stat.value &= 0xffff7e00;
+                    gpu->stat.value |= (texpage_attribute & 0x1ff);
+                    gpu->stat.value |= gpu->allow_texture_disable ? ((texpage_attribute & 0x800) << 4) : 0x0;
+                }
+                #if 1
+                if (gpu->draw_area_changed)
+                {
+                    push_draw_area(gpu->renderer, gpu->drawing_area);
+                    gpu->draw_area_changed = 0;
+                }
+                #endif
+                //push_draw_area(gpu->renderer, gpu->drawing_area);
+                push_polygon(gpu->renderer, commands, gpu->polygon_flags, v2f(gpu->draw_offset_x, gpu->draw_offset_y));
             }
             break;
             case COMMAND_TYPE_DRAW_RECT:
             {
-                g_renderer->draw_rect(commands, gpu->rect_flags, (gpu->stat.value & 0x7ff));
+                #if 1
+                if (gpu->draw_area_changed)
+                {
+                    push_draw_area(gpu->renderer, gpu->drawing_area);
+                    gpu->draw_area_changed = 0;
+                }
+                #endif
+                //push_draw_area(gpu->renderer, gpu->drawing_area);
+                push_rect(gpu->renderer, commands, gpu->rect_flags, (gpu->stat.value & 0x7ff));
             }
             break;
             case COMMAND_TYPE_VRAM_TO_VRAM:
             {
                 u16 src_x = (u16)commands[1];
-                u16 src_y = (commands[1] >> 16);
+                u16 src_y = (u16)(commands[1] >> 16);
                 u16 dst_x = (u16)commands[2];
-                u16 dst_y = (commands[2] >> 16);
+                u16 dst_y = (u16)(commands[2] >> 16);
                 u16 width = (u16)commands[3];
-                u16 height = (commands[3] >> 16);
+                u16 height = (u16)(commands[3] >> 16);
 
                 SY_ASSERT(width && height);
             #if SOFTWARE_RENDERING
 
             #else
-                g_renderer->copy(src_x, src_y, dst_x, dst_y, width, height);
+                push_vram_copy(gpu->renderer, src_x, src_y, dst_x, dst_y, width, height);
             #endif
             }
             break;
@@ -449,8 +428,13 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
             #endif
                 gpu->pending_words = (size + (size & 0x1)) >> 1;
                 gpu->pending_load = 1; // we are now in a pending load, don't push values to the command buffer
-                struct load_params load = {.x = dst_x, .y = dst_y, .width = width, .height = height, .pending_halfwords = size, .left = dst_x};
-                gpu->load = load;
+                gpu->copy_buffer_at = gpu->copy_buffer + gpu->copy_buffer_len;
+                gpu->load.x = dst_x;
+                gpu->load.y = dst_y;
+                gpu->load.width = width;
+                gpu->load.height = height;
+                gpu->load.pending_halfwords = size;
+                gpu->load.left = dst_x;
                 //debug_log("[CPU->VRAM] dst x: %d, y: %d | w: %d, h: %d\n", dst_x, dst_y, width, height);
             }
             break;
@@ -471,12 +455,14 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                 //size += (size & 0x1);
                 SY_ASSERT((width & 0x1) == 0); // TODO: remove
                 gpu->readback_buffer_len = 0;
-                // NOTE: possibly a command 'flush' here if we want the data right away, but maybe we can rely on bit 27 of GPUSTAT?
+                // NOTE: since we return the data right away we flush the commands, but maybe we can rely on bit 27 of GPUSTAT?
             #if !SOFTWARE_RENDERING
-                g_renderer->read_vram(gpu->readback_buffer, src_x, src_y, width, height);
+                push_vram_to_cpu_copy(gpu->renderer, (void **)&gpu->readback_buffer, src_x, src_y, width, height);
+                gpu->renderer->flush_commands(gpu->renderer);
+                reset_gpu_draw_state(gpu);
             #endif
-                struct load_params store = {.x = src_x, .y = src_y, .width = width, .height = height, .pending_halfwords = size, .left = src_x};
                 gpu->pending_store = 1;
+                struct load_params store = {.x = src_x, .y = src_y, .width = width, .height = height, .pending_halfwords = size, .left = src_x};
                 gpu->store = store;
                 gpu->stat.ready_to_send_vram = 1;
                 //debug_log("[VRAM->CPU] src x: %d, y: %d | w: %d, h: %d\n", src_x, src_y, width, height);
@@ -490,7 +476,7 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                 case 0xe1:
                     gpu->stat.value &= 0xffff7800;
                     gpu->stat.value |= (commands[0] & 0x7ff);
-                    gpu->stat.value |= ((commands[0] & 0x800) << 4);
+                    gpu->stat.value |= gpu->allow_texture_disable ? ((commands[0] & 0x800) << 4) : 0x0;
                     //debug_log("GP0: 0xE1\n");
                     break;
                 case 0xe2:
@@ -502,14 +488,17 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                 case 0xe3:
                     gpu->drawing_area.left = (commands[0] & 0x3ff);
                     gpu->drawing_area.top = ((commands[0] >> 10) & 0x3ff);
+                    gpu->draw_area_changed = 1;
                     //debug_log("GP0 draw area: left -> %d, top -> %d\n", gpu->drawing_area.left, gpu->drawing_area.top);
-                    g_renderer->set_scissor(gpu->drawing_area.left, gpu->drawing_area.top, gpu->drawing_area.right, gpu->drawing_area.bottom);
+                    //push_clip_rect(gpu->drawing_area.left, gpu->drawing_area.top, gpu->drawing_area.right, gpu->drawing_area.bottom);
                     break;
                 case 0xe4:
                     gpu->drawing_area.right = (commands[0] & 0x3ff);
                     gpu->drawing_area.bottom = ((commands[0] >> 10) & 0x3ff);
+                    gpu->draw_area_changed = 1;
+
                     //debug_log("GP0 draw area: right -> %d, bottom -> %d\n", gpu->drawing_area.right, gpu->drawing_area.bottom);
-                    g_renderer->set_scissor(gpu->drawing_area.left, gpu->drawing_area.top, gpu->drawing_area.right, gpu->drawing_area.bottom);
+                    //push_clip_rect(gpu->drawing_area.left, gpu->drawing_area.top, gpu->drawing_area.right, gpu->drawing_area.bottom);
                     break;
                 case 0xe5:
                     s16 draw_offset_x = (s16)((commands[0] & 0x7ff) << 5);
@@ -523,6 +512,7 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
                 case 0xe6:
                     gpu->stat.set_mask_on_draw = (commands[0] & 0x1);
                     gpu->stat.draw_to_masked = (commands[0] >> 1) & 0x1;
+                    SY_ASSERT(!(gpu->stat.set_mask_on_draw | gpu->stat.draw_to_masked));
                     break;
                 SY_INVALID_CASE;
                 }
@@ -530,227 +520,81 @@ static void execute_gp0_command(struct gpu_state* gpu, u32 word)
             break;
             SY_INVALID_CASE;
             }
-#if 0
-            u32* commands = gpu->fifo;
-            u8 op = commands[0] >> 24;
-            switch (op)
-            {
-            case 0x0:
-                //SY_ASSERT(0);
-                break;
-            case 0x01:
-                debug_log("Unhandled clear cache command in gp0\n");
-                break;
-            case 0xe1:
-                gpu->stat.value &= 0xffff7800;
-                gpu->stat.value |= (commands[0] & 0x7ff);
-                gpu->stat.value |= (commands[0] & 0x800) << 4;
-                // TODO: finish
-                break;
-            case 0xe2:
-                gpu->texture_window_mask_x = commands[0] & 0x1f;
-                gpu->texture_window_mask_y = (commands[0] >> 5) & 0x1f;
-                gpu->texture_window_offset_x = (commands[0] >> 10) & 0x1f;
-                gpu->texture_window_offset_y = (commands[0] >> 15) & 0x1f; 
-                break;
-            case 0xe3:
-                gpu->drawing_area.left = (commands[0] & 0x3ff);
-                gpu->drawing_area.top = ((commands[0] >> 10) & 0x3ff);
-                break;
-            case 0xe4:
-                gpu->drawing_area.right = (commands[0] & 0x3ff);
-                gpu->drawing_area.bottom = ((commands[0] >> 10) & 0x3ff);
-                break;
-            case 0xe5:
-                gpu->draw_offset_x = (((s16)(commands[0] & 0x7ff)) << 5) >> 5;
-                //gpu->draw_offset.x = (s16)x_offset >> 5;
-                gpu->draw_offset_y = (((s16)(commands[0] >> 11) & 0x7ff) << 5) >> 5;
-                //gpu->draw_offset.y = (s16)y_offset >> 5;
-                break;
-            case 0xe6:
-                gpu->stat.set_mask_on_draw = (commands[0] & 0x1);
-                gpu->stat.draw_to_masked = (commands[0] >> 1) & 0x1;
-                break;
-            case 0x28:
-            {
-            #if SOFTWARE_RENDERING
-                s16 x0 = (commands[1] & 0xffff), y0 = (commands[1] >> 16);
-                s16 x1 = (commands[2] & 0xffff), y1 = (commands[2] >> 16);
-                s16 x2 = (commands[3] & 0xffff), y2 = (commands[3] >> 16);
-                s16 x3 = (commands[4] & 0xffff), y3 = (commands[4] >> 16);
-                u32 color = commands[0];
-                u8 red = ((color >> 3) & 0x1f);
-                u8 green = ((color >> 11) & 0x1f);
-                u8 blue = ((color >> 19) & 0x1f);
-                u16 pixel_color = (u16)(red << 10) | (u16)(green << 5) | (u16)blue;
-                // vertex order : 1,2,3, 2,3,4 (winding order doesn't matter)
-                draw_triangle(gpu, v2i(x0, y0), v2i(x1, y1), v2i(x2, y2), pixel_color);
-                draw_triangle(gpu, v2i(x1, y1), v2i(x2, y2), v2i(x3, y3), pixel_color);
-            #else
-                g_renderer->draw_quad(commands[0], commands[1], commands[2], commands[3], commands[4]);
-            #endif
-            }   break;
-            case 0x02:
-            {
-            #if SOFTWARE_RENDERING
-                u16 width = (u16)commands[2];
-                u16 height = commands[2] >> 16;
-                u16 color = color16from24(commands[0]);
-                for (u32 i = 0; i < height; ++i)
-                {
-                    for (u32 j = 0; j < width; ++j)
-                    {
-                        gpu->vram[j + (1024 * i)] = color;
-                    }
-                }
-            #else
-                typedef union
-                {
-                    u16 pos[2];
-                    u32 value;
-                } pos2d;
-                // YyyyXxxx
-                u16 width = (u16)commands[2];
-                u16 height = commands[2] >> 16;
-
-                pos2d v1 = {.value = commands[1]};
-                pos2d v2 = {.value = commands[1]};
-                pos2d v3 = {.value = commands[1]};
-                pos2d v4 = {.value = commands[1]};
-
-                v2.pos[0] += width;
-                v3.pos[0] += width;
-                v3.pos[1] += height;
-                v4.pos[1] += height;
-
-                g_renderer->draw_quad(commands[0], v1.value, v2.value, v4.value, v3.value);
-            #endif
-            }   break;
-            case 0xc0:
-            {
-                // VRAM->CPU copy
-                u16 src_x = (u16)commands[1];
-                u16 src_y = (commands[1] >> 16);
-                u16 width = (u16)commands[2];
-                u16 height = (commands[2] >> 16);
-                // TODO: masking
-                if (!(width | height))
-                {
-                    width = VRAM_WIDTH;
-                    height = VRAM_HEIGHT;
-                }
-
-                u32 size = width * height;
-                //size += (size & 0x1);
-                SY_ASSERT((width & 0x1) == 0); // TODO: remove
-                gpu->readback_buffer_len = 0;   
-                // NOTE: possibly a command 'flush' here if we want the data right away, but maybe we can rely on bit 27 of GPUSTAT?
-            #if !SOFTWARE_RENDERING
-                g_renderer->read_vram(gpu->readback_buffer, src_x, src_y, width, height);
-            #endif
-                struct load_params store = {.x = src_x, .y = src_y, .width = width, .height = height, .pending_halfwords = size, .left = src_x};
-                gpu->pending_store = 1;
-                gpu->store = store;
-                gpu->stat.ready_to_send_vram = 1;
-                
-            }   break;
-            case 0xa0:
-            {
-                // CPU->VRAM copy
-                u16 dst_x = (u16)commands[1];
-                u16 dst_y = (commands[1] >> 16);
-                u16 width = (u16)commands[2];
-                u16 height = (commands[2] >> 16);
-
-                if (!(width | height))
-                {
-                    width = VRAM_WIDTH;
-                    height = VRAM_HEIGHT;
-                }
-
-                u32 size = width * height;
-            #if SOFTWARE_RENDERING
-                SY_ASSERT((width & 0x1) == 0); // TODO: handle odd transfers
-            #endif
-                gpu->pending_words = (size + (size & 0x1)) >> 1;
-                gpu->pending_load = 1; // we are now in a pending load, don't push values to the command buffer
-                struct load_params load = {.x = dst_x, .y = dst_y, .width = width, .height = height, .pending_halfwords = size, .left = dst_x};
-                gpu->load = load;
-            }   break;
-            case 0x80:
-            {
-                // VRAM->VRAM
-                u16 src_x = (u16)commands[1];
-                u16 src_y = (commands[1] >> 16);
-                u16 dst_x = (u16)commands[2];
-                u16 dst_y = (commands[2] >> 16);
-                u16 width = (u16)commands[3];
-                u16 height = (commands[3] >> 16);
-
-                SY_ASSERT(width && height);
-            #if SOFTWARE_RENDERING
-
-            #else
-                g_renderer->copy(src_x, src_y, dst_x, dst_y, width, height);
-            #endif
-            }   break;
-            case 0x65:
-            {
-                
-            }   break;
-            case 0x38:
-            #if SOFTWARE_RENDERING
-                draw_shaded_triangle(gpu, color16from24(commands[0]), v2ifromu32(commands[1]), color16from24(commands[2]), v2ifromu32(commands[3]), 
-                    color16from24(commands[4]), v2ifromu32(commands[5]));
-                draw_shaded_triangle(gpu, color16from24(commands[2]), v2ifromu32(commands[3]), color16from24(commands[4]), v2ifromu32(commands[5]), 
-                    color16from24(commands[6]), v2ifromu32(commands[7]));
-            #else
-                g_renderer->draw_shaded_quad(commands[0], commands[1], commands[2], commands[3], commands[4], commands[5], commands[6], commands[7]);
-            #endif
-                break;
-            case 0x30:
-            #if SOFTWARE_RENDERING
-                draw_shaded_triangle(gpu, color16from24(commands[0]), v2ifromu32(commands[1]), color16from24(commands[2]), v2ifromu32(commands[3]), 
-                    color16from24(commands[4]), v2ifromu32(commands[5]));
-            #else
-                g_renderer->draw_shaded_triangle(commands[0], commands[1], commands[2], commands[3], commands[4], commands[5]);
-            #endif
-                break;
-            case 0x2c:
-            #if SOFTWARE_RENDERING
-            #else
-                g_renderer->draw_textured_quad(commands[0], commands[1], commands[2], commands[3], commands[4], commands[5], commands[6], commands[7], commands[8]);
-            #endif
-                break;
-            case 0x68:
-            #if SOFTWARE_RENDERING
-                u32 v1 = commands[1];
-                u16 pos_x = v1 & 0xffff;
-                u16 pos_y = (v1 >> 16);
-                u32 color = commands[0];
-                //u16 texel = ((color >> 3) & 0x1f) | ((color >> 8) & 0x3e0) | ((color >> 13) & 0x7c00);
-                u8 red = ((color >> 3) & 0x1f);
-                u8 green = ((color >> 11) & 0x1f);
-                u8 blue = ((color >> 19) & 0x1f);
-                u16 texel = (u16)(red << 10) | (u16)(green << 5) | (u16)blue;//((color >> 19) & 0x1f) | ((color >> 11) & 0x1f) | ((color >> 3) & 0x1f);
-                ((u16*)gpu->vram)[pos_x + (1024 * pos_y)] = texel;
-            #else
-                g_renderer->draw_mono_rect(commands[0], commands[1]);
-            #endif
-                break;
-            case 0x2d:
-            #if SOFTWARE_RENDERING
-                SY_ASSERT(0);
-            #else
-                g_renderer->draw_raw_textured_quad(commands[0], commands[1], commands[2], commands[3], commands[4], commands[5], commands[6], commands[7], commands[8]);
-            #endif
-                break;
-            default:
-                printf("Unknown gp0 command: %x\n", op);
-                break;
-            }
-            //printf("GP0 command: %02xh\n", op);
-#endif
         }
     }
+}
+
+void gpu_scanline_complete(void *data, u32 param, s32 cycles_late)
+{
+    struct psx_state *psx = (struct psx_state *)data;
+    struct gpu_state *gpu = psx->gpu;
+
+    ++gpu->scanline;
+    if (gpu->scanline == 263) {
+        gpu->scanline = 0;
+    }
+    // in 240 lines mode, bit 31 changes per scanline
+    if (!gpu->stat.vertical_res) {
+        gpu->stat.odd_line = gpu->scanline & 0x1;
+    }
+    
+    if (gpu->scanline == gpu->vertical_display_y1)
+    {
+        // end of vblank
+        #if 1
+        struct root_counter *timer1 = psx->timers[1];
+        
+        if (timer1->mode.sync_enable)
+        {
+            switch (timer1->mode.sync_mode)
+            {
+            case 0:
+                timer1->pause_ticks += safe_truncate32(g_cycles_elapsed - timer1->timestamp);
+                break;
+            case 1:
+                break;
+            case 2:
+                break;
+            case 3:
+                break;
+            }
+        }
+        #endif
+    }
+    else if (gpu->scanline == gpu->vertical_display_y2)
+    {
+        // vblank begins
+        struct root_counter *timer1 = psx->timers[1];
+        if (timer1->mode.sync_enable)
+        {
+            switch (timer1->mode.sync_mode)
+            {
+            case 0: // pause during vblank
+                timer1->timestamp = g_cycles_elapsed;
+                break;
+            case 1: // reset to 0 at vblank
+                timer1->value = 0;
+                break;
+            case 2: // reset to 0 at vblank and pause outside of it
+                break;
+            case 3: // pause until vblank occurs, then free run
+                timer1->paused = 0;
+                break;
+            }
+            timer1->sync = 1;
+        }
+
+        gpu->renderer->flush_commands(gpu->renderer);
+        gpu->renderer->update_display(gpu->renderer);
+        reset_gpu_draw_state(gpu);
+
+        if (gpu->stat.vertical_res) {
+            gpu->stat.odd_line ^= 1;
+        }
+        ++g_vblank_counter;
+        psx->cpu->i_stat |= INTERRUPT_VBLANK;
+        signal_event_set(g_present_thread_handle);
+    }
+    s32 cycles_until_event = (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE) - cycles_late;
+    schedule_event(gpu_scanline_complete, psx, 0, cycles_until_event, EVENT_ID_GPU_SCANLINE_COMPLETE);
 }

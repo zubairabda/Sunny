@@ -1,6 +1,8 @@
 #ifndef GPU_COMMON_H
 #define GPU_COMMON_H
 
+#include "common.h"
+
 enum polygon_render_flags
 {
     POLYGON_FLAG_GOURAUD_SHADED = 0x10,

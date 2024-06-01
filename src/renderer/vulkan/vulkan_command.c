@@ -1,3 +1,5 @@
+#if 0
+
 static inline void begin_command_buffer(void)
 {
     vkResetCommandPool(g_context->device, g_context->command_pool, 0);
@@ -44,3 +46,5 @@ static inline void execute_command_buffer(b8 present_swapchain, u32 image_index)
         vkQueuePresentKHR(g_context->graphics_queue, &present_info);
     }
 }
+
+#endif

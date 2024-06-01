@@ -1,4 +1,10 @@
+#ifndef GPU_H
+#define GPU_H
+
 #include "gpu_common.h"
+#include "renderer/renderer.h"
+
+#define NTSC_VIDEO_CYCLES_PER_SCANLINE 3413
 
 enum gpu_command_type
 {
@@ -72,6 +78,7 @@ typedef union
 
 struct gpu_state
 {
+    renderer_interface *renderer;
     enum gpu_command_type command_type;
     union
     {
@@ -83,17 +90,24 @@ struct gpu_state
     u32 read;
     GPUSTAT stat;
 
+    u64 timestamp; // timestamp in cpu cycles
+    u32 prev_cycles;
+
+    b8 allow_texture_disable;
+    b8 draw_area_changed;
+
     u16 vertical_timing;
     u16 horizontal_timing;
-    f32 video_cycles;
+
     u32 scanline;
     u32 copy_buffer_len;
-    u16* copy_buffer;
     u32 readback_buffer_len;
-    u16* readback_buffer;
-
-    u8* vram;
-    Rectangle2i drawing_area;
+    u16 *copy_buffer;
+    u16 *readback_buffer;
+    u16 *copy_buffer_at;
+    
+    u8 *vram;
+    rect2 drawing_area;
     s16 draw_offset_x;
     s16 draw_offset_y;
     b8 pending_load;
@@ -111,4 +125,34 @@ struct gpu_state
     u16 horizontal_display_x2;
     u16 vertical_display_y1;
     u16 vertical_display_y2;
+    // TODO: maybe unused
+    u32 num_hblank_begin_callbacks;
+    u32 num_hblank_end_callbacks;
+
 };
+
+inline void reset_gpu_draw_state(struct gpu_state *gpu)
+{
+    gpu->copy_buffer_len = 0;
+    gpu->draw_area_changed = 1;
+}
+
+inline u64 video_to_cpu_cycles(u64 video_cycles)
+{
+    return (u64)((video_cycles * 451584) / 715909.0f);
+}
+
+inline b8 in_vblank(struct gpu_state *gpu)
+{
+    return gpu->scanline < gpu->vertical_display_y1 || gpu->scanline >= gpu->vertical_display_y2;
+}
+
+
+u32 gpuread(struct gpu_state *gpu);
+//void gpu_hblank_event(void *data, u32 param, s32 cycles_late);
+u64 gpu_tick(struct gpu_state *gpu);
+void execute_gp1_command(struct gpu_state *gpu, u32 command);
+void execute_gp0_command(struct gpu_state *gpu, u32 word);
+void gpu_scanline_complete(void *data, u32 param, s32 cycles_late);
+
+#endif

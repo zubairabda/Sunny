@@ -1,7 +1,9 @@
-#ifndef SY_COMMON_H
-#define SY_COMMON_H
+#ifndef COMMON_H
+#define COMMON_H
 
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 typedef uint8_t     u8;
 typedef uint16_t    u16;
@@ -18,7 +20,7 @@ typedef s16         b16;
 typedef s32         b32;
 
 #if SY_DEBUG
-#define SY_ASSERT(expr) do { if (!(expr)) { printf("[ASSERT]: expression: '%s' at %s:%d, did not evalulate\n", #expr, __FILE__, __LINE__); volatile int* p = 0; *p = 0; } } while(0)
+#define SY_ASSERT(expr) do { if (!(expr)) { printf("[ASSERT]: expression: '%s' at %s:%d, did not evalulate\n", #expr, __FILE__, __LINE__); volatile int *p = 0; *p = 0; } } while(0)
 #define SY_INVALID_CASE default: SY_ASSERT(0); break
 #else
 #define SY_ASSERT(expr)
@@ -36,10 +38,39 @@ typedef s32         b32;
 #define SUNNY_API __declspec(dllimport)
 #endif
 
-#define kilobytes(val) ((val) * 1024u)
-#define megabytes(val) (kilobytes(val) * 1024u)
+#define KILOBYTES(val) ((val) * 1024u)
+#define MEGABYTES(val) (KILOBYTES(val) * 1024u)
 
 #define SY_TRUE     1u
 #define SY_FALSE    0u
+
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+inline s32 clamp16(s32 val)
+{
+    if (val > 32767) {
+        val = 32767;
+    }
+    else if (val < -32768) {
+        val = -32768;
+    }
+    return val;
+}
+
+inline s32 clamp(s32 v, s32 min, s32 max)
+{
+    return v < min ? min : v > max ? max : v;
+}
+
+inline u32 safe_truncate32(u64 v)
+{
+    SY_ASSERT(v <= 0xffffffff);
+    return (u32)v;
+}
+
+#define U32FromPtr(ptr) (*(u32 *)(ptr))
+#define U16FromPtr(ptr) (*(u16 *)(ptr))
+#define U8FromPtr(ptr) (*(u8 *)(ptr))
 
 #endif

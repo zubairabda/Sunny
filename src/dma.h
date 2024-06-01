@@ -1,3 +1,8 @@
+#ifndef DMA_H
+#define DMA_H
+
+#include "psx.h"
+
 typedef union
 {
     struct
@@ -35,3 +40,8 @@ struct dma_state
     u32 control;
     u32 interrupt;
 };
+
+u32 dma_read(struct dma_state *dma, u32 offset);
+void dma_write(struct psx_state *psx, u32 offset, u32 value);
+
+#endif

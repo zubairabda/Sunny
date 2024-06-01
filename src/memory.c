@@ -1,6 +1,19 @@
-enum AddressMapping
+#include "memory.h"
+#include "cpu.h"
+#include "timers.h"
+#include "spu.h"
+#include "cdrom.h"
+#include "gpu.h"
+#include "dma.h"
+#include "debug.h"
+
+#define DELAY_CYCLES(cycles) g_cycles_elapsed += (cycles)
+//#define DELAY_CYCLES(cycles)
+
+#define debug_log
+enum address_mapping
 {
-    RAM_START = 0x200000,
+    RAM_START = 0x0,
     BIOS_START = 0x1fc00000,
     JOYPAD_START = 0x1f801040,
     IRQ_START = 0x1f801070,
@@ -8,142 +21,282 @@ enum AddressMapping
     DMA_REGISTER_START = 0x1f8010f0,
     TIMERS_START = 0x1f801100,
     GPU_START = 0x1f801810,
-    SPU_START = 0x1f801c00,
+    SPU_REGS_START = 0x1f801c00,
+    SPU_CONTROL_START = 0x1f801d80,
+    SPU_REVERB_START = 0x1f801dc0,
     CDROM_START = 0x1f801800
 };
 
-static inline u16 joypad_read(struct cpu_state* cpu, u32 offset)
+u32 io_read32(struct psx_state *psx, u32 addr)
 {
-    u16 result = 0;
-    switch (offset)
+    switch (addr)
     {
-    case 0x0:
-        result = cpu->pad.stat;
-        break;
-    case 0x4:
-        break;
-    case 0x8:
-        break;
-    case 0xA:
-        break;
-    case 0xE:
-        break;
-    SY_INVALID_CASE;
+    case 0x1f801070:
+        return psx->cpu->i_stat;
+    case 0x1f801074:
+        return psx->cpu->i_mask;
+    case 0x1f801810:
+        return gpuread(psx->gpu);
+    case 0x1f801814:
+        return psx->gpu->stat.value & ~(1 << 19);
+    default:
+        if (addr >= 0x1f801080 && addr < 0x1f8010f8)
+            return dma_read(psx->dma, addr & 0x7f);
+        else if (addr >= 0x1f801100 && addr < 0x1f801130)
+            return timers_read(psx, (addr & 0x3f));
+        debug_log("Unknown 32-bit read address: %08x\n", addr);
+        return 0;
     }
-    return result;
 }
 
-static inline u32 irq_read(struct cpu_state* cpu, u32 offset)
+u16 io_read16(struct psx_state *psx, u32 addr)
 {
-    u32 result = 0;
-    switch (offset)
+    switch (addr)
     {
-    case 0x0:
-        result = cpu->i_stat;
+    case 0x1f801070:
+        return (u16)psx->cpu->i_stat;
+    case 0x1f801074:
+        return (u16)psx->cpu->i_mask;
+    default:
+        if (addr >= 0x1f801100 && addr < 0x1f801130)
+        {
+            DELAY_CYCLES(2);
+            return timers_read(psx, (addr & 0x3f));
+        }
+        else if (addr >= 0x1f801c00 && addr < 0x1f801e00)
+        {
+            DELAY_CYCLES(18);
+            return spu_read(psx->spu, (addr & 0x3ff));
+        }
+        debug_log("Unknown 16-bit read address: %08x\n", addr);
+        return 0;
+    }
+}
+
+u8 io_read8(struct psx_state *psx, u32 addr)
+{
+    debug_log("Unknown 8-bit read address: %08x\n", addr);
+    return 0;
+}
+
+void io_write32(struct psx_state *psx, u32 addr, u32 value)
+{
+    switch (addr)
+    {
+    case 0x1f801070:
+        psx->cpu->i_stat &= value & 0x7ff;
         break;
-    case 0x4:
-        result = cpu->i_mask;
+    case 0x1f801074:
+        psx->cpu->i_mask = value & 0x7ff;
+        break;
+    case 0x1f801810:
+        execute_gp0_command(psx->gpu, value);
+        break;
+    case 0x1f801814:
+        execute_gp1_command(psx->gpu, value);
         break;
     default:
-        printf("Unhandled read offset in IRQ\n");
+        if (addr >= 0x1f801000 && addr < 0x1f801024)
+            debug_log("Unhandled 32-bit store to Memory Control 1\n");
+        else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
+            dma_write(psx, addr & 0x7f, value);
+        else if (addr >= 0x1f801100 && addr < 0x1f801130)
+            timers_store(psx, (addr & 0x3f), value);
+        else
+        {
+            debug_log("Unknown 32-bit store address: %08x\n", addr);
+        }
         break;
+    }
+}
+
+void io_write16(struct psx_state *psx, u32 addr, u32 value)
+{
+    switch (addr)
+    {
+    case 0x1f801070:
+        psx->cpu->i_stat &= value & 0x7ff;
+        break;
+    case 0x1f801074:
+        psx->cpu->i_mask = value & 0x7ff;
+        break;
+    default:
+        if (addr >= 0x1f801100 && addr < 0x1f801130)
+            timers_store(psx, (addr & 0x3f), value);
+        else if (addr >= 0x1f801c00 && addr < 0x1f801e00)
+            spu_write(psx->spu, (addr & 0x3ff), value);
+        else
+            debug_log("Unknown 16-bit store address: %08x\n", addr);
+        break;
+    }
+}
+
+void io_write8(struct psx_state *psx, u32 addr, u32 value)
+{
+
+}
+
+void *mem_read(struct psx_state *psx, u32 addr)
+{
+    void *result = NULL;
+    if (addr < 0x800000)
+    {
+        DELAY_CYCLES(5);
+        result = psx->ram + (addr & 0x1fffff);
+    }
+    else if (addr >= 0x1f000000 && addr < 0x1f800000)
+    {
+        debug_log("Unhandled read from EXP 1\n");
+    }
+    else if (addr >= 0x1f800000 && addr < 0x1f800400)
+    {
+        result = psx->scratch + (addr & 0x3ff);
+    }
+    else if (addr >= 0x1fc00000 && addr < 0x1fc80000)
+    {
+        result = psx->bios + (addr & 0x7ffff);
     }
     return result;
 }
-// TODO: use masks instead of offsets
-static u32 read32(struct cpu_state* cpu, u32 vaddr)
-{
-    u32 result = 0;
 
+void *mem_write(struct psx_state *psx, u32 addr)
+{
+    void *result = NULL;
+    if (addr < 0x800000)
+    {
+        result = psx->ram + (addr & 0x1fffff);
+    }
+    else if (addr >= 0x1f000000 && addr < 0x1f800000)
+    {
+        debug_log("Unhandled read from EXP 1\n");
+    }
+    else if (addr >= 0x1f800000 && addr < 0x1f800400)
+    {
+        result = psx->scratch + (addr & 0x3ff);
+    }
+    else if (addr >= 0x1fc00000 && addr < 0x1fc80000)
+    {
+        result = psx->bios + (addr & 0x7ffff);
+    }
+    return result;
+}
+
+u32 load32(struct psx_state *psx, u32 vaddr)
+{
     u32 addr = vaddr & 0x1fffffff;
-    // TODO: ram mirroring
+    void *mem = mem_read(psx, addr);
+
+    if (mem)
+    {
+        return U32FromPtr(mem);
+    }
+    else
+    {
+        return io_read32(psx, addr);
+    }
+#if 0
+    // if (addr )
+    // return U32FromPtr(mem_read(psx, addr));
     if (addr < 0x200000)
-    { result = U32FromPtr(cpu->ram + addr); }
+    { result = U32FromPtr(psx->ram + addr); }
     else if (addr >= 0x1f000000 && addr < 0x1f800000)
     { result = 0xffffffff; }
     else if (addr >= 0x1f800000 && addr < 0x1f800400)
-    { result = U32FromPtr(cpu->scratch + (addr & 0x3ff)); }
+    { result = U32FromPtr(psx->scratch + (addr & 0x3ff)); }
     else if (addr >= 0x1f801000 && addr < 0x1f801024) // memory control 1
     { result = 0xffffffff; }
     else if (addr >= 0x1f801040 && addr < 0x1f801060) // peripheral I/O
-    { printf("Unhandled %s in PERIPHERAL at %08x\n", __FUNCTION__, addr); result = 0xffffffff; }
+    { debug_log("Unhandled %s in PERIPHERAL at %08x\n", __FUNCTION__, addr); result = 0xffffffff; }
     else if (addr >= 0x1f801060 && addr < 0x1f801062) // memory control 2 NOTE: not sure if this is 4 or 2 in length
     { result = 0xffffffff; }
     else if (addr >= 0x1f801070 && addr < 0x1f801078)
     {
-        result = irq_read(cpu, addr - IRQ_START);
+        result = irq_read(psx, addr - IRQ_START);
     }
     else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
     {
         // handle DMA read
         //result = U32FromPtr(cpu->dma + (addr - DMA_CHANNEL_START));
         u32 offset = addr - DMA_CHANNEL_START;
-        result = dma_read(cpu, offset);
+        result = dma_read(psx, offset);
     }
     else if (addr >= 0x1f801100 && addr < 0x1f801130) // timers
     {
-        result = timer_read(cpu, addr - TIMERS_START);
+        result = timer_read(psx, addr - TIMERS_START);
     }
     else if (addr == 0x1f801800)
     {
-        result = (cpu->cdrom.status * 0x01010101); // ref: nocash
+        result = (psx->cdrom->status * 0x01010101); // ref: nocash
     }
     else if (addr == 0x1f801810)
     {
-        result = gpuread(&cpu->gpu);
+        result = gpuread(&psx->gpu);
     }
     else if (addr == 0x1f801814)
     {
-        result = cpu->gpu.stat.value; // GPUSTAT
+        result = psx->gpu->stat.value; // GPUSTAT
     }
     else if (addr >= 0x1f801c00 && addr < 0x1f802000)
     {
         //result = U32FromPtr(cpu->spu + (addr - SPU_START));
-        //printf("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
+        //debug_log("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
         result = 0xffffffff;
     }
     else if (addr >= 0x1F802000 && addr < 0x1F804000)
     { result = 0xffffffff; } // exp region 2
     else if (addr >= 0x1FA00000 && addr < 0x1FC00000)
     { result = 0xffffffff; } // exp region 3
-    else if (addr >= 0x1FC00000 && addr < 0x1FC80000)
-    { result = U32FromPtr(cpu->bios + (addr - 0x1fc00000)); }
+    else if (addr >= 0x1FC00000 && addr < 0x1FC80000) { 
+        result = U32FromPtr(psx->bios + (addr - 0x1fc00000));
+    }
     else if (vaddr >= 0xfffe0130 && vaddr < 0xfffe0134)
-    { result = cpu->cachectrl; }
+    { result = psx->cachectrl; }
     else
-    { printf("Unknown address mapping at: %08x\n", vaddr); result = 0xffffffff; }
-
-    return result;
+    { debug_log("Unknown address mapping at: %08x\n", vaddr); result = 0xffffffff; }
+#endif
+    //return result;
 }
 
-static u16 read16(struct cpu_state* cpu, u32 vaddr)
+u16 load16(struct psx_state *psx, u32 vaddr)
 {
+    u32 addr = vaddr & 0x1fffffff;
+    void *mem = mem_read(psx, addr);
+
+    if (mem)
+    {
+        return U16FromPtr(mem);
+    }
+    else
+    {
+        return io_read16(psx, addr);
+    }
+#if 0
     u16 result = 0;
 
     u32 addr = vaddr & 0x1fffffff;
 
     if (addr < 0x200000)
-    { result = U16FromPtr(cpu->ram + addr); }
+    { result = U16FromPtr(psx->ram + addr); }
     else if (addr >= 0x1f000000 && addr < 0x1f800000) // exp region 1
     { result = 0xffff; }
     else if (addr >= 0x1f800000 && addr < 0x1f800400)
-    { result = U16FromPtr(cpu->scratch + (addr & 0x3ff)); }
+    { result = U16FromPtr(psx->scratch + (addr & 0x3ff)); }
     else if (addr >= 0x1f801000 && addr < 0x1f801024) // memory control 1
     { result = 0xffff; }
     else if (addr >= 0x1f801040 && addr < 0x1f801050) // peripheral I/O
     {
-        result = 0xffff;//U16FromPtr(cpu->peripheral + (addr - JOYPAD_START));
-        printf("%s in JOYPAD\n", __FUNCTION__);
+        u32 offset = addr - JOYPAD_START;
+        result = joypad_read(psx, offset);
     }
     else if (addr >= 0x1f801050 && addr < 0x1f801060)
     {
-        printf("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1f801060 && addr < 0x1f801062) // memory control 2 NOTE: not sure if this is 4 or 2 in length
     { result = 0xffff; }
     else if (addr >= 0x1f801070 && addr < 0x1f801078)
     {
-        result = irq_read(cpu, addr - IRQ_START);
+        result = irq_read(psx, addr - IRQ_START);
     }
     else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
     {
@@ -153,13 +306,13 @@ static u16 read16(struct cpu_state* cpu, u32 vaddr)
     }
     else if (addr >= 0x1f801100 && addr < 0x1f801130) // timers
     {
-        //printf("read16 in timers: %08x\n", addr);
+        //debug_log("read16 in timers: %08x\n", addr);
         //result = 0xffff;
-        result = timer_read(cpu, addr - TIMERS_START);
+        result = timer_read(psx, addr - TIMERS_START);
     }
     else if (addr >= 0x1f801800 && addr < 0x1f801804)
     {
-        printf("Unhandled %s in CDROM at: %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in CDROM at: %08x\n", __FUNCTION__, addr);
         result = 0xffff;
     }
     else if (addr == 0x1f801810)
@@ -172,57 +325,77 @@ static u16 read16(struct cpu_state* cpu, u32 vaddr)
     }
     else if (addr >= 0x1f801c00 && addr < 0x1f801d80)
     {
-        result = U16FromPtr(cpu->spu.voice.regs + (addr - SPU_START));
-        //printf("SPUVOICE read result: %u\n", result);
+        result = U16FromPtr(psx->spu.voice.regs + (addr - SPU_REGS_START));
+        //debug_log("SPU voice #%d, register #%d, read: %d\n", ((addr - 0x1f801c00) >> 4), ((addr - 0x1f801c00) & 0xf) >> 1, result);
     }
     else if (addr >= 0x1f801d80 && addr < 0x1f801dbc)
     {
-        result = U16FromPtr(cpu->spu.control.regs + (addr - 0x1f801d80));
-        //printf("SPUCTRL read result: %u\n", result);
+        result = spu_read(psx, addr - SPU_CONTROL_START);
+        //debug_log("[%08x] SPUCTRL read: %u\n", addr, result);
+    }
+    else if (addr >= 0x1f801dc0 && addr < 0x1f801dff)
+    {
+        SY_ASSERT(!(addr & 0x1));
+        result = U16FromPtr(psx->spu.reverb.regs + (addr - SPU_REVERB_START));
+        debug_log("SPU reverb read from: %08x -> %hu\n", addr, result);
     }
     else if (addr >= 0x1F802000 && addr < 0x1F804000)
     { result = 0xffff; } // exp region 2
     else if (addr >= 0x1FA00000 && addr < 0x1FC00000)
     { result = 0xffff; } // exp region 3
     else if (addr >= 0x1FC00000 && addr < 0x1FC80000)
-    { result = U16FromPtr(cpu->bios + (addr - 0x1fc00000)); }
+    { result = U16FromPtr(psx->bios + (addr - 0x1fc00000)); }
     else if (vaddr >= 0xfffe0130 && vaddr < 0xfffe0134)
-    { result = U16FromPtr(&cpu->cachectrl + (vaddr - 0xfffe0130)); }
+    { result = U16FromPtr(&psx->cachectrl + (vaddr - 0xfffe0130)); }
     else
-    { printf("Unknown address mapping at: %08x\n", vaddr); result = 0xffff; }
+    { debug_log("Unknown address mapping at: %08x\n", vaddr); result = 0xffff; }
 
     return (u16)result;
+#endif
 }
 
-static u8 read8(struct cpu_state* cpu, u32 vaddr)
+u8 load8(struct psx_state* psx, u32 vaddr)
 {
+    u32 addr = vaddr & 0x1fffffff;
+    void *mem = mem_read(psx, addr);
+
+    if (mem)
+    {
+        return U8FromPtr(mem);
+    }
+    else
+    {
+        return io_read8(psx, addr);
+    }
+#if 0
     u8 result = 0;
 
     u32 addr = vaddr & 0x1fffffff;
 
     if (addr < 0x200000)
-    { result = U8FromPtr(cpu->ram + addr); }
+    { result = U8FromPtr(psx->ram + addr); }
     else if (addr >= 0x1f000000 && addr < 0x1f800000) // expansion region 1
     { result = 0xff; }
     else if (addr >= 0x1f800000 && addr < 0x1f800400)
-    { result = U8FromPtr(cpu->scratch + (addr & 0x3ff)); }
+    { result = U8FromPtr(psx->scratch + (addr & 0x3ff)); }
     else if (addr >= 0x1f801000 && addr < 0x1f801024) // memory control 1
-    { printf("Unhandled %s in MEMCTRL1 at %08x\n", __FUNCTION__, addr); }
+    { debug_log("Unhandled %s in MEMCTRL1 at %08x\n", __FUNCTION__, addr); }
     else if (addr >= 0x1f801040 && addr < 0x1f801050) // peripheral I/O
-    {  
-        result = U8FromPtr(cpu->peripheral + (addr - JOYPAD_START));
+    {
+        u32 offset = addr - JOYPAD_START;
+        result = joypad_read(psx, offset);
     }
     else if (addr >= 0x1f801050 && addr < 0x1f801060)
     {
-        printf("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1f801060 && addr < 0x1f801062) // memory control 2 NOTE: not sure if this is 4 or 2 in length
     {
-        printf("Unhandled %s in MEMCTRL2 at %08x\n", __FUNCTION__, addr); 
+        debug_log("Unhandled %s in MEMCTRL2 at %08x\n", __FUNCTION__, addr); 
     }
     else if (addr >= 0x1f801070 && addr < 0x1f801078)
     {
-        printf("Unhandled %s in IRQ_CTRL at %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in IRQ_CTRL at %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
     {
@@ -237,7 +410,7 @@ static u8 read8(struct cpu_state* cpu, u32 vaddr)
     else if (addr >= 0x1f801800 && addr < 0x1f801804)
     {
         u32 offset = addr - CDROM_START;
-        result = cdrom_read(&cpu->cdrom, offset);
+        result = cdrom_read(&psx->cdrom, offset);
     }
     else if (addr == 0x1f801810)
     {
@@ -250,36 +423,49 @@ static u8 read8(struct cpu_state* cpu, u32 vaddr)
     else if (addr >= 0x1f801c00 && addr < 0x1f802000)
     {
         //result = U8FromPtr(cpu->spu + (addr - SPU_START));
-        //printf("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
+        //debug_log("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1F802000 && addr < 0x1F804000)
     { result = 0xff; } // exp region 2
     else if (addr >= 0x1FA00000 && addr < 0x1FC00000)
     { result = 0xff; } // exp region 3
     else if (addr >= 0x1FC00000 && addr < 0x1FC80000)
-    { result = U8FromPtr(cpu->bios + (addr - 0x1fc00000)); }
+    { result = U8FromPtr(psx->bios + (addr - 0x1fc00000)); }
     else if (vaddr >= 0xfffe0130 && vaddr < 0xfffe0134)
-    { result = U8FromPtr(&cpu->cachectrl + (vaddr - 0xfffe0130)); }
+    { result = U8FromPtr(&psx->cachectrl + (vaddr - 0xfffe0130)); }
     else
-    { printf("Unknown address mapping at: %08x\n", vaddr); }
+    { debug_log("Unknown address mapping at: %08x\n", vaddr); }
 
     return result;
+#endif
 }
 
-static void store32(struct cpu_state* cpu, u32 vaddr, u32 value)
+void store32(struct psx_state* psx, u32 vaddr, u32 value)
 {
+    u32 addr = vaddr & 0x1fffffff;
+    void *mem = mem_write(psx, addr);
+
+    if (mem)
+    {
+        U32FromPtr(mem) = value;
+    }
+    else
+    {
+        io_write32(psx, addr, value);
+    }
+#if 0
     u32 addr = vaddr & 0x1fffffff;
 
     if (addr < 0x200000)
-    { U32FromPtr(cpu->ram + addr) = value; }
+    { U32FromPtr(psx->ram + addr) = value; }
     else if (addr >= 0x1F000000 && addr < 0x1F800000)
     { NoImplementation; }
     else if (addr >= 0x1F800000 && addr < 0x1F800400)
-    { U32FromPtr(cpu->scratch + (addr & 0x3ff)) = value; }
+    { U32FromPtr(psx->scratch + (addr & 0x3ff)) = value; }
     else if (addr >= 0x1f801000 && addr < 0x1f801024) // memory control 1
     { NoImplementation; }
     else if (addr >= 0x1f801040 && addr < 0x1f801060) // peripheral I/O
-    { printf("Unhandled %s in PERIPHERAL at %08x\n", __FUNCTION__, addr); }
+    { debug_log("Unhandled %s in PERIPHERAL at %08x\n", __FUNCTION__, addr); }
     else if (addr >= 0x1f801060 && addr < 0x1f801062) // memory control 2 NOTE: not sure if this is 4 or 2 in length
     { NoImplementation; }
     else if (addr >= 0x1f801070 && addr < 0x1f801078)
@@ -287,13 +473,13 @@ static void store32(struct cpu_state* cpu, u32 vaddr, u32 value)
         switch (addr - IRQ_START)
         {
         case 0x0:
-            cpu->i_stat &= value & 0x7ff;
+            psx->i_stat &= value & 0x7ff;
             break;
         case 0x4:
-            cpu->i_mask = value & 0x7ff;
+            psx->i_mask = value & 0x7ff;
             break;
         default:
-            printf("Unhandled write offset in IRQ\n");
+            debug_log("Unhandled write offset in IRQ\n");
             break;
         }
     }
@@ -302,60 +488,96 @@ static void store32(struct cpu_state* cpu, u32 vaddr, u32 value)
         // handle DMA write
         //U32FromPtr(cpu->dma + (addr - DMA_CHANNEL_START)) = value;
         u32 offset = addr - DMA_CHANNEL_START;
-        dma_write(cpu, offset, value);
+        dma_write(psx, offset, value);
     }
     else if (addr >= 0x1f801100 && addr < 0x1f801130) // timers
     {
-        timer_store(cpu, addr - TIMERS_START, value);
+        timer_store(psx, addr - TIMERS_START, value);
     }
     else if (addr >= 0x1f801800 && addr < 0x1f801804)
     {
-        printf("Unhandled %s in CDROM at: %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in CDROM at: %08x\n", __FUNCTION__, addr);
     }
     else if (addr == 0x1f801810)
     {
-        execute_gp0_command(&cpu->gpu, value);
+        execute_gp0_command(&psx->gpu, value);
     }
     else if (addr == 0x1f801814)
     {
-        execute_gp1_command(&cpu->gpu, value);
+        execute_gp1_command(psx, value);
     }
-    else if (addr >= 0x1f801c00 && addr < 0x1f802000)
+    else if (addr >= 0x1f801c00 && addr < 0x1f801d80)
     {
-        //U32FromPtr(cpu->spu + (addr - SPU_START)) = value;
-        //printf("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
+        SY_ASSERT(!(addr & 0x1));
+        // TODO: not sure if this is the correct behavior
+        u32 offset = addr - SPU_REGS_START;
+        U16FromPtr(psx->spu.voice.regs + offset) = value;
+        U16FromPtr(psx->spu.voice.regs + offset + 2) = value >> 16;
+        int v = (addr - 0x1f801c00) >> 4;
+        int reg = ((addr - 0x1f801c00) & 0xf) >> 1;
+        debug_log("SPU voice #%d, register #%d, store: %d\n", v, reg, value);
+        if (reg == 6)
+            DebugBreak();
+    }
+    else if (addr >= 0x1f801d80 && addr < 0x1f801dbc)
+    {
+        u32 offset = addr - SPU_CONTROL_START;
+        spu_write(psx, offset, value);
+        spu_write(psx, offset + 2, value >> 16);
+    }
+    else if (addr >= 0x1f801dc0 && addr < 0x1f801dff)
+    {
+        SY_ASSERT(!(addr & 0x1));
+        u32 offset = addr - SPU_REVERB_START;
+        U16FromPtr(psx->spu.reverb.regs + offset) = value;
+        U16FromPtr(psx->spu.reverb.regs + offset + 2) = (value >> 16);
+        debug_log("SPU reverb write to: %08x <- %hu\n", addr, value);
     }
     else if (addr >= 0x1F802000 && addr < 0x1F804000)
     {  } // exp region 2
     else if (addr >= 0x1FA00000 && addr < 0x1FC00000)
     {  } // exp region 3
     else if (addr >= 0x1FC00000 && addr < 0x1FC80000)
-    { U32FromPtr(cpu->bios + (addr - 0x1fc00000)) = value; }
+    { U32FromPtr(psx->bios + (addr - 0x1fc00000)) = value; }
     else if (vaddr >= 0xfffe0130 && vaddr < 0xfffe0134)
-    { cpu->cachectrl = value; }
+    { psx->cachectrl = value; }
     else
-    { printf("Unknown address mapping at: %08x\n", vaddr); }
+    { debug_log("Unknown address mapping at: %08x\n", vaddr); }
+#endif
 }
 
-static void store16(struct cpu_state* cpu, u32 vaddr, u32 value)
+void store16(struct psx_state* psx, u32 vaddr, u32 value)
 {
+    u32 addr = vaddr & 0x1fffffff;
+    void *mem = mem_write(psx, addr);
+
+    if (mem)
+    {
+        U16FromPtr(mem) = value;
+    }
+    else
+    {
+        io_write16(psx, addr, value);
+    }
+#if 0
     u32 addr = vaddr & 0x1fffffff;
 
     if (addr < 0x200000)
-    { U16FromPtr(cpu->ram + addr) = value; }
+    { U16FromPtr(psx->ram + addr) = value; }
     else if (addr >= 0x1F000000 && addr < 0x1F800000) // exp 1
     { NoImplementation; }
     else if (addr >= 0x1F800000 && addr < 0x1F800400)
-    { U16FromPtr(cpu->scratch + (addr & 0x3ff)) = value; }
+    { U16FromPtr(psx->scratch + (addr & 0x3ff)) = value; }
     else if (addr >= 0x1f801000 && addr < 0x1f801024) // memory control 1
     { NoImplementation; }
     else if (addr >= 0x1f801040 && addr < 0x1f801050) // peripheral I/O
-    {  
-        U16FromPtr(cpu->peripheral + (addr - JOYPAD_START)) = value;
+    {
+        u32 offset = addr - JOYPAD_START;
+        joypad_store(psx, offset, value);
     }
     else if (addr >= 0x1f801050 && addr < 0x1f801060)
     {
-        printf("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1f801060 && addr < 0x1f801062) // memory control 2 NOTE: not sure if this is 4 or 2 in length
     { NoImplementation; }
@@ -364,89 +586,115 @@ static void store16(struct cpu_state* cpu, u32 vaddr, u32 value)
         switch (addr - IRQ_START)
         {
         case 0x0:
-            cpu->i_stat &= value & 0x7ff;
+            psx->i_stat &= value & 0x7ff;
             break;
         case 0x4:
-            cpu->i_mask = value & 0x7ff;
+            psx->i_mask = value & 0x7ff;
             break;
         default:
-            printf("Unhandled write offset in IRQ\n");
+            debug_log("Unhandled write offset in IRQ\n");
             break;
         }
     }
     else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
     {
-        printf("Unexpected store16 at DMA\n");
+        debug_log("Unexpected store16 at DMA\n");
+        SY_ASSERT(0);
     }
     else if (addr >= 0x1f801100 && addr < 0x1f801130) // timers
     {
-        timer_store(cpu, addr - TIMERS_START, value);
+        timer_store(psx, addr - TIMERS_START, value);
     }
     else if (addr >= 0x1f801800 && addr < 0x1f801804)
     {
-        printf("Unhandled %s in CDROM at: %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in CDROM at: %08x\n", __FUNCTION__, addr);
     }
     else if (addr == 0x1f801810)
     {
         SY_ASSERT(0);
         // gp0 command here
-        execute_gp0_command(&cpu->gpu, value);
+        execute_gp0_command(&psx->gpu, value);
     }
     else if (addr == 0x1f801814)
     {
         SY_ASSERT(0);
-        // gp1 command here
-        execute_gp1_command(&cpu->gpu, value);
     }
     else if (addr >= 0x1f801c00 && addr < 0x1f801d80)
     {
-        //result = U16FromPtr(cpu->spu + (addr - SPU_START));
-        //printf("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
-        U16FromPtr(cpu->spu.voice.regs + (addr - SPU_START)) = value;
-        //printf("SPUVOICE store at %08x: %u\n", addr, value);
+        SY_ASSERT(!(addr & 0x1));
+        
+        #ifdef SY_DEBUG
+        char *debug_spu_reg_table[] = {"Volume left", "Volume right", "Sample rate", "Start address", "ADSR lo", "ADSR hi", "ADSR volume", "Repeat address"};
+        #endif
+
+        U16FromPtr(psx->spu.voice.regs + (addr - SPU_REGS_START)) = value;
+        int v = (addr - 0x1f801c00) >> 4;
+        int reg = ((addr - 0x1f801c00) & 0xf) >> 1;
+        //debug_log("SPU voice #%d, %s <- %d\n", v, debug_spu_reg_table[reg], value);
     }
     else if (addr >= 0x1f801d80 && addr < 0x1f801dbc)
     {
-        U16FromPtr(cpu->spu.control.regs + (addr - 0x1f801d80)) = value;
-        //printf("SPUCTRL store at %08x: %u\n", addr, value);
+        //U16FromPtr(cpu->spu.control.regs + (addr - 0x1f801d80)) = value;
+        spu_write(psx, (addr - SPU_CONTROL_START), value);
+        //debug_log("SPUCTRL store at %08x: %u\n", addr, value);
+    }
+    else if (addr >= 0x1f801dc0 && addr < 0x1f801dff)
+    {
+        SY_ASSERT(!(addr & 0x1));
+        U16FromPtr(psx->spu.reverb.regs + (addr - SPU_REVERB_START)) = value;
+        debug_log("SPU reverb write to: %08x <- %hu\n", addr, value);
     }
     else if (addr >= 0x1F802000 && addr < 0x1F804000)
     {  } // exp region 2
     else if (addr >= 0x1FA00000 && addr < 0x1FC00000)
     {  } // exp region 3
     else if (addr >= 0x1FC00000 && addr < 0x1FC80000)
-    { U16FromPtr(cpu->bios + (addr - 0x1fc00000)) = value; }
+    { U16FromPtr(psx->bios + (addr - 0x1fc00000)) = value; }
     else if (vaddr >= 0xfffe0130 && vaddr < 0xfffe0134)
-    { U16FromPtr(&cpu->cachectrl + (vaddr - 0xfffe0130)) = value; }
+    { U16FromPtr(&psx->cachectrl + (vaddr - 0xfffe0130)) = value; }
     else
-    { printf("Unknown address mapping at: %08x\n", vaddr); }
+    { debug_log("Unknown address mapping at: %08x\n", vaddr); }
+#endif
 }
 
-static void store8(struct cpu_state* cpu, u32 vaddr, u32 value)
+void store8(struct psx_state* psx, u32 vaddr, u32 value)
 {
+    u32 addr = vaddr & 0x1fffffff;
+    void *mem = mem_write(psx, addr);
+
+    if (mem)
+    {
+        U8FromPtr(mem) = value;
+    }
+    else
+    {
+        io_write8(psx, addr, value);
+    }
+#if 0
     u32 addr = vaddr & 0x1fffffff;
 
     if (addr < 0x200000)
-    { U8FromPtr(cpu->ram + addr) = value; }
+    { U8FromPtr(psx->ram + addr) = value; }
     else if (addr >= 0x1F000000 && addr < 0x1F800000)
     { NoImplementation; }
     else if (addr >= 0x1F800000 && addr < 0x1F800400)
-    { U8FromPtr(cpu->scratch + (addr & 0x3ff)) = value; }
+    { U8FromPtr(psx->scratch + (addr & 0x3ff)) = value; }
     else if (addr >= 0x1f801000 && addr < 0x1f801024) // memory control 1
     { NoImplementation; }
     else if (addr >= 0x1f801040 && addr < 0x1f801050) // peripheral I/O
     {
-        U8FromPtr(cpu->peripheral + (addr - JOYPAD_START)) = value;
+        u32 offset = addr - JOYPAD_START;
+        joypad_store(psx, offset, value);
     }
     else if (addr >= 0x1f801050 && addr < 0x1f801060)
     {
-        printf("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s in SIO at %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1f801060 && addr < 0x1f801062) // memory control 2 NOTE: not sure if this is 4 or 2 in length
     { NoImplementation; }
     else if (addr >= 0x1f801070 && addr < 0x1f801078)
     {
-        printf("Unhandled %s at %08x\n", __FUNCTION__, addr);
+        debug_log("Unhandled %s at %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
     {
@@ -459,33 +707,33 @@ static void store8(struct cpu_state* cpu, u32 vaddr, u32 value)
     else if (addr >= 0x1f801800 && addr < 0x1f801804)
     {
         u32 offset = addr - CDROM_START;
-        cdrom_store(cpu, offset, value);
+        cdrom_store(psx, offset, value);
     }
     else if (addr == 0x1f801810)
     {
         SY_ASSERT(0);
         // gp0 command here
-        execute_gp0_command(&cpu->gpu, value);
+        execute_gp0_command(&psx->gpu, value);
     }
     else if (addr == 0x1f801814)
     {
         SY_ASSERT(0);
-        // gp1 command here
-        execute_gp1_command(&cpu->gpu, value);
     }
     else if (addr >= 0x1f801c00 && addr < 0x1f802000)
     {
+        SY_ASSERT(0);
         //U8FromPtr(cpu->spu + (addr - SPU_START)) = value;
-        //printf("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
+        //debug_log("Unhandled %s in SPU at: %08x\n", __FUNCTION__, addr);
     }
     else if (addr >= 0x1F802000 && addr < 0x1F804000)
     {  } // exp region 2
     else if (addr >= 0x1FA00000 && addr < 0x1FC00000)
     {  } // exp region 3
     else if (addr >= 0x1FC00000 && addr < 0x1FC80000)
-    { U8FromPtr(cpu->bios + (addr - 0x1fc00000)) = value; }
+    { U8FromPtr(psx->bios + (addr - 0x1fc00000)) = value; }
     else if (vaddr >= 0xfffe0130 && vaddr < 0xfffe0134)
-    { U8FromPtr(&cpu->cachectrl + (vaddr - 0xfffe0130)) = value; }
+    { U8FromPtr(&psx->cachectrl + (vaddr - 0xfffe0130)) = value; }
     else
-    { printf("Unknown address mapping at: %08x\n", vaddr); }
+    { debug_log("Unknown address mapping at: %08x\n", vaddr); }
+#endif
 }

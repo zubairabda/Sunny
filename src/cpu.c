@@ -1,68 +1,13 @@
-static u32 read32(struct cpu_state* cpu, u32 vaddr);
-static u16 read16(struct cpu_state* cpu, u32 vaddr);
-static u8 read8(struct cpu_state* cpu, u32 vaddr);
+#include "cpu.h"
+#include "psx.h"
+#include "event.h"
+#include "memory.h"
+#include "debug.h"
+#include "disasm.h"
 
-static void store32(struct cpu_state* cpu, u32 vaddr, u32 value);
-static void store16(struct cpu_state* cpu, u32 vaddr, u32 value);
-static void store8(struct cpu_state* cpu, u32 vaddr, u32 value);
-
-static inline u32 sign_extend8_32(u32 val)
+static inline reg_tuple set_register(u32 index, u32 value)
 {
-    s8 temp = (s8)val;
-    return (u32)temp;
-}
-
-static inline u32 sign_extend16_32(u32 val)
-{
-    s16 temp = (s16)val;
-    return (u32)temp;
-}
-
-static inline u64 sign_extend32_64(u64 val)
-{
-    s32 temp = (s32)val;
-    return (u64)temp;
-}
-
-static struct cpu_state* init_cpu(struct memory_arena* arena, void* bios) // TODO: read bios file in here so we can push it to the arena?
-{
-    struct cpu_state* result = push_arena(arena, sizeof(struct cpu_state));
-    result->pc = 0xbfc00000;
-    result->next_pc = result->pc + 4;
-    result->bios = bios;
-    result->ram = push_arena(arena, megabytes(2));
-    result->scratch = push_arena(arena, kilobytes(1));
-
-    result->gpu.vram = push_arena(arena, VRAM_SIZE);
-    result->gpu.copy_buffer = push_arena(arena, VRAM_SIZE);
-    result->gpu.readback_buffer = push_arena(arena, VRAM_SIZE);
-    // set to NTSC timings by default
-    result->gpu.vertical_timing = 263;
-    result->gpu.horizontal_timing = 3413;
-    
-    result->cop0[15] = 0x2; // PRID
-
-    result->cdrom.status = 0x8; // set parameter fifo to empty
-    
-    result->dma.control = 0x07654321; // inital value of control register
-    result->sound_ram = push_arena(arena, kilobytes(512));
-
-    result->peripheral = push_arena(arena, 32); // temp
-
-    result->gpu.stat.value = 0x14802000;
-    memset(result->ram, 0xcf, megabytes(2)); // initialize with known garbage value 0xcf
-
-    result->event_pool = allocate_pool(arena, sizeof(struct tick_event), MAX_EVENT_COUNT);
-    result->sentinel_event = pool_alloc(&result->event_pool); // create our dummy node
-    result->sentinel_event->next = result->sentinel_event;
-    result->sentinel_event->prev = result->sentinel_event;
-
-    return result;
-}
-
-static inline RegTuple set_register(u32 index, u32 value)
-{
-    RegTuple load = {.index = index, .value = value};
+    reg_tuple load = {.index = index, .value = value};
     return load;
 }
 
@@ -72,7 +17,6 @@ static inline void handle_exception(struct cpu_state* cpu, enum exception_code c
     cpu->cop0[13] &= ~(0x7c);
     cpu->cop0[13] |= ((u32)cause << 2);
 #else
-    //printf("Entered exception\n");
     cpu->cop0[13] = ((u32)cause << 2);
 #endif
     if (cause == EXCEPTION_CODE_INTERRUPT)
@@ -124,49 +68,99 @@ static inline void handle_interrupts(struct cpu_state* cpu)
     }
 }
 
-static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
+static inline void log_tty(struct psx_state *psx)
 {
-    b32 branched = SY_FALSE;
-    RegTuple new_load = {0};
-    RegTuple write = {0};
-    b8 show_ins = 0;
-
-    for (u32 i = 0; i < count; ++i)
+    struct cpu_state *cpu = psx->cpu;
+    if (cpu->pc == 0xb0)
     {
-        // TTY output
-        if (cpu->pc == 0xb0)
+        switch (cpu->registers[9])
         {
-            switch (cpu->registers[9])
+        case 0x35:
+            if (cpu->registers[4] != 1)
+                break;
+            char* str;
+            u32 addr = cpu->registers[5] & 0x1fffffff;
+            if (addr >= 0x1fc00000 && addr < 0x1fc80000)
             {
-            case 0x35:
-                if (cpu->registers[4] != 1)
-                    break;
-                char* str;
-                u32 addr = cpu->registers[5] & 0x1fffffff;
-                if (addr >= 0x1fc00000 && addr < 0x1fc80000)
-                {
-                    str = (char*)(cpu->bios + (addr - 0x1fc00000));
-                }
-                else
-                {
-                    DebugBreak();
-                }
-                u32 size = cpu->registers[6];
-                while (size--)
-                    debug_putchar(*str++);
-                break;
-            case 0x3d:
-                debug_putchar(cpu->registers[4]);
-                break;
+                str = (char *)(psx->bios + (addr - 0x1fc00000));
             }
+            else
+            {
+                SY_ASSERT(0);
+            }
+            u32 size = cpu->registers[6];
+            while (size--)
+                debug_putchar(*str++);
+            break;
+        case 0x3d:
+            debug_putchar(cpu->registers[4]);
+            break;
         }
-#if 0
+    }
+}
+
+u32 fetch_instruction(struct psx_state *psx, u32 pc)
+{
+    u32 addr = pc & 0x1fffffff;
+    u8 region = pc >> 29;
+    switch (region)
+    {
+    case 0x0: // KUSEG
+    case 0x4: // KSEG0
+    {
+        if (addr < 0x800000)
+        {
+            return *(u32 *)(psx->ram + (addr & 0x1fffff));
+        }
+        else if (addr >= 0x1f800000 && addr < 0x1f800400)
+        {
+            return *(u32 *)(psx->scratch + (addr & 0x3ff));
+        }
+        else if (addr >= 0x1fc00000 && addr < 0x1fc80000)
+        {
+            return *(u32 *)(psx->bios + (addr & 0x7ffff));
+        }
+        else
+        {
+            return 0;
+        }
+        break;
+    }
+    case 0x5: // KSEG1
+    {
+        return *(u32 *)mem_read(psx, addr);
+    }
+    SY_INVALID_CASE;
+    }
+}
+
+u64 execute_instruction(struct psx_state *psx, u64 min_cycles)
+{
+    struct cpu_state *cpu = psx->cpu;
+    b32 branched = SY_FALSE;
+    reg_tuple new_load = {0};
+    reg_tuple write = {0};
+    b8 show_ins = 0;
+    u64 target_cycles = g_cycles_elapsed + min_cycles;
+    //u64 i;
+
+    char buffer[64];
+    memset(buffer, 0, sizeof(buffer));
+
+    //for (i = 0; i < min_cycles; i += psx->pending_cycles)
+    while (g_cycles_elapsed <= target_cycles)
+    {
+        ++g_cycles_elapsed;
+        //psx->pending_cycles = 1;
+        log_tty(psx);
+#if 1
+        // exe sideloading
         if (cpu->pc == 0x80030000)
         {
             u8* fp = g_debug.loaded_exe;
             u32 dst = U32FromPtr(fp + 0x18);
             u32 size = U32FromPtr(fp + 0x1c);
-            memcpy((cpu->ram + (dst & 0x1fffffff)), (fp + 0x800), size);
+            memcpy((psx->ram + (dst & 0x1fffffff)), (fp + 0x800), size);
             cpu->pc = U32FromPtr(fp + 0x10);
             cpu->registers[28] = U32FromPtr(fp + 0x14);
             if (U32FromPtr(fp + 0x30) != 0)
@@ -182,8 +176,8 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
             cpu->cop0[8] = cpu->pc;
             handle_exception(cpu, EXCEPTION_CODE_ADEL);
         }
-        //u32 instruction = read32(cpu, cpu->pc);
-        Instruction ins = {.value = read32(cpu, cpu->pc)}; // TODO: read32 only for executable regions
+
+        instruction ins = {.value = fetch_instruction(psx, cpu->pc)};
         cpu->current_pc = cpu->pc;
 
         cpu->pc = cpu->next_pc;
@@ -196,6 +190,7 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
         {
         case BCOND:
         {
+            // TODO: fix
             u8 type = ins.rt & 0x1; // if bit 16 is set, it is bgez, otherwise it is bltz
             u8 link = (ins.rt & 0x1e) == 0x10; // top 4 bits must be set to 0x10
             b8 branch = ((s32)cpu->registers[ins.rs] < 0) ^ type;
@@ -206,38 +201,55 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
             if (branch)
                 cpu->next_pc = cpu->pc + (sign_extend16_32(immediate) << 2);
             branched = SY_TRUE;
-        }   break;
+            break;
+        }
         case ANDI:
+        {
             write = set_register(ins.rt, cpu->registers[ins.rs] & immediate);
             break;
+        }
         case ADDI:
         {
-            u32 temp;
-            if (__builtin_sadd_overflow(cpu->registers[ins.rs], sign_extend16_32(immediate), (s32*)&temp))
+            s64 add = (s64)((s32)cpu->registers[ins.rs]) + (s64)((s32)sign_extend16_32(immediate));
+            s32 result = (s32)add;
+            if (result != add)
             {
                 handle_exception(cpu, EXCEPTION_CODE_OVERFLOW);
                 break;
             }
-            write = set_register(ins.rt, temp);
-        }   break;
+            write = set_register(ins.rt, (u32)result);
+            break;
+        }
         case ADDIU:
+        {
             write = set_register(ins.rt, cpu->registers[ins.rs] + sign_extend16_32(immediate));
             break;
+        }
         case SLTI:
+        {
             write = set_register(ins.rt, (s32)cpu->registers[ins.rs] < (s32)sign_extend16_32(immediate));
             break;
+        }
         case SLTIU:
+        {
             write = set_register(ins.rt, cpu->registers[ins.rs] < sign_extend16_32(immediate));
             break;
+        }
         case ORI:
+        {
             write = set_register(ins.rt, cpu->registers[ins.rs] | immediate);
             break;
+        }
         case XORI:
+        {
             write = set_register(ins.rt, cpu->registers[ins.rs] ^ immediate);
             break;
+        }
         case LUI:
+        {
             write = set_register(ins.rt, immediate << 16);
             break;
+        }
         case LB:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -246,10 +258,11 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 //printf("Unhandled load to data cache\n");
                 break;
             }
-            s8 value = read8(cpu, vaddr);
+            s8 value = load8(psx, vaddr);
             new_load.index = ins.rt;
             new_load.value = (u32)(value);
-        }   break;
+            break;
+        }
         case LH:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -263,17 +276,18 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
             {
                 break;
             }
-            s16 value = (s16)read16(cpu, vaddr);
+            s16 value = (s16)load16(psx, vaddr);
             new_load.index = ins.rt;
             new_load.value = (u32)value;
-        }   break;
+            break;
+        };
         case LWL:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
             if (cpu->cop0[12] & 0x10000)
                 break;
             u32 aligned_addr = vaddr & ~0x3;
-            u32 value = read32(cpu, aligned_addr);
+            u32 value = load32(psx, aligned_addr);
             u32 merge = cpu->load_delay.index ? cpu->load_delay.value : cpu->registers[ins.rt];
             new_load.index = ins.rt;
             switch (vaddr & 0x3)
@@ -291,14 +305,15 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 new_load.value = value;
                 break;
             }
-        }   break;
+            break;
+        }
         case LWR:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
             if (cpu->cop0[12] & 0x10000)
                 break;
             u32 aligned_addr = vaddr & ~0x3;
-            u32 value = read32(cpu, aligned_addr);
+            u32 value = load32(psx, aligned_addr);
             u32 merge = cpu->load_delay.index ? cpu->load_delay.value : cpu->registers[ins.rt];
             new_load.index = ins.rt;
             switch (vaddr & 0x3)
@@ -316,7 +331,8 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 new_load.value = (merge & 0xffffff00) | (value >> 24);
                 break;
             }
-        }   break;
+            break;
+        }
         case LW:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -332,8 +348,9 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 break;
             }
             new_load.index = ins.rt;
-            new_load.value = read32(cpu, vaddr);
-        }   break;
+            new_load.value = load32(psx, vaddr);
+            break;
+        }
         case LBU:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -343,8 +360,9 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 break;
             }
             new_load.index = ins.rt;
-            new_load.value = read8(cpu, vaddr);
-        }   break;
+            new_load.value = load8(psx, vaddr);
+            break;
+        }
         case LHU:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -359,8 +377,9 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 break;
             }
             new_load.index = ins.rt;
-            new_load.value = read16(cpu, vaddr);
-        }   break;
+            new_load.value = load16(psx, vaddr);
+            break;
+        }
         case SB:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -369,8 +388,9 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 //printf("Unhandled store to data cache\n");
                 break;
             }
-            store8(cpu, vaddr, cpu->registers[ins.rt]);
-        }   break;
+            store8(psx, vaddr, cpu->registers[ins.rt]);
+            break;
+        }
         case SH:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -385,15 +405,16 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 //printf("Unhandled store to data cache\n");
                 break;
             }
-            store16(cpu, vaddr, cpu->registers[ins.rt]);
-        }   break;
+            store16(psx, vaddr, cpu->registers[ins.rt]);
+            break;
+        }
         case SWL:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
             if (cpu->cop0[12] & 0x10000)
                 break;
             u32 aligned = vaddr & ~0x3;
-            u32 value = read32(cpu, aligned);
+            u32 value = load32(psx, aligned);
             u32 store;
             switch (vaddr & 0x3)
             {
@@ -410,15 +431,16 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 store = cpu->registers[ins.rt];
                 break;
             }
-            store32(cpu, aligned, store);
-        }   break;
+            store32(psx, aligned, store);
+            break;
+        }
         case SWR:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
             if (cpu->cop0[12] & 0x10000)
                 break;
             u32 aligned = vaddr & ~0x3;
-            u32 value = read32(cpu, aligned);
+            u32 value = load32(psx, aligned);
             u32 write;
             switch (vaddr & 0x3)
             {
@@ -435,8 +457,9 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 write = (value & 0xffffff) | (cpu->registers[ins.rt] << 24);
                 break;
             }
-            store32(cpu, aligned, write);
-        }   break;
+            store32(psx, aligned, write);
+            break;
+        }
         case SW:
         {
             u32 vaddr = cpu->registers[ins.rs] + sign_extend16_32(immediate);
@@ -451,36 +474,45 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 //printf("Unhandled store to data cache\n");
                 break;
             }
-            store32(cpu, vaddr, cpu->registers[ins.rt]);
-        }   break;
+            store32(psx, vaddr, cpu->registers[ins.rt]);
+            break;
+        }
         case BEQ:
+        {
             if (cpu->registers[ins.rs] == cpu->registers[ins.rt])
             {
                 cpu->next_pc = cpu->pc + (sign_extend16_32(immediate) << 2);
             }
             branched = SY_TRUE;
             break;
+        }
         case BNE:
+        {
             if (cpu->registers[ins.rs] != cpu->registers[ins.rt])
             {
                 cpu->next_pc = cpu->pc + (sign_extend16_32(immediate) << 2);
             }
             branched = SY_TRUE;
             break;
+        }
         case BLEZ:
+        {
             if ((s32)cpu->registers[ins.rs] <= 0)
             {
                 cpu->next_pc = cpu->pc + (sign_extend16_32(immediate) << 2);
             }
             branched = SY_TRUE;
             break;
+        }
         case BGTZ:
+        {
             if ((s32)cpu->registers[ins.rs] > 0)
             {               
                 cpu->next_pc = cpu->pc + (sign_extend16_32(immediate) << 2);
             }
             branched = SY_TRUE;
             break;
+        }
         case J:
         {
             cpu->next_pc = (cpu->pc & 0xf0000000) | (target << 2);
@@ -488,10 +520,12 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
             break;
         }
         case JAL:
+        {
             write = set_register(31, cpu->next_pc);
             cpu->next_pc = (cpu->pc & 0xf0000000) | (target << 2);
             branched = SY_TRUE;
             break;
+        }
         case COP0:
             switch ((enum coprocessor_op)ins.rs)
             {
@@ -570,13 +604,15 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                 u64 result = (u64)((s64)sign_extend32_64(cpu->registers[ins.rs]) * (s64)sign_extend32_64(cpu->registers[ins.rt]));
                 cpu->lo = (u32)result;
                 cpu->hi = result >> 32;
-            }   break;
+                break;
+            }
             case MULTU:
             {
                 u64 result = (u64)cpu->registers[ins.rs] * (u64)cpu->registers[ins.rt];
                 cpu->lo = (u32)result;
                 cpu->hi = result >> 32;
-            }   break;
+                break;
+            }
             case DIV:
             {
                 s32 n = (s32)cpu->registers[ins.rs];
@@ -596,7 +632,8 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                     cpu->lo = (u32)(n / d);
                     cpu->hi = (u32)(n % d);
                 }
-            }   break;
+                break;
+            }
             case DIVU:
             {
                 if (cpu->registers[ins.rt] == 0)
@@ -609,60 +646,74 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
                     cpu->lo = cpu->registers[ins.rs] / cpu->registers[ins.rt];
                     cpu->hi = cpu->registers[ins.rs] % cpu->registers[ins.rt];
                 }
-            }   break;
+                break;
+            }
             case ADD:
             {
-                u32 temp;// = cpu->registers[rs] + cpu->registers[rt];
-                if (__builtin_sadd_overflow(cpu->registers[ins.rs], cpu->registers[ins.rt], (s32*)&temp))
+                s64 add = (s64)((s32)cpu->registers[ins.rs]) + (s64)((s32)cpu->registers[ins.rt]);
+                s32 result = (s32)add;
+                if (result != add)
                 {
                     handle_exception(cpu, EXCEPTION_CODE_OVERFLOW);
                     break;
                 }
-                //u64 temp = addition
-                //if (temp > UINT32_MAX)
-                //overflow occurred
-                // NOTE: overflow exception
-                //cpu->registers[rd] = temp;
-                write = set_register(ins.rd, temp);
-            }   break;
+                write = set_register(ins.rd, (u32)result);
+                break;
+            }
             case ADDU:
+            {
                 write = set_register(ins.rd, cpu->registers[ins.rs] + cpu->registers[ins.rt]);
                 break;
+            }
             case SUB:
             {
-                u32 temp;// = cpu->registers[rs] - cpu->registers[rt];
-                // NOTE: overflow exception
-                //cpu->registers[rd] = temp;
-                if (__builtin_ssub_overflow(cpu->registers[ins.rs], cpu->registers[ins.rt], (s32*)&temp))
+                s64 sub = (s64)((s32)cpu->registers[ins.rs]) - (s64)((s32)cpu->registers[ins.rt]);
+                s32 result = (s32)sub;
+                if (result != sub)
                 {
                     handle_exception(cpu, EXCEPTION_CODE_OVERFLOW);
                     break;
                 }
-                write = set_register(ins.rd, temp);
-            }   break;
+                write = set_register(ins.rd, (u32)result);
+                break;
+            }
             case SUBU:
+            {
                 write = set_register(ins.rd, cpu->registers[ins.rs] - cpu->registers[ins.rt]);
                 break;
+            }
             case AND:
+            {
                 write = set_register(ins.rd, cpu->registers[ins.rs] & cpu->registers[ins.rt]);
                 break;
+            }
             case OR:
+            {
                 write = set_register(ins.rd, cpu->registers[ins.rs] | cpu->registers[ins.rt]);
                 break;
+            }
             case XOR:
+            {
                 write = set_register(ins.rd, cpu->registers[ins.rs] ^ cpu->registers[ins.rt]);
                 break;
+            }
             case NOR:
+            {
                 write = set_register(ins.rd, ~(cpu->registers[ins.rs] | cpu->registers[ins.rt]));
                 break;
+            }
             case SLT:
+            {
                 write = set_register(ins.rd, ((s32)cpu->registers[ins.rs] < (s32)cpu->registers[ins.rt]));
                 break;
+            }
             case SLTU:
+            {
                 write = set_register(ins.rd, (cpu->registers[ins.rs] < cpu->registers[ins.rt]));
                 break;
+            }
             default:
-                printf("WARNING: Unknown secondary: %x\n", ins.secondary);
+                debug_log("WARNING: Unknown secondary: %x\n", ins.secondary);
                 break;
             }
             break;
@@ -671,7 +722,15 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
             handle_exception(cpu, EXCEPTION_CODE_RESERVED_INSTRUCTION);
             break;
         }
-
+#if 0
+        if (g_debug.show_disasm)
+        {
+            debug_log("%08x\t%08x\t", cpu->current_pc, ins.value);
+            instr_to_string(ins, buffer, sizeof(buffer));
+            debug_log(buffer);
+            debug_log("\n");
+        }
+#endif
         if (cpu->load_delay.index != new_load.index)
         {
             cpu->registers[cpu->load_delay.index] = cpu->load_delay.value;
@@ -690,15 +749,9 @@ static inline void execute_instruction(struct cpu_state* cpu, const u32 count)
 
         cpu->registers[0] = 0;
 
-        //gpu_tick(cpu, 1);
-
-        // TODO: remove
-        for (int j = 0; j < 3; ++j)
-            ++cpu->timers[j].ticks;
-
-        tick_events(cpu, 1);
+        //g_cycles_elapsed += 1;//psx->pending_cycles;
 
         handle_interrupts(cpu);
     }
-    gpu_tick(cpu, 300);
+    return 0;//i;
 }

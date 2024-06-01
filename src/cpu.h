@@ -1,3 +1,8 @@
+#ifndef CPU_H
+#define CPU_H
+
+#include "psx.h"
+
 #define CPU_CLOCK 33868800
 
 enum primary_op
@@ -73,10 +78,8 @@ enum coprocessor_op
     RFE = 0x10
 };
 
-typedef union
-{
-    struct
-    {
+typedef union {
+    struct {
         u32 secondary : 6;
         u32 sa : 5;
         u32 rd : 5;
@@ -85,7 +88,7 @@ typedef union
         u32 op : 6;
     };
     u32 value;
-} Instruction;
+} instruction;
 
 enum exception_code
 {
@@ -116,73 +119,10 @@ enum interrupt_code
     INTERRUPT_PIO = 0x400
 };
 
-typedef struct
-{
+typedef struct {
     u32 index;
     u32 value;
-} RegTuple;
-
-struct spu_block
-{
-    u8 filter;
-    u8 flags;
-    u8 data[14];
-};
-
-struct spu_voice
-{
-    u16 volume_left;
-    u16 volume_right;
-    u16 sample_rate;
-    u16 start_addr;
-    u32 adsr;
-    u16 adsr_volume; // TODO: used?
-    u16 repeat_addr;
-};
-
-struct spu_control
-{
-    u16 main_volume_left; // D80
-    u16 main_volume_right;
-    u16 reverb_volume_left;
-    u16 reverb_volume_right;
-    u32 keyon;
-    u32 keyoff;
-    u32 pitch_modulation_enable;
-    u32 noise_mode;
-    u32 reverb_mode;
-    u32 status;
-    u16 unk0; // DA0
-    u16 reverb_work_start_addr;
-    u16 irq_addr;
-    u16 data_transfer_addr;
-    u16 data_transfer_fifo;
-    u16 spucnt; // DAA
-    u16 transfer_control;
-    u16 spustat; // DAE
-    u16 cd_volume_left;
-    u16 cd_volume_right;
-    u16 extern_volume_left;
-    u16 extern_volume_right;
-    u16 current_main_volume_left;
-    u16 current_main_volume_right;          
-};
-
-struct spu_state
-{
-    union
-    {
-        struct spu_voice data[24]; // TODO: SOA?
-        u8 regs[sizeof(struct spu_voice) * 24];
-    } voice;
-
-    union
-    {
-        struct spu_control data;
-        u8 regs[sizeof(struct spu_control)];
-    } control;
-    
-};
+} reg_tuple;
 
 struct cpu_state
 {
@@ -192,8 +132,8 @@ struct cpu_state
     u32 pc;
     u32 next_pc;
     u32 current_pc;
-    RegTuple load_delay;
-    RegTuple new_load;
+    reg_tuple load_delay;
+    reg_tuple new_load;
     b8 in_branch_delay;
     u32 cachectrl;
     u32 i_stat;
@@ -201,21 +141,34 @@ struct cpu_state
 
     u32 cop0[32];
     u32 cop2[64];
-
-    struct root_counter timers[3];
-
-    struct memory_pool event_pool;
-    struct tick_event* sentinel_event;
-    s32 system_tick_count;
-
-    u8* bios;
-    u8* ram;
-    u8* scratch;
-    u8* peripheral;
-    struct dma_state dma;
-    struct gpu_state gpu;
-    u8* sound_ram;
-    struct spu_state spu;
-    struct joypad_state pad;
-    struct cdrom_state cdrom;
 };
+
+#define USEC_PER_CYCLE 1000000.0f / CPU_CLOCK
+
+inline u32 usec_to_cycles(u32 usec)
+{
+    f64 a = usec / USEC_PER_CYCLE;
+    return (u32)a;
+}
+
+inline u32 sign_extend8_32(u32 val)
+{
+    s8 temp = (s8)val;
+    return (u32)temp;
+}
+
+inline u32 sign_extend16_32(u32 val)
+{
+    s16 temp = (s16)val;
+    return (u32)temp;
+}
+
+inline u64 sign_extend32_64(u64 val)
+{
+    s32 temp = (s32)val;
+    return (u64)temp;
+}
+
+u64 execute_instruction(struct psx_state *psx, u64 min_cycles);
+
+#endif

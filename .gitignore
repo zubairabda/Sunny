@@ -1,7 +1,4 @@
 .vscode
-bin/*
-!bin/shader
-bin/shader/vertshader.spv
-bin/shader/fragshader.spv
-src/audio
+bin
+build
 src/old
