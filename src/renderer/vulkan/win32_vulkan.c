@@ -52,6 +52,7 @@ SUNNY_API renderer_interface *win32_load_renderer(HWND hwnd, HINSTANCE hinstance
     result->update_display = vulkan_update_display;
     result->flush_commands = vulkan_flush_commands;
     result->present = present_frame;
+    //result->shutdown = vulkan_destroy_context;
 
     return result;
 }

@@ -8,6 +8,7 @@
 #include "audio.h"
 #include "spu.h"
 #include "debug.h"
+#include "psx.h"
 
 DEFINE_GUID(IID_IAudioClient, 0x1CB9AD4C, 0xDBFA, 0x4c32, 0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2);
 
@@ -138,7 +139,7 @@ static inline char *hr_to_str(HRESULT hr)
     }
 }
 #if 1
-void emulate_from_audio(audio_player *audio, struct psx_state *psx)
+void emulate_from_audio(audio_player *audio)
 {
     u32 pad = 0;
     HRESULT hr;
@@ -160,7 +161,7 @@ void emulate_from_audio(audio_player *audio, struct psx_state *psx)
         available_frames = audio->buffer_size - pad;
     } while (!available_frames);
 #else
-    DWORD res = WaitForSingleObject(audio->event, 2000);
+    DWORD res = WaitForSingleObject(audio->event, INFINITE);
     if (res != WAIT_OBJECT_0)
     {
         SY_ASSERT(0);
@@ -181,13 +182,13 @@ void emulate_from_audio(audio_player *audio, struct psx_state *psx)
 
     u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
 
-    psx->spu->audio_buffer = (s16 *)pdata;
+    g_spu.audio_buffer = (s16 *)pdata;
 
-    while (psx->spu->num_buffered_frames < available_frames)
+    while (g_spu.num_buffered_frames < available_frames)
     {
-        run_psx(psx);
+        psx_run();
     }
-    psx->spu->num_buffered_frames = 0;
+    g_spu.num_buffered_frames = 0;
     // half volume
     for (u32 i = 0; i < available_frames * 2; ++i)
     {

@@ -1,7 +1,7 @@
 #ifndef CPU_H
 #define CPU_H
 
-#include "psx.h"
+#include "common.h"
 
 #define CPU_CLOCK 33868800
 
@@ -36,7 +36,9 @@ enum primary_op
     SH = 0x29,
     SWL = 0x2A,
     SW = 0x2B,
-    SWR = 0x2E
+    SWR = 0x2E,
+    LWC2 = 0x32,
+    SWC2 = 0x3A
 };
 
 enum secondary_op
@@ -73,9 +75,37 @@ enum secondary_op
 
 enum coprocessor_op
 {
-    MF = 0x0,
+    MFC = 0x0,
+    CFC = 0x2,
     MTC = 0x4,
+    CTC = 0x6,
     RFE = 0x10
+};
+
+enum gte_command
+{
+    RTPS = 0x1,
+    NCLIP = 0x6,
+    OP = 0xC,
+    DPCS = 0x10,
+    INTPL = 0x11,
+    MVMVA = 0x12,
+    NCDS = 0x13,
+    CDP = 0x14,
+    NCDT = 0x16,
+    NCCS = 0x1B,
+    CC = 0x1C,
+    NCS = 0x1E,
+    NCT = 0x20,
+    SQR = 0x28,
+    DCPL = 0x29,
+    DPCT = 0x2A,
+    AVSZ3 = 0x2D,
+    AVSZ4 = 0x2E,
+    RTPT = 0x30,
+    GPF = 0x3D,
+    GPL = 0x3E,
+    NCCT = 0x3F
 };
 
 typedef union {
@@ -133,15 +163,17 @@ struct cpu_state
     u32 next_pc;
     u32 current_pc;
     reg_tuple load_delay;
-    reg_tuple new_load;
+    //reg_tuple new_load;
     b8 in_branch_delay;
     u32 cachectrl;
     u32 i_stat;
     u32 i_mask;
 
     u32 cop0[32];
-    u32 cop2[64];
+    u32 cop2[64 + 3]; // TODO: temp hack to get 0-filled regs for MVMVA
 };
+
+extern struct cpu_state g_cpu;
 
 #define USEC_PER_CYCLE 1000000.0f / CPU_CLOCK
 
@@ -169,6 +201,7 @@ inline u64 sign_extend32_64(u64 val)
     return (u64)temp;
 }
 
-u64 execute_instruction(struct psx_state *psx, u64 min_cycles);
+void cpu_init(void);
+u64 execute_instruction(u64 min_cycles);
 
-#endif
+#endif /* CPU_H */

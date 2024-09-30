@@ -29,4 +29,4 @@ typedef union
     u32 vertex;
 } vertex_attrib;
 
-#endif
+#endif /* GPU_COMMON_H */

@@ -2,7 +2,7 @@
 #define PSX_H
 
 #include "allocator.h"
-
+#if 0
 struct cpu_state;
 struct gpu_state;
 struct spu_state;
@@ -11,15 +11,12 @@ struct joypad_state;
 struct cdrom_state;
 struct root_counter;
 
+struct tick_event;
+
 struct psx_state
 {
     struct cpu_state *cpu;
     struct root_counter *timers[3];
-
-    u8 *bios;
-    u8 *ram;
-    u8 *scratch;
-    u8 *peripheral;
 
     struct dma_state *dma;
     struct gpu_state *gpu;
@@ -28,8 +25,8 @@ struct psx_state
     struct cdrom_state *cdrom;
     u32 pending_cycles;
 };
-
-b8 psx_init(struct psx_state *psx, struct memory_arena *arena, void *bios);
-void psx_run(struct psx_state *psx);
-
 #endif
+void psx_init(struct memory_arena *arena, void *bios);
+void psx_run(void);
+
+#endif /* PSX_H */

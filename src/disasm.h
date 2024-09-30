@@ -5,4 +5,4 @@
 
 void instr_to_string(instruction ins, char *buffer, u32 len);
 
-#endif
+#endif /* DISASM_H */

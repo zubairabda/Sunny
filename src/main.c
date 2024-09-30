@@ -2,11 +2,12 @@
 #define NOMINMAX
 #include <Windows.h>
 
-#include <immintrin.h>
+//#include <immintrin.h>
 #include <math.h>
 
 #include "fileio.h"
 #include "platform/sync.h"
+#include "platform/input.h"
 
 static s16 *debug_sound_buffer;
 static u32 debug_sound_buffer_index;
@@ -19,10 +20,8 @@ u32 g_vblank_counter;
 #include "debug.h"
 #include "allocator.h"
 #include "gpu.h"
-#include "event.h"
 #include "audio/audio.h"
 #include "renderer/win32_renderer.h"
-#include "input/input.h"
 
 
 static volatile b32 g_running = 1;
@@ -109,7 +108,7 @@ struct win32_thread_params
     renderer_interface *renderer;
 };
 
-DWORD WINAPI ThreadProc(LPVOID lpParameter)
+DWORD WINAPI present_thread_func(LPVOID lpParameter)
 {
     struct win32_thread_params *params = (struct win32_thread_params *)lpParameter;
     HANDLE event = (HANDLE)g_present_thread_handle;
@@ -129,8 +128,10 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter)
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
 {
+#if 1
     AllocConsole();
     FILE *output;
+    freopen_s(&output, "CONOUT$", "w", stdout);
     freopen_s(&output, "CONOUT$", "w", stderr);
     g_debug.output = output;
 
@@ -140,7 +141,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     GetConsoleMode(conout, &current_mode);
     current_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(conout, current_mode);
-
+#endif
     debug_sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
     char *class_name = "SunnyWindowClass";
@@ -187,29 +188,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     window_data.renderer = renderer;
 #endif
 
-    struct FileInfo bios;
+    struct file_dat bios;
     char* bios_name = "SCPH1001.BIN";
-    read_file(bios_name, &bios);
+    allocate_and_read_file(bios_name, &bios);
     // test exe's provided by amidog and Jakub
     char *exes[] = {"psxtest_cpu", "otc-test", "gp0-e1", "dpcr", "chopping", "MemoryTransfer24BPP", "clipping", "padtest", "PlayADPCMSample", "PlaySong", "timing", "access-time"};
     char filename[64];
     //snprintf(filename, 64, "exes/%s.exe", exes[11]);
-    snprintf(filename, 64, "exes/timers.exe");
-    //snprintf(filename, 64, "exes/cdrom.ps-exe");
-    struct FileInfo test;
-
-    read_file(filename, &test); 
+    //snprintf(filename, 64, "exes/timers.exe");
+    snprintf(filename, 64, "exes/cd/cdlreadn.ps-exe");
+    struct file_dat test;
+    allocate_and_read_file(filename, &test);
     g_debug.loaded_exe = test.memory;
+#if 0
+    const char *cue_files[] = {"C:\\Users\\Zubair\\Desktop\\psx\\Crash Bandicoot (USA)\\Crash Bandicoot (USA).cue",
+                               "C:\\Users\\Zubair\\Desktop\\psx\\Rayman (USA)\\Rayman (USA).cue"};
 
+    parse_cue_file(cue_files[1]);
+#endif
     struct memory_arena main_arena = allocate_arena(MEGABYTES(16));
     memset(main_arena.base, 0, main_arena.size);
 
-    struct psx_state psx;
-    psx_init(&psx, &main_arena, bios.memory);
-    // TODO: reschedule gpu events when display settings are changed
-    schedule_event(gpu_scanline_complete, &psx, 0, (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE), EVENT_ID_GPU_SCANLINE_COMPLETE);
-    //schedule_event(cpu, gpu_hblank_event, 0, cpu->gpu.horizontal_display_x2 - cpu->gpu.horizontal_display_x1, EVENT_ID_GPU_HBLANK);
-    psx.gpu->renderer = renderer;
+    psx_init(&main_arena, bios.memory);
+
+    g_gpu.renderer = renderer;
 
 #if !SOFTWARE_RENDERING
     RECT rect;
@@ -221,8 +223,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     g_present_thread_handle = CreateEvent(NULL, TRUE, FALSE, NULL);
     struct win32_thread_params thread_params = {0};
     thread_params.renderer = renderer;
-    HANDLE present_thread_handle = CreateThread(NULL, 0, ThreadProc, &thread_params, 0, NULL);
-
+    HANDLE present_thread_handle = CreateThread(NULL, 0, present_thread_func, &thread_params, 0, NULL);
+#if 0
     u64 target_dt_us = (u64)((1 / 59.94f) * 1000000);
 
     u64 accum_dt_us = 0;
@@ -232,7 +234,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         debug_log("Failed to create timer object!\n");
         return -1;
     }
-
+#endif
     LARGE_INTEGER begin_counter, end_counter, frequency;
     QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&begin_counter);
@@ -245,9 +247,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }
-#if 0
-        psx.pad->buttons.value = 0xffff;
-        
+#if 0       
         if (input.keystates['P'] && !stopkeypressed)
         {
             stopkeypressed = 1;
@@ -255,49 +255,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             win32_play_sound(audio, (u8 *)debug_sound_buffer);
         }
 #endif
-#if 1
-        emulate_from_audio(audio, &psx);
-#else
-        // get input
-        #if 0
-        dinput_get_data(input);
-        cpu->pad.buttons = input->pad;
-        #endif
-
-        f32 cycles_to_run = 384.0f;
-        // NOTE: leftover_cycles are extra cycles that the cpu ran ahead of the cycles to run
-        f32 leftover_cycles = execute_instruction(cpu, cycles_to_run);
-
-        f32 tick_count = cycles_to_run + leftover_cycles;
-
-        cpu->spu.ticks += tick_count;
-        if (cpu->spu.ticks > 768.0f) {
-            spu_tick(&cpu->spu);
-            cpu->spu.ticks -= 768.0f;
-        }
-        b8 vsync = 0;
-        cpu->gpu.ticks += tick_count * (715909.0f / 451584.0f);
-        if (gpu_run(&cpu->gpu)) {
-            vsync = 1;
-            cpu->i_stat |= INTERRUPT_VBLANK;
-            SetEvent(g_present_thread_handle);
-        }
-#endif
-
+        emulate_from_audio(audio);
 
         //play_sound_test(audio);
-
-#if 0
-        execute_instruction(cpu, 100);
-        
-        b8 vsync = 0;
-        if (gpu_tick(&cpu->gpu, 300))
-        {
-            vsync = 1;
-            cpu->i_stat |= INTERRUPT_VBLANK;
-            SetEvent(event_handle);
-        }
-#endif  
         QueryPerformanceCounter(&end_counter);
 
         u64 ticks_elapsed = (end_counter.QuadPart - begin_counter.QuadPart);
@@ -349,7 +309,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         begin_counter = end_counter;
     }
     //IAudioClient_Stop(audio->client);
-    CloseHandle(timer);
+    //CloseHandle(timer);
 #if SOFTWARE_RENDERING
     ReleaseDC(window, hdc);
 #else

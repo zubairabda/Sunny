@@ -1,10 +1,85 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+
 #define INITGUID
 #include <dinput.h>
-#include "platform/input.h"
+#include "input.h"
+
+#include <synchapi.h>
+
+#include "fileio.h"
+#include "sync.h"
+
+platform_file open_file(const char *path)
+{
+    WCHAR wpath[MAX_PATH];
+
+    platform_file result = {.handle = (uintptr_t)-1};
+
+    int size = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (size > MAX_PATH) {
+        return result;
+    }
+
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 512);
+
+    HANDLE file = CreateFileW(wpath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        return result;
+    }
+
+    result.handle = (uintptr_t)file;
+    return result;
+}
+
+b8 file_is_valid(platform_file file)
+{
+    return ((HANDLE)file.handle != INVALID_HANDLE_VALUE);
+}
+
+void close_file(platform_file file)
+{
+    CloseHandle((HANDLE)file.handle);
+}
+
+s64 read_file(platform_file file, u64 offset, void *dst_buffer, u32 bytes_to_read)
+{
+    HANDLE hfile = (HANDLE)file.handle;
+    
+    DWORD bytes_read;
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)offset;
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+    if (ReadFile(hfile, dst_buffer, bytes_to_read, &bytes_read, &overlapped) == FALSE)
+    {
+        return -1;
+    }
+    return (s64)bytes_read;
+}
+
+signal_event_handle signal_event_create(b8 signaled)
+{
+    HANDLE event = CreateEventA(NULL, TRUE, signaled, NULL);
+    return (signal_event_handle)event;
+}
+
+void signal_event_set(signal_event_handle signal_event)
+{
+    HANDLE event = (HANDLE)signal_event;
+    SetEvent(event);
+}
+
+void signal_event_reset(signal_event_handle signal_event)
+{
+    HANDLE event = (HANDLE)signal_event;
+    ResetEvent(event);
+}
 #if 0
 typedef struct
 {
-    input_state input;
+    struct input_state header;
     IDirectInput8 *dinput;
     LPDIRECTINPUTDEVICE8 device;
 } dinput_state;

@@ -119,16 +119,16 @@ inline vec2i v2ifromu32(u32 v)
     return result;
 }
 
-static inline int max3(int a, int b, int c)
+inline int max3(int a, int b, int c)
 {
     int x = b > c ? b : c;
     return a > x ? a : x;
 }
 
-static inline int min3(int a, int b, int c)
+inline int min3(int a, int b, int c)
 {
     int x = b < c ? b : c;
     return a < x ? a : x;
 }
 
-#endif
+#endif /* SY_MATH_H */

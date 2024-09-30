@@ -1,7 +1,7 @@
-#ifndef TIMERS_H
-#define TIMERS_H
+#ifndef COUNTERS_H
+#define COUNTERS_H
 
-#include "psx.h"
+#include "common.h"
 
 typedef union 
 {
@@ -20,25 +20,26 @@ typedef union
         u32 reached_overflow : 1;
     };
     u32 value;
-} timer_mode;
+} counter_mode;
 
 struct root_counter
 {
     u32 value;
     u16 target;
-    timer_mode mode;
+    counter_mode mode;
     u32 remainder;
     u64 prev_cycle_count;
     u64 pause_ticks;
     u64 timestamp; // event timestamp ex: enter vblank
-    u64 sync_ticks;
     b8 sync;
     b8 clock_delay; // ref: psx-spx, when resetting by writing to mode or writing the current value, timer pauses for 2 clks
-    b8 paused;
+    //b8 paused;
     b8 is_write_above_target;
 };
 
-u32 timers_read(struct psx_state *psx, u32 offset);
-void timers_store(struct psx_state *psx, u32 offset, u32 value);
+extern struct root_counter g_counters[3];
 
-#endif
+u32 counters_read(u32 offset);
+void counters_store(u32 offset, u32 value);
+
+#endif /* COUNTERS_H */

@@ -1,4 +1,12 @@
 .vscode
 bin
-build
+obj
 src/old
+
+*.exe
+*.pdb
+*.ilk
+
+makefile.c
+mkc.h
+build.bat

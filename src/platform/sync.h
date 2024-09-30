@@ -9,4 +9,4 @@ signal_event_handle signal_event_create(b8 signaled);
 void signal_event_set(signal_event_handle signal_event);
 void signal_event_reset(signal_event_handle signal_event);
 
-#endif
+#endif /* SYNC_H */

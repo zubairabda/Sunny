@@ -46,4 +46,4 @@ inline void log_char(int c)
 #define debug_putchar(char)
 #endif
 
-#endif
+#endif /* DEBUG_H */

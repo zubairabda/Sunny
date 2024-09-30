@@ -20,11 +20,11 @@ typedef s16         b16;
 typedef s32         b32;
 
 #if SY_DEBUG
-#define SY_ASSERT(expr) do { if (!(expr)) { printf("[ASSERT]: expression: '%s' at %s:%d, did not evalulate\n", #expr, __FILE__, __LINE__); volatile int *p = 0; *p = 0; } } while(0)
-#define SY_INVALID_CASE default: SY_ASSERT(0); break
+#define SY_ASSERT(expr) do { if (!(expr)) { printf("[ASSERT]: expression: '%s' at %s:%d, did not evaluate\n", #expr, __FILE__, __LINE__); volatile int *p = 0; *p = 0; } } while(0)
+#define INVALID_CASE default: SY_ASSERT(0); break
 #else
 #define SY_ASSERT(expr)
-#define SY_INVALID_CASE
+#define INVALID_CASE
 #endif
 #define ARRAYCOUNT(arr) (sizeof(arr) / sizeof(arr[0]))
 
@@ -73,4 +73,4 @@ inline u32 safe_truncate32(u64 v)
 #define U16FromPtr(ptr) (*(u16 *)(ptr))
 #define U8FromPtr(ptr) (*(u8 *)(ptr))
 
-#endif
+#endif /* COMMON_H */

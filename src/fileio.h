@@ -3,56 +3,26 @@
 
 #include "common.h"
 
-enum CueContextType
+struct file_dat
 {
-    CUE_CONTEXT_TYPE_NONE,
-    CUE_CONTEXT_TYPE_FILE,
-    CUE_CONTEXT_TYPE_TRACK
-};
-
-enum CueFileType
-{
-    CUE_FILE_TYPE_BINARY,
-    CUE_FILE_TYPE_COUNT
-};
-
-struct CueTable
-{
-    int foo;
-};
-
-enum CueTokenType
-{
-    CUE_TOKEN_TYPE_IDENTIFIER,
-    CUE_TOKEN_TYPE_STRING,
-    CUE_TOKEN_TYPE_NUMBER,
-    CUE_TOKEN_TYPE_UNKNOWN,
-    CUE_TOKEN_TYPE_NULL,
-    CUE_TOKEN_TYPE_COUNT
-};
-
-struct Parser
-{
-    u8* ptr;
-    u8* end;
-};
-
-struct CueToken
-{
-    u8* t;
-    enum CueTokenType type;
-    u32 length;
-};
-
-struct FileInfo
-{
-    void* memory;
+    void *memory;
     u64 size;
 };
 
-b8 read_file(char* path, struct FileInfo* info);
-b8 write_file(struct FileInfo* file, char* out);
-void parse_cue_file(struct FileInfo* cue);
+typedef struct
+{
+    uintptr_t handle;
+} platform_file;
+
+platform_file open_file(const char *path);
+b8 file_is_valid(platform_file file);
+void close_file(platform_file file);
+s64 read_file(platform_file file, u64 offset, void *dst_buffer, u32 bytes_to_read);
+
+b8 allocate_and_read_file(const char* path, struct file_dat* out_file);
+b8 allocate_and_read_file_null_terminated(const char *path, struct file_dat *out_file);
+b8 write_file(struct file_dat* file, char *out);
+void parse_cue_file(const char *path);
 void write_bmp(u32 width, u32 height, u8* data, char* filename);
 
-#endif
+#endif /* FILEIO_H */

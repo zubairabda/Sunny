@@ -2,10 +2,23 @@
 #include "allocator.h"
 #include "cpu.h"
 
+struct tick_event
+{
+    struct tick_event *next;
+    struct tick_event *prev;
+    event_callback callback;
+    u64 system_cycles_at_event;
+    u64 id;
+    //s32 cycles_until_event;
+    //void *data;
+    u32 param;
+};
+
 u64 g_cycles_elapsed;
 
 static struct memory_pool s_event_pool;
 static struct tick_event *s_sentinel_event;
+static u64 id_count;
 
 #define MIN_TICK_COUNT 384
 
@@ -18,55 +31,44 @@ void scheduler_init(struct memory_arena *arena)
     s_sentinel_event->system_cycles_at_event = 0;
 }
 
-struct tick_event *find_first_event_with_id(enum event_id id)
-{
-    for (struct tick_event *event = s_sentinel_event->next; event != s_sentinel_event; event = event->next)
-    {
-        if (event->id == id) {
-            return event;
-        }
-    }
-    return NULL;
-}
-
-void remove_event(struct tick_event *event)
+static inline void event_dealloc(struct tick_event *event)
 {
     event->next->prev = event->prev;
     event->prev->next = event->next;
     pool_dealloc(&s_event_pool, event);
 }
 
-#if 0
-b8 update_events_with_id(enum event_id id, s32 cycles_until_event)
+void remove_event(u64 id)
 {
-    b8 event_with_id_found = 0;
-    for (struct tick_event *event = s_sentinel_event->next; event != s_sentinel_event; event = event->next)
+    if (!id) 
     {
-        if (event->id == id)
-        {
-            event_with_id_found = 1;
-            event->system_cycles_at_event = g_cycles_elapsed + cycles_until_event;
-            if (scheduler->target_cycle_count > event->system_cycles_at_event)
-            {
-                scheduler->target_cycle_count = event->system_cycles_at_event;
-            }
-        }
+        return;
     }
-    return event_with_id_found;
-}
-#endif
 
-void schedule_event(event_callback callback, void *data, u32 param, s32 cycles_until_event, enum event_id id)
+    struct tick_event *current = s_sentinel_event->next;
+    while (current != s_sentinel_event)
+    {
+        if (current->id == id)
+        {
+            event_dealloc(current);
+            return;
+        }
+        current = current->next;
+    }
+}
+
+u64 schedule_event(event_callback callback, u32 param, s32 cycles_until_event)
 {
-    SY_ASSERT(callback);
+    //SY_ASSERT(callback);
     // TODO: event ID
     //debug_log("Enqueuing event...\n");
     struct tick_event *event = pool_alloc(&s_event_pool);
     event->callback = callback;
     event->system_cycles_at_event = g_cycles_elapsed + cycles_until_event;
-    event->data = data;
-    event->id = id;
-
+    //event->data = data;
+    event->param = param;
+    event->id = ++id_count;
+    
     struct tick_event *current = s_sentinel_event->next;
     while (current != s_sentinel_event)
     {
@@ -78,16 +80,7 @@ void schedule_event(event_callback callback, void *data, u32 param, s32 cycles_u
     event->prev = current->prev;
     current->prev = event;
     event->next = current;
-#if 0
-    // if an event is scheduled to happen before the cycles remaining, we need to stop ticking the cpu when this event occurs to process it
-    //if ((cpu->cycles_to_run - (cpu->cycles_this_step + cpu->cycles_taken)) > cycles_until_event)
-    if (scheduler->target_cycle_count > event->system_cycles_at_event)
-    {
-        // TODO: double check this
-        //cpu->cycles_to_run = cycles_until_event + cpu->cycles_taken;
-        scheduler->target_cycle_count = event->system_cycles_at_event;
-    }
-#endif
+    return event->id;
 }
 
 void tick_events(u64 tick_count)
@@ -98,8 +91,8 @@ void tick_events(u64 tick_count)
         if (g_cycles_elapsed >= current->system_cycles_at_event)
         {
             s32 cycles_late = -(s32)(current->system_cycles_at_event - g_cycles_elapsed);
-            current->callback(current->data, current->param, cycles_late);
-            remove_event(current);
+            current->callback(current->param, cycles_late);
+            event_dealloc(current);
             current = s_sentinel_event->next;
         }
         else
@@ -122,8 +115,7 @@ u64 get_tick_count(void)
     }
 }
 
-void set_interrupt(void *data, u32 param, s32 cycles_late)
+void set_interrupt(u32 param, s32 cycles_late)
 {
-    struct cpu_state *cpu = data;
-    cpu->i_stat |= param;
+    g_cpu.i_stat |= param;
 }

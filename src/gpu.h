@@ -80,19 +80,19 @@ struct gpu_state
 {
     renderer_interface *renderer;
     enum gpu_command_type command_type;
-    union
-    {
-        enum polygon_render_flags polygon_flags;
-        enum rectangle_render_flags rect_flags;
-    };
+    u8 render_flags;
+
     u32 fifo[16];
     u32 fifo_len;
     u32 read;
     GPUSTAT stat;
-
-    u64 timestamp; // timestamp in cpu cycles
-    u32 prev_cycles;
-
+    // timings
+    u64 timestamp; // cpu cycles
+    u32 scanline_cycles; // video cycles
+    u32 remainder_cycles;
+    u32 hblanks;
+    s32 dot_div;
+    
     b8 allow_texture_disable;
     b8 draw_area_changed;
 
@@ -125,34 +125,38 @@ struct gpu_state
     u16 horizontal_display_x2;
     u16 vertical_display_y1;
     u16 vertical_display_y2;
-    // TODO: maybe unused
-    u32 num_hblank_begin_callbacks;
-    u32 num_hblank_end_callbacks;
 
+    u64 video_cycles;
 };
 
-inline void reset_gpu_draw_state(struct gpu_state *gpu)
-{
-    gpu->copy_buffer_len = 0;
-    gpu->draw_area_changed = 1;
-}
+extern struct gpu_state g_gpu;
 
+#if 0
+inline u64 video_to_cpu_cycles(u64 video_cycles, u64 remainder)
+{
+    return ((video_cycles * 451584) + remainder) / 715909;
+}
+#else
 inline u64 video_to_cpu_cycles(u64 video_cycles)
 {
-    return (u64)((video_cycles * 451584) / 715909.0f);
+    return (video_cycles * 451584) / 715909;
 }
-
-inline b8 in_vblank(struct gpu_state *gpu)
-{
-    return gpu->scanline < gpu->vertical_display_y1 || gpu->scanline >= gpu->vertical_display_y2;
-}
-
-
-u32 gpuread(struct gpu_state *gpu);
-//void gpu_hblank_event(void *data, u32 param, s32 cycles_late);
-u64 gpu_tick(struct gpu_state *gpu);
-void execute_gp1_command(struct gpu_state *gpu, u32 command);
-void execute_gp0_command(struct gpu_state *gpu, u32 word);
-void gpu_scanline_complete(void *data, u32 param, s32 cycles_late);
-
 #endif
+inline u64 cpu_to_video_cycles(u64 cpu_cycles, u64 remainder)
+{
+    return (cpu_cycles * 715909) / 451584;
+}
+
+inline b8 in_vblank(void)
+{
+    return g_gpu.scanline < g_gpu.vertical_display_y1 || g_gpu.scanline >= g_gpu.vertical_display_y2;
+}
+
+void gpu_reset(void);
+u32 gpuread(void);
+void execute_gp1_command(u32 command);
+void execute_gp0_command(u32 word);
+void gpu_scanline_complete(u32 param, s32 cycles_late);
+void gpu_hsync(void);
+
+#endif /* GPU_H */

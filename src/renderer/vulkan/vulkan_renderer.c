@@ -913,7 +913,7 @@ void vulkan_update_display(renderer_interface *renderer)
     vkWaitForFences(vk->device, 1, &vk->render_fence, VK_TRUE, UINT64_MAX);
 }
 
-static void renderer_destroy(renderer_interface *renderer)
+void vulkan_destroy_context(renderer_interface *renderer)
 {
     struct vulkan_context *vk = (struct vulkan_context *)renderer;
     vkDeviceWaitIdle(vk->device);
