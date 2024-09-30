@@ -49,11 +49,6 @@ void psx_init(struct memory_arena *arena, void *bios)
     cdrom_init(disk);
 
     //result->cdrom.status = 0x8; // set parameter fifo to empty
-    
-    g_sio.rx_buffer = 0xff;
-    g_sio.stat.tx_started = 1;
-    g_sio.stat.tx_finished = 1;
-    g_sio.buttons.value = 0xffff;
 
     dma_init();
 
@@ -66,6 +61,11 @@ void psx_init(struct memory_arena *arena, void *bios)
     g_spu.buffered_samples = push_arena(arena, 2048);
 
     scheduler_init(arena);
+
+    //g_sio.rx_buffer = 0xff;
+    g_sio.stat.tx_fifo_not_full = 1;
+    g_sio.stat.tx_finished = 1;
+    //g_sio.buttons.value = 0xffff;
 
     schedule_event(spu_tick, 0, 768);
     //schedule_event(result, gpu_scanline_complete, 0, video_to_cpu_cycles(3413));

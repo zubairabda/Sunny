@@ -7,7 +7,7 @@
 
 #include "fileio.h"
 #include "platform/sync.h"
-#include "platform/input.h"
+#include "input.h"
 
 static s16 *debug_sound_buffer;
 static u32 debug_sound_buffer_index;
@@ -47,6 +47,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     LRESULT result = 0;
     switch (msg)
     {
+#if 0
     case WM_CREATE:
     {
         CREATESTRUCT *createstruct = (CREATESTRUCT *)lParam;
@@ -57,6 +58,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             result = -1;
         }
     } break;
+#endif
     case WM_CLOSE:
         g_running = SY_FALSE;
         break;
@@ -64,10 +66,10 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     {
         u32 width = lParam & 0xffff;
         u32 height = (lParam >> 16) & 0xffff;
-        struct win32_window_data* data = (struct win32_window_data *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-        if (data->renderer) // TODO: likely want to check if the renderer is hooked in some other way
+        //struct win32_window_data* data = (struct win32_window_data *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+        if (g_gpu.renderer) // TODO: likely want to check if the renderer is hooked in some other way
         {
-            data->renderer->handle_resize(data->renderer, width, height);
+            g_gpu.renderer->handle_resize(g_gpu.renderer, width, height);
         }
         //renderer_handle_resize(width, height);
     } break;
@@ -89,11 +91,13 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 #endif
     case WM_KEYDOWN:
     case WM_KEYUP:
-
         if (wParam < 128)
         {
-            struct win32_window_data* data = (struct win32_window_data *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-            data->input->keystates[wParam] = !((u32)lParam >> 31);
+            if (g_sio.devices[0])
+            {
+                struct keyboard_pad *kbd = (struct keyboard_pad *)g_sio.devices[0];
+                kbd->keystates[wParam] = !((u32)lParam >> 31);   
+            }
         }
         break;
     default:
@@ -151,19 +155,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     wc.hInstance = hInstance;
     wc.lpszClassName = class_name;
     RegisterClassA(&wc);
-
-    struct input_state input = {0};
 #if 0
     if (!dinput_init(hInstance, &input)) {
         debug_log("Failed to initialize DirectInput.\n");
         //SY_ASSERT(0);
     }
 #endif
+#if 0
     struct win32_window_data window_data = {0};
     window_data.input = &input;
-
+#endif
     HWND window = CreateWindowExA(0, class_name, "Sunny", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-        CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, hInstance, &window_data);
+        CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, hInstance, NULL);
     if (!window) {
         debug_log("Could not create the window handle!\n");
         return -1;
@@ -185,7 +188,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     g_app.hdc = hdc;
 #else
     renderer_interface *renderer = win32_load_renderer_from_dll(window, hInstance, "vulkan_renderer.dll");
-    window_data.renderer = renderer;
 #endif
 
     struct file_dat bios;
@@ -210,6 +212,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     memset(main_arena.base, 0, main_arena.size);
 
     psx_init(&main_arena, bios.memory);
+
+    g_sio.devices[0] = push_arena(&main_arena, sizeof(struct keyboard_pad));
+    g_sio.devices[0]->type = INPUT_DEVICE_DIGITAL_PAD;
+    g_sio.devices[0]->input_get_data = keyboard_get_digital_pad_input;
 
     g_gpu.renderer = renderer;
 
