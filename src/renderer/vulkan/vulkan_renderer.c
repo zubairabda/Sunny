@@ -274,7 +274,6 @@ static int vulkan_make_device(struct vulkan_context *vk)
 
 static int vulkan_init_internal(struct vulkan_context *vk)
 {
-    VkResult res;
     u32 i;
 
     {
@@ -284,7 +283,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        res = vkCreateBuffer(vk->device, &buffer_info, NULL, &vk->vertex_buffer);
+        vkCreateBuffer(vk->device, &buffer_info, NULL, &vk->vertex_buffer);
         
         VkMemoryRequirements requirements;
         vkGetBufferMemoryRequirements(vk->device, vk->vertex_buffer, &requirements);
@@ -306,7 +305,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        res = vkCreateBuffer(vk->device, &buffer_info, VK_NULL_HANDLE, &vk->staging_buffer);
+        vkCreateBuffer(vk->device, &buffer_info, VK_NULL_HANDLE, &vk->staging_buffer);
         
         VkMemoryRequirements requirements;
         vkGetBufferMemoryRequirements(vk->device, vk->staging_buffer, &requirements);
@@ -380,7 +379,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         //renderpass_info.dependencyCount = 1;
         //renderpass_info.pDependencies = &dependencies[1];
         
-        res = vkCreateRenderPass(vk->device, &renderpass_info, NULL, &vk->renderpass);
+        vkCreateRenderPass(vk->device, &renderpass_info, NULL, &vk->renderpass);
 
         VkFramebufferCreateInfo framebuffer_info = {0};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -412,7 +411,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         alloc_info.commandBufferCount = 1;
         alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 
-        res = vkAllocateCommandBuffers(vk->device, &alloc_info, &vk->command_buffer);
+        vkAllocateCommandBuffers(vk->device, &alloc_info, &vk->command_buffer);
     }
 
     {
@@ -422,7 +421,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         alloc_info.commandBufferCount = 1;
         alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 
-        res = vkAllocateCommandBuffers(vk->device, &alloc_info, &vk->present_thread_command_buffer);
+        vkAllocateCommandBuffers(vk->device, &alloc_info, &vk->present_thread_command_buffer);
     }
 
     VkSemaphoreCreateInfo semaphore_info = {0};
@@ -489,7 +488,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
     descriptor_alloc_info.descriptorPool = vk->descriptor_pool;
     descriptor_alloc_info.descriptorSetCount = 2;
     descriptor_alloc_info.pSetLayouts = layouts;
-    res = vkAllocateDescriptorSets(vk->device, &descriptor_alloc_info, sets);
+    vkAllocateDescriptorSets(vk->device, &descriptor_alloc_info, sets);
     vk->descriptor_set = sets[0];
     vk->fullscreen_descriptor_set = sets[1];
 
@@ -686,8 +685,7 @@ static void vulkan_flush_commands(renderer_interface *renderer)
 
             vkCmdPushConstants(vk->command_buffer, vk->pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(u32), &cmd->texture_mode);
             vkCmdDraw(vk->command_buffer, cmd->vertex_count, 1, cmd->vertex_array_offset, 0);
-            if (scissor_set == 0)
-                printf("nothing\n");
+            SY_ASSERT(scissor_set);
         } break;
         case RENDER_COMMAND_SET_DRAW_AREA:
         {

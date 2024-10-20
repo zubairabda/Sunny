@@ -19,6 +19,13 @@ enum rectangle_render_flags
     RECT_FLAG_RAW_TEXTURE = 0x1
 };
 
+enum line_render_flags
+{
+    LINE_FLAG_SEMI_TRANSPARENT = 0x2,
+    LINE_FLAG_POLYLINE = 0x8,
+    LINE_FLAG_GOURAUD_SHADED = 0x10
+};
+
 typedef union
 {
     struct

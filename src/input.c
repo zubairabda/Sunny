@@ -13,19 +13,31 @@ void keyboard_get_digital_pad_input(struct input_device_base *keyboard)
     if (kbd->keystates['I'])
         buttons |= PAD_TRIANGLE;
     if (kbd->keystates['J'])
-        buttons |= PAD_CIRCLE;
+        buttons |= PAD_SQUARE;
     if (kbd->keystates['K'])
         buttons |= PAD_CROSS;
     if (kbd->keystates['L'])
-        buttons |= PAD_SQUARE;
+        buttons |= PAD_CIRCLE;
     if (kbd->keystates['W'])
         buttons |= PAD_UP;
     if (kbd->keystates['A'])
-        buttons |= PAD_RIGHT;
+        buttons |= PAD_LEFT;
     if (kbd->keystates['S'])
         buttons |= PAD_DOWN;
     if (kbd->keystates['D'])
         buttons |= PAD_RIGHT;
+    if (kbd->keystates['Q'])
+        buttons |= PAD_L1;
+    if (kbd->keystates['E'])
+        buttons |= PAD_L2;
+    if (kbd->keystates['U'])
+        buttons |= PAD_R2;
+    if (kbd->keystates['O'])
+        buttons |= PAD_R1;
+    if (kbd->keystates['F'])
+        buttons |= PAD_SELECT;
+    if (kbd->keystates['H'])
+        buttons |= PAD_START;
 
     buttons = ~buttons;
     kbd->base.data[0] = (u8)buttons;

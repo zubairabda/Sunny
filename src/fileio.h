@@ -24,5 +24,6 @@ b8 allocate_and_read_file_null_terminated(const char *path, struct file_dat *out
 b8 write_file(struct file_dat* file, char *out);
 void parse_cue_file(const char *path);
 void write_bmp(u32 width, u32 height, u8* data, char* filename);
+void write_wav_file(void *sample_data, u32 size_in_bytes, char *dstpath);
 
 #endif /* FILEIO_H */

@@ -12,6 +12,8 @@ struct debug_state
     int last_char;
     u8 *loaded_exe;
     b8 show_disasm;
+    u16 *sound_buffer;
+    u32 sound_buffer_len;
 };
 
 extern struct debug_state g_debug;

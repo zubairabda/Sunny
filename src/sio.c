@@ -93,7 +93,6 @@ static void sio_cmd(u8 cmd)
                 }
 
                 g_sio.stat.ack_is_low = 1;
-                g_sio.rx_has_data = 1;
                 g_sio.state = SIO_STATE_READ_CONTROLLER;
                 g_sio.sequence_index = 0;
                 schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY);
@@ -134,7 +133,7 @@ static void sio_cmd(u8 cmd)
         
         case 1:
             // TODO: check TAP byte
-            SY_ASSERT(cmd == 0x0);
+            //SY_ASSERT(cmd == 0x0);
             g_sio.rx_buffer = 0x5A;
             g_sio.stat.rx_fifo_not_empty = 1;
             break;

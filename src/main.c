@@ -9,8 +9,6 @@
 #include "platform/sync.h"
 #include "input.h"
 
-static s16 *debug_sound_buffer;
-static u32 debug_sound_buffer_index;
 static b8 stopkeypressed;
 
 signal_event_handle g_present_thread_handle;
@@ -146,7 +144,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     current_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(conout, current_mode);
 #endif
-    debug_sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    g_debug.sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
     char *class_name = "SunnyWindowClass";
     WNDCLASSA wc = {0};
@@ -194,11 +192,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     char* bios_name = "SCPH1001.BIN";
     allocate_and_read_file(bios_name, &bios);
     // test exe's provided by amidog and Jakub
-    char *exes[] = {"psxtest_cpu", "otc-test", "gp0-e1", "dpcr", "chopping", "MemoryTransfer24BPP", "clipping", "padtest", "PlayADPCMSample", "PlaySong", "timing", "access-time"};
+    char *exes[] = {"otc-test", "gp0-e1", "dpcr", "chopping", "MemoryTransfer24BPP", "clipping", "padtest", "PlayADPCMSample", "PlaySong", "timing", "access-time"};
     char filename[64];
     //snprintf(filename, 64, "exes/%s.exe", exes[11]);
     //snprintf(filename, 64, "exes/timers.exe");
-    snprintf(filename, 64, "exes/cd/cdlreadn.ps-exe");
+    //snprintf(filename, 64, "exes/cd/cdlreadn.ps-exe");
+    snprintf(filename, 64, "exes/test-all.exe");
     struct file_dat test;
     allocate_and_read_file(filename, &test);
     g_debug.loaded_exe = test.memory;
@@ -253,15 +252,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }
-#if 0       
-        if (input.keystates['P'] && !stopkeypressed)
+#if 0
+        struct keyboard_pad *kbd = (struct keyboard_pad *)g_sio.devices[0];
+        if (kbd->keystates['P'] && !stopkeypressed)
         {
             stopkeypressed = 1;
-            write_wav_file(debug_sound_buffer, debug_sound_buffer_index * 2, "debugoutput0.wav");
-            win32_play_sound(audio, (u8 *)debug_sound_buffer);
+            write_wav_file(g_debug.sound_buffer, g_debug.sound_buffer_len * 2, "crash.wav");
+            //win32_play_sound(audio, (u8 *)debug_sound_buffer);
         }
 #endif
         emulate_from_audio(audio);
+        //psx_run();
 
         //play_sound_test(audio);
         QueryPerformanceCounter(&end_counter);

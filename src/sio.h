@@ -81,7 +81,6 @@ struct sio_context
     u8 tx_buffer; // TODO: remove
     u8 tx_buffer_full;
     u8 rx_buffer;
-    u8 rx_has_data; /* debugging */
     u8 rx_buffer_full;
     u64 cycles_at_baud_store;
 };

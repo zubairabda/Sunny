@@ -2,6 +2,8 @@
 #include "allocator.h"
 #include "cpu.h"
 
+#define MAX_EVENT_COUNT 16
+
 struct tick_event
 {
     struct tick_event *next;
@@ -83,6 +85,18 @@ u64 schedule_event(event_callback callback, u32 param, s32 cycles_until_event)
     return event->id;
 }
 
+u64 reschedule_event(event_callback callback, s32 param, u64 event_id, s32 cycles_until_event)
+{
+    struct tick_event *current = s_sentinel_event->next;
+    while (current != s_sentinel_event) {
+        if (current->id == event_id) {
+            current->system_cycles_at_event = g_cycles_elapsed + cycles_until_event;
+            return event_id;
+        }
+    }
+    return schedule_event(callback, param, cycles_until_event);
+}
+
 void tick_events(u64 tick_count)
 {
     struct tick_event *current = s_sentinel_event->next;
@@ -113,9 +127,4 @@ u64 get_tick_count(void)
     {
         return MIN_TICK_COUNT;
     }
-}
-
-void set_interrupt(u32 param, s32 cycles_late)
-{
-    g_cpu.i_stat |= param;
 }

@@ -2,6 +2,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#pragma pack(push, 1)
+struct wav_header
+{
+    u8 riff[4];
+    u32 chunk_size;
+    u8 wave[4];
+};
+
+struct wav_format_chunk
+{
+    u8 fmt[4];
+    u32 chunk_size;
+    u16 format_tag;
+    u16 num_channels;
+    u32 samples_per_second;
+    u32 bytes_per_second;
+    u16 block_align;
+    u16 bits_per_sample;
+};
+
+struct wav_data_chunk
+{
+    u8 data[4];
+    u32 chunk_size;
+};
+#pragma pack(pop)
+
 enum cue_context_type
 {
     CUE_CONTEXT_NONE,
@@ -19,8 +46,7 @@ enum cue_track_type
 {
     CUE_TRACK_AUDIO,
     CUE_TRACK_MODE2_FORM1,
-    CUE_TRACK_MODE2_FORM2,
-
+    CUE_TRACK_MODE2_FORM2
 };
 
 struct CueTable
@@ -76,6 +102,10 @@ b8 allocate_and_read_file(const char* path, struct file_dat* out_file)
     b8 result = SY_FALSE;
 
     FILE* f = fopen(path, "rb");
+    if (!f) {
+        return SY_FALSE;
+    }
+
     fseek(f, 0, SEEK_END);
     u64 size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -96,6 +126,9 @@ end:
 b8 allocate_and_read_file_null_terminated(const char *path, struct file_dat *out_file)
 {
     FILE* f = fopen(path, "rb");
+    if (!f) {
+        return SY_FALSE;
+    }
     fseek(f, 0, SEEK_END);
     u64 size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -385,4 +418,49 @@ void write_bmp(u32 width, u32 height, u8* data, char* filename)
     fwrite(data, 2, (width * height), file);
     fclose(file);
     //free(buffer);
+}
+
+void write_wav_file(void *sample_data, u32 size_in_bytes, char *dstpath)
+{
+    FILE *f = fopen(dstpath, "wb");
+    struct wav_header header = {0};
+    header.riff[0] = 'R';
+    header.riff[1] = 'I';
+    header.riff[2] = 'F';
+    header.riff[3] = 'F';
+
+    header.wave[0] = 'W';
+    header.wave[1] = 'A';
+    header.wave[2] = 'V';
+    header.wave[3] = 'E';
+
+    header.chunk_size = size_in_bytes + 36;
+
+    fwrite(&header, sizeof(struct wav_header), 1, f);
+
+    struct wav_format_chunk format = {0};
+    format.fmt[0] = 'f';
+    format.fmt[1] = 'm';
+    format.fmt[2] = 't';
+    format.fmt[3] = ' ';
+    format.bits_per_sample = 16;
+    format.block_align = 4;
+    format.bytes_per_second = 44100 * 4;
+    format.chunk_size = 16;
+    format.format_tag = 1;
+    format.num_channels = 2;
+    format.samples_per_second = 44100;
+    
+    fwrite(&format, sizeof(struct wav_format_chunk), 1, f);
+
+    struct wav_data_chunk chunk = {0};
+    chunk.data[0] = 'd';
+    chunk.data[1] = 'a';
+    chunk.data[2] = 't';
+    chunk.data[3] = 'a';
+    chunk.chunk_size = size_in_bytes;
+
+    fwrite(&chunk, sizeof(struct wav_data_chunk), 1, f);
+    fwrite(sample_data, 1, size_in_bytes, f);
+    fclose(f);
 }

@@ -78,7 +78,7 @@ void cdrom_init(platform_file disk)
     {
         g_cdrom.disk = disk;
     }
-    g_cdrom.stat |= CDROM_STAT_SHELLOPEN;
+    //g_cdrom.stat |= CDROM_STAT_SHELLOPEN;
 }
 
 static void cdrom_response_event(u32 param, s32 cycles_late)

@@ -1,6 +1,6 @@
 #define INITGUID
 #include <dinput.h>
-#include "platform/input.h"
+#include "input.h"
 #if 0
 typedef struct
 {

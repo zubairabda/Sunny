@@ -82,32 +82,6 @@ enum coprocessor_op
     RFE = 0x10
 };
 
-enum gte_command
-{
-    RTPS = 0x1,
-    NCLIP = 0x6,
-    OP = 0xC,
-    DPCS = 0x10,
-    INTPL = 0x11,
-    MVMVA = 0x12,
-    NCDS = 0x13,
-    CDP = 0x14,
-    NCDT = 0x16,
-    NCCS = 0x1B,
-    CC = 0x1C,
-    NCS = 0x1E,
-    NCT = 0x20,
-    SQR = 0x28,
-    DCPL = 0x29,
-    DPCT = 0x2A,
-    AVSZ3 = 0x2D,
-    AVSZ4 = 0x2E,
-    RTPT = 0x30,
-    GPF = 0x3D,
-    GPL = 0x3E,
-    NCCT = 0x3F
-};
-
 typedef union {
     struct {
         u32 secondary : 6;
@@ -203,5 +177,6 @@ inline u64 sign_extend32_64(u64 val)
 
 void cpu_init(void);
 u64 execute_instruction(u64 min_cycles);
+void set_interrupt(u32 interrupt, s32 cycles_late);
 
 #endif /* CPU_H */

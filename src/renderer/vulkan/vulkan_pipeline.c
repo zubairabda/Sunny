@@ -60,7 +60,7 @@ exit:
     return result;
 }
 
-static void pipeline_create(struct vulkan_context *vk, struct vulkan_pipeline_config *config, VkPipeline *out_pipeline, VkPipelineLayout *out_pipeline_layout)
+static b8 pipeline_create(struct vulkan_context *vk, struct vulkan_pipeline_config *config, VkPipeline *out_pipeline, VkPipelineLayout *out_pipeline_layout)
 {
     VkResult res;
 
@@ -164,6 +164,9 @@ static void pipeline_create(struct vulkan_context *vk, struct vulkan_pipeline_co
 
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     res = vkCreatePipelineLayout(vk->device, &layout_info, NULL, &pipeline_layout);
+    if (res != VK_SUCCESS) {
+        return 0;
+    }
 
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipeline_info.stageCount = config->shader_stage_count;
@@ -179,5 +182,10 @@ static void pipeline_create(struct vulkan_context *vk, struct vulkan_pipeline_co
     pipeline_info.renderPass = config->renderpass;
 
     res = vkCreateGraphicsPipelines(vk->device, NULL, 1, &pipeline_info, NULL, out_pipeline);
+    if (res != VK_SUCCESS) {
+        vkDestroyPipelineLayout(vk->device, pipeline_layout, NULL);
+        return 0;
+    }
     *out_pipeline_layout = pipeline_layout;
+    return 1;
 }

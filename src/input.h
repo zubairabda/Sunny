@@ -10,12 +10,7 @@ struct keyboard_pad
     u8 keystates[128];
 };
 
-//input_plugin *init_input(void);
-//void deinit_input(input_plugin *input);
-
 void keyboard_get_digital_pad_input(struct input_device_base *keyboard);
-void keyboard_get_analog_pad_input(struct input_device_base *keyboard);
-
-//b8 input_is_button_down(u16 mask);
+//void keyboard_get_analog_pad_input(struct input_device_base *keyboard);
 
 #endif /* INPUT_H */

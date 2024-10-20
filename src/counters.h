@@ -31,6 +31,7 @@ struct root_counter
     u64 prev_cycle_count;
     u64 pause_ticks;
     u64 timestamp; // event timestamp ex: enter vblank
+    u64 interrupt_event_id;
     b8 sync;
     b8 clock_delay; // ref: psx-spx, when resetting by writing to mode or writing the current value, timer pauses for 2 clks
     //b8 paused;

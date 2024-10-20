@@ -2,6 +2,8 @@
 #include "event.h"
 #include "debug.h"
 
+#include "fileio.h"
+
 static s16 gauss_table[] = 
 {
     -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001,
@@ -276,6 +278,7 @@ void spu_write(u32 offset, u32 value)
         case 0x1c:
         case 0x1e:
             // ENDX
+            g_spu.cnt.endx = value;
             break;
         case 0x20:
             // garbage?
@@ -620,18 +623,17 @@ void spu_tick(u32 param, s32 cycles_late)
     schedule_event(spu_tick, 0, 768 - cycles_late);
 #endif
 #if 0
-    if (((debug_sound_buffer_index + 2) * 2) < MEGABYTES(16))
+    if (((g_debug.sound_buffer_len + 2) * 2) < MEGABYTES(16))
     {
-        debug_sound_buffer[debug_sound_buffer_index++] = clamp16(final_vol_left);
-        debug_sound_buffer[debug_sound_buffer_index++] = clamp16(final_vol_right);
+        g_debug.sound_buffer[g_debug.sound_buffer_len++] = clamp16(final_vol_left);
+        g_debug.sound_buffer[g_debug.sound_buffer_len++] = clamp16(final_vol_right);
     }
     else
     {
         static b8 b = 0;
-        if (!b)
-        {
+        if (!b) {
             b = 1;
-            write_wav_file(debug_sound_buffer, debug_sound_buffer_index * 2, "output.wav");
+            write_wav_file(g_debug.sound_buffer, g_debug.sound_buffer_len * 2, "output.wav");
         }
     }
 #endif

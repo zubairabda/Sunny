@@ -2,6 +2,7 @@
 #include "gpu.h"
 #include "event.h"
 #include "debug.h"
+#include "cpu.h"
 
 struct root_counter g_counters[3];
 
@@ -185,6 +186,36 @@ u32 counters_read(u32 offset)
     return result;
 }
 
+static u32 get_timer_ticks_until_interrupt(u32 timer_index)
+{
+    struct root_counter *counter = &g_counters[timer_index];
+    switch (timer_index)
+    {
+    case 2:
+    {
+        if (!counter->mode.sync_enable || counter->mode.sync_mode == 1 || counter->mode.sync_mode == 2)
+        {
+            if (counter->mode.irq_on_target) {
+                return counter->target;
+            }
+            else if (counter->mode.irq_on_overflow) {
+                return 0xffff;
+            }
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    return 0;
+}
+
+static void timer_interrupt(u32 timer_index, s32 cycles_late)
+{
+    g_cpu.i_stat |= ((u32)INTERRUPT_TIMER0) << timer_index;
+    g_counters[timer_index].interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
+}
+
 void counters_store(u32 offset, u32 value)
 {
     u32 timer_offset = offset & 0xf;
@@ -226,76 +257,11 @@ void counters_store(u32 offset, u32 value)
         counter->pause_ticks = 0;
         counter->timestamp = g_cycles_elapsed; // TODO: remove?
         counter->remainder = 0;
-#if 0
-        u32 change = old_value ^ timer->mode.value;
-        if (change & 0x6) // sync mode changed
-        {
-            if (timer->mode.sync_enable)
-            {
-                switch (timer_index)
-                {
-                case 0:
-                {
-                    switch (timer->mode.sync_mode)
-                    {
-                    case 0: // pause during hblank
-                        /* code */
-                        break;
-                    
-                    default:
-                        break;
-                    }
-                    break;
-                }
-                case 1:
-                {
-                    switch (timer->mode.sync_mode)
-                    {
-                    case 0:
-                        // NOTE: im not sure of the behavior in these edge cases, if the timer modes are set
-                        // during xblank, im assuming we wait for the next time we 'enter' it
-                        if (in_vblank(psx->gpu))
-                        {
-                            timer->timestamp = g_cycles_elapsed;
-                        }
-                        break;
-                    case 2:
 
-                        break;
-                    case 3:
-                        //timer->paused = 1;
-                        timer->timestamp = g_cycles_elapsed;
-                        break;
-                    }
-                    break;
-                }
-                }
-            }
-        }
-
-        if (change & (0x3 << 8)) // clock source changed
+        if (counter->mode.value & (0x3 << 4)) 
         {
-            if (timer_index == 1)
-            {
-                if (timer->mode.clock_source & 0x1)
-                {
-
-                    gpu_hsync(psx);
-                }
-            }
-        }
-#endif
-        // we dont handle timer irqs right now
-        //SY_ASSERT(!(timer->mode.value & (0x3 << 4)));
-        switch ((counter->mode.value >> 4) & 0x3)
-        {
-        case 1:
-            //update_event(cpu, (enum interrupt_code)(0x10 << timer_index), get_timer_ticks_until_interrupt());
-            break;
-        case 2:
-            break;
-        case 3:
-            break;
+            remove_event(counter->interrupt_event_id);
+            counter->interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
         }
 
         break;

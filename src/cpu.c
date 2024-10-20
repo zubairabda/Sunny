@@ -1,87 +1,9 @@
 #include "cpu.h"
+#include "gte.h"
 #include "event.h"
 #include "memory.h"
 #include "debug.h"
 #include "disasm.h"
-#include "sy_math.h"
-
-#define VXY0 0
-#define VZ0 1
-
-#define VXY1 2
-#define VZ1 3
-
-#define VXY2 4
-#define VZ2 5
-
-#define RGBC 6
-
-#define OTZ 7
-
-#define IR0 8
-#define IR1 9
-#define IR2 10
-#define IR3 11
-
-#define SXY0 12
-#define SXY1 13
-#define SXY2 14
-#define SXYP 15
-
-#define SZ0 16
-#define SZ1 17
-#define SZ2 18
-#define SZ3 19
-
-#define RGB0 20
-#define RGB1 21
-#define RGB2 22
-
-#define MAC0 24
-#define MAC1 25
-#define MAC2 26
-#define MAC3 27
-
-#define RT11RT12 32
-#define RT13RT21 33
-#define RT22RT23 34
-#define RT31RT32 35
-#define RT33 36
-
-#define TRX 37
-#define TRY 38
-#define TRZ 39
-
-#define L11L12 40
-#define L13L21 41
-#define L22L23 42
-#define L31L32 43
-#define L33 44
-
-#define RBK 45
-#define GBK 46
-#define BBK 47
-
-#define LR1LR2 48
-#define LR3LG1 49
-#define LG2LG3 50
-#define LB1LB2 51
-#define LB3 52
-
-#define RFC 53
-#define GFC 54
-#define BFC 55
-
-#define OFX 56
-#define OFY 57
-
-#define HPPD 58
-
-#define DQA 59
-#define DQB 60
-
-#define ZSF3 61
-#define ZSF4 62
 
 #define COP0_SR 12
 #define COP0_CAUSE 13
@@ -89,8 +11,10 @@
 
 struct cpu_state g_cpu;
 
-static inline void gte_rtps(s8 v, s8 sf);
-static inline vec3u gte_mat3_mul_v3(s8 m11m12, s8 v, s8 sf);
+void set_interrupt(u32 param, s32 cycles_late)
+{
+    g_cpu.i_stat |= param;
+}
 
 static inline reg_tuple set_register(u32 index, u32 value)
 {
@@ -238,19 +162,16 @@ u64 execute_instruction(u64 min_cycles)
     reg_tuple new_load = {0};
     reg_tuple write = {0};
     u64 target_cycles = g_cycles_elapsed + min_cycles;
-    //u64 i;
-//#define LOG_DISASM
-#ifdef LOG_DISASM
+#if 0
     char buffer[64];
     memset(buffer, 0, sizeof(buffer));
 #endif
-    //for (i = 0; i < min_cycles; i += psx->pending_cycles)
     while (g_cycles_elapsed <= target_cycles)
     {
         ++g_cycles_elapsed;
         //psx->pending_cycles = 1;
         log_tty();
-#if 0
+#if 1
         // exe sideloading
         if (g_cpu.pc == 0x80030000)
         {
@@ -648,144 +569,7 @@ u64 execute_instruction(u64 min_cycles)
             break;
         case COP2:
             if (ins.value & (1 << 25)) {
-                // GTE command
-                // g_cpu.cop2[63] = 0 /* flags reset on new command */
-
-                u32 command = ins.value & 0x1ffffff;
-                u8 op = command & 0x3f;
-                switch ((enum gte_command)op)
-                {
-                case RTPS:
-                {
-                    u8 sf = command & (1 << 19);
-                    gte_rtps(VXY0, sf);
-                    break;
-                }
-                case NCLIP:
-                {
-                    g_cpu.cop2[MAC0] = (s16)g_cpu.cop2[SXY0] * sign_extend16_32(g_cpu.cop2[SXY1] >> 16) +
-                                       (s16)g_cpu.cop2[SXY1] * sign_extend16_32(g_cpu.cop2[SXY2] >> 16) +
-                                       (s16)g_cpu.cop2[SXY2] * sign_extend16_32(g_cpu.cop2[SXY0] >> 16) -
-                                       (s16)g_cpu.cop2[SXY0] * sign_extend16_32(g_cpu.cop2[SXY2] >> 16) -
-                                       (s16)g_cpu.cop2[SXY1] * sign_extend16_32(g_cpu.cop2[SXY0] >> 16) -
-                                       (s16)g_cpu.cop2[SXY2] * sign_extend16_32(g_cpu.cop2[SXY1] >> 16);
-                    break;
-                }
-                case NCDS:
-                {
-                    u8 sf = command & (1 << 19);
-                    u32 v0x = sign_extend16_32(g_cpu.cop2[VXY0]);
-                    u32 v0y = sign_extend16_32(g_cpu.cop2[VXY0] >> 16);
-                    u32 v0z = sign_extend16_32(g_cpu.cop2[VZ0]);
-
-                    u32 c1 = (s32)(sign_extend16_32(g_cpu.cop2[L11L12]) * v0x +
-                                        sign_extend16_32(g_cpu.cop2[L11L12] >> 16) * v0y +
-                                            sign_extend16_32(g_cpu.cop2[L13L21]) * v0z) >> (sf * 12);
-
-                    u32 c2 = (s32)(sign_extend16_32(g_cpu.cop2[L13L21] >> 16) * v0x +
-                                        sign_extend16_32(g_cpu.cop2[L22L23]) * v0y +
-                                            sign_extend16_32(g_cpu.cop2[L22L23] >> 16) * v0z) >> (sf * 12);
-
-                    u32 c3 = (s32)(sign_extend16_32(g_cpu.cop2[L31L32]) * v0x +
-                                        sign_extend16_32(g_cpu.cop2[L31L32] >> 16) * v0y +
-                                            sign_extend16_32(g_cpu.cop2[L33]) * v0z) >> (sf * 12);
-
-                    u32 rbk = g_cpu.cop2[RBK] * 0x1000;
-                    u32 gbk = g_cpu.cop2[GBK] * 0x1000;
-                    u32 bbk = g_cpu.cop2[BBK] * 0x1000;
-
-                    u32 n1 = (s32)(rbk + sign_extend16_32(g_cpu.cop2[LR1LR2]) * c1 +
-                                        sign_extend16_32(g_cpu.cop2[LR1LR2] >> 16) * c2 +
-                                            sign_extend16_32(g_cpu.cop2[LR3LG1]) * c3) >> (sf * 12);
-
-                    u32 n2 = (s32)(gbk + sign_extend16_32(g_cpu.cop2[LR3LG1] >> 16) * c1 +
-                                        sign_extend16_32(g_cpu.cop2[LG2LG3]) * c2 +
-                                            sign_extend16_32(g_cpu.cop2[LG2LG3] >> 16) * c3) >> (sf * 12);
-
-                    u32 n3 = (s32)(bbk + sign_extend16_32(g_cpu.cop2[LB1LB2]) * c1 +
-                                        sign_extend16_32(g_cpu.cop2[LB1LB2] >> 16) * c2 +
-                                            sign_extend16_32(g_cpu.cop2[LB3]) * c3) >> (sf * 12);
-
-                    u32 rgbc = g_cpu.cop2[RGBC];
-                    u32 m1 = ((rgbc & 0xff) * n1) << 4;
-                    u32 m2 = (((rgbc >> 8) & 0xff) * n2) << 4;
-                    u32 m3 = (((rgbc >> 16) & 0xff) * n3) << 4;
-
-                    m1 = m1 + (g_cpu.cop2[RFC] - m1) * g_cpu.cop2[IR0];
-                    m2 = m2 + (g_cpu.cop2[GFC] - m2) * g_cpu.cop2[IR0];
-                    m3 = m3 + (g_cpu.cop2[BFC] - m3) * g_cpu.cop2[IR0];
-
-                    m1 = (s32)m1 >> (sf * 12);
-                    m2 = (s32)m2 >> (sf * 12);
-                    m3 = (s32)m3 >> (sf * 12);
-
-                    g_cpu.cop2[RGB0] = g_cpu.cop2[RGB1];
-                    g_cpu.cop2[RGB1] = g_cpu.cop2[RGB2];
-                    g_cpu.cop2[RGB2] = ((m1 / 16) & 0xff) | ((m2 / 16) & 0xff) << 8 | ((m3 / 16) & 0xff) << 16 | (g_cpu.cop2[RGBC] & 0xff000000);
-
-                    g_cpu.cop2[IR1] = g_cpu.cop2[MAC1] = m1;
-                    g_cpu.cop2[IR2] = g_cpu.cop2[MAC2] = m2;
-                    g_cpu.cop2[IR3] = g_cpu.cop2[MAC3] = m3;
-
-                    break;
-                }
-                case AVSZ3:
-                {
-                    g_cpu.cop2[MAC0] = sign_extend16_32(g_cpu.cop2[ZSF3]) * (g_cpu.cop2[SZ1] + g_cpu.cop2[SZ2] + g_cpu.cop2[SZ3]);
-                    g_cpu.cop2[OTZ] = g_cpu.cop2[MAC0] / 0x1000;
-                    break;
-                }
-                case RTPT:
-                {
-                    u8 sf = command & (1 << 19);
-                    gte_rtps(VXY0, sf);
-                    gte_rtps(VXY1, sf);
-                    gte_rtps(VXY2, sf);
-                    break;
-                }
-                case MVMVA:
-                {
-                    const u8 tv_lookup[] = {TRX, RBK, RFC, 64};
-                    const u8 mv_lookup[] = {VXY0, VXY1, VXY2, IR1};
-                    const u8 mm_lookup[] = {RT11RT12, L11L12, LR1LR2, 0};
-
-                    u8 sf = command & (1 << 19);
-
-                    SY_ASSERT(((command >> 13) & 0x3) != 2);
-                    u8 tv = tv_lookup[(command >> 13) & 0x3];
-
-                    
-                    SY_ASSERT(((command >> 15) & 0x3) < 3);
-                    u8 mv = mv_lookup[(command >> 15) & 0x3];
-
-                    SY_ASSERT(((command >> 17) & 0x3) < 3);
-                    u8 mm = mm_lookup[(command >> 17) & 0x3];
-
-                    g_cpu.cop2[MAC1] = (s32)(g_cpu.cop2[tv] * 0x1000 + 
-                                        sign_extend16_32(g_cpu.cop2[mm]) * sign_extend16_32(g_cpu.cop2[mv]) + 
-                                        sign_extend16_32(g_cpu.cop2[mm] >> 16) * sign_extend16_32(g_cpu.cop2[mv] >> 16) + 
-                                        sign_extend16_32(g_cpu.cop2[mm + 1]) * sign_extend16_32(g_cpu.cop2[mv + 1])) >> (sf * 12);
-
-                    g_cpu.cop2[MAC2] = (s32)(g_cpu.cop2[tv + 1] * 0x1000 + 
-                                        sign_extend16_32(g_cpu.cop2[mm + 1] >> 16) * sign_extend16_32(g_cpu.cop2[mv]) + 
-                                        sign_extend16_32(g_cpu.cop2[mm + 2]) * sign_extend16_32(g_cpu.cop2[mv] >> 16) + 
-                                        sign_extend16_32(g_cpu.cop2[mm + 2] >> 16) * sign_extend16_32(g_cpu.cop2[mv + 1])) >> (sf * 12);
-
-                    g_cpu.cop2[MAC3] = (s32)(g_cpu.cop2[tv + 2] * 0x1000 + 
-                                        sign_extend16_32(g_cpu.cop2[mm + 3]) * sign_extend16_32(g_cpu.cop2[mv]) + 
-                                        sign_extend16_32(g_cpu.cop2[mm + 3] >> 16) * sign_extend16_32(g_cpu.cop2[mv] >> 16) + 
-                                        sign_extend16_32(g_cpu.cop2[mm + 4]) * sign_extend16_32(g_cpu.cop2[mv + 1])) >> (sf * 12);
-                    
-                    g_cpu.cop2[IR1] = g_cpu.cop2[MAC1];
-                    g_cpu.cop2[IR2] = g_cpu.cop2[MAC2];
-                    g_cpu.cop2[IR3] = g_cpu.cop2[MAC3];
-                    break;
-                }
-                default:
-                    debug_log("Unhandled GTE command: %02xh\n", op);
-                    break;
-                }
-
+                gte_command(ins.value);
                 break;
             }
 
@@ -793,17 +577,17 @@ u64 execute_instruction(u64 min_cycles)
             {
             case MFC:
                 new_load.index = ins.rt;
-                new_load.value = g_cpu.cop2[ins.rd];
+                new_load.value = gte_read(ins.rd);
                 break;
             case CFC:
                 new_load.index = ins.rt;
-                new_load.value = g_cpu.cop2[31 + ins.rd];
+                new_load.value = gte_read(32 + ins.rd);
                 break;
             case MTC:
-                g_cpu.cop2[ins.rd] = g_cpu.registers[ins.rt];
+                gte_write(ins.rd, g_cpu.registers[ins.rt]);
                 break;
             case CTC:
-                g_cpu.cop2[31 + ins.rd] = g_cpu.registers[ins.rt];
+                gte_write(32 + ins.rd, g_cpu.registers[ins.rt]);
                 break;
             default:
                 debug_log("Unhandled COP2 operation: %02x\n", ins.rs);
@@ -1017,7 +801,7 @@ u64 execute_instruction(u64 min_cycles)
             handle_exception(EXCEPTION_CODE_RESERVED_INSTRUCTION);
             break;
         }
-#ifdef LOG_DISASM
+#if 0
         if (g_debug.show_disasm)
         {
             debug_log("%08x\t%08x\t", g_cpu.current_pc, ins.value);
@@ -1048,72 +832,4 @@ u64 execute_instruction(u64 min_cycles)
         handle_interrupts();
     }
     return 0;//i;
-}
-
-static inline void gte_rtps(s8 v, s8 sf)
-{
-    g_cpu.cop2[IR1] = g_cpu.cop2[MAC1] = (s32)(g_cpu.cop2[TRX] * 0x1000 + 
-                        sign_extend16_32(g_cpu.cop2[RT11RT12]) * sign_extend16_32(g_cpu.cop2[v]) + 
-                        sign_extend16_32(g_cpu.cop2[RT11RT12] >> 16) * sign_extend16_32(g_cpu.cop2[v] >> 16) +
-                        sign_extend16_32(g_cpu.cop2[RT13RT21]) * sign_extend16_32(g_cpu.cop2[v + 1])) >> (sf * 12);
-    
-    g_cpu.cop2[IR2] = g_cpu.cop2[MAC2] = (s32)(g_cpu.cop2[TRY] * 0x1000 + 
-                        sign_extend16_32(g_cpu.cop2[RT13RT21] >> 16) * sign_extend16_32(g_cpu.cop2[v]) + 
-                        sign_extend16_32(g_cpu.cop2[RT22RT23]) * sign_extend16_32(g_cpu.cop2[v] >> 16) +
-                        sign_extend16_32(g_cpu.cop2[RT22RT23] >> 16) * sign_extend16_32(g_cpu.cop2[v + 1])) >> (sf * 12);
-
-    g_cpu.cop2[IR3] = g_cpu.cop2[MAC3] = (s32)(g_cpu.cop2[TRZ] * 0x1000 + 
-                        sign_extend16_32(g_cpu.cop2[RT31RT32]) * sign_extend16_32(g_cpu.cop2[v]) + 
-                        sign_extend16_32(g_cpu.cop2[RT31RT32] >> 16) * sign_extend16_32(g_cpu.cop2[v] >> 16) +
-                        sign_extend16_32(g_cpu.cop2[RT33]) * sign_extend16_32(g_cpu.cop2[v + 1])) >> (sf * 12);
-
-    /* push fifo */
-    g_cpu.cop2[SZ0] = g_cpu.cop2[SZ1];
-    g_cpu.cop2[SZ1] = g_cpu.cop2[SZ2];
-    g_cpu.cop2[SZ2] = g_cpu.cop2[SZ3];
-    g_cpu.cop2[SZ3] = (s32)g_cpu.cop2[MAC3] >> ((1 - sf) * 12);
-
-    u32 div = (((g_cpu.cop2[HPPD] * 0x20000 / g_cpu.cop2[SZ3]) + 1) / 2);
-    if (div > 0x1ffff) {
-        div = 0x1ffff;
-        // TODO: set divide overflow in flag reg
-    }
-    g_cpu.cop2[MAC0] = div * g_cpu.cop2[IR1] + g_cpu.cop2[OFX];
-
-    /* push fifo */
-    g_cpu.cop2[SXY0] = g_cpu.cop2[SXY1];
-    g_cpu.cop2[SXY1] = g_cpu.cop2[SXY2];
-
-    u32 sx2 = g_cpu.cop2[MAC0] / 0x10000; // NOTE: sign extend?
-
-    g_cpu.cop2[MAC0] = div * g_cpu.cop2[IR2] + g_cpu.cop2[OFY];
-
-    u32 sy2 = g_cpu.cop2[MAC0] / 0x10000;
-
-    g_cpu.cop2[SXY2] = g_cpu.cop2[SXYP]; // TODO: ?
-    g_cpu.cop2[SXYP] = sx2 | (sy2 << 16);
-
-    g_cpu.cop2[MAC0] = div * g_cpu.cop2[DQA] + g_cpu.cop2[DQB];
-    g_cpu.cop2[IR0] = g_cpu.cop2[MAC0] / 0x1000;
-}
-
-static inline vec3u gte_mat3_mul_v3(s8 m, s8 v, s8 sf)
-{
-    u32 v0x = sign_extend16_32(g_cpu.cop2[v]);
-    u32 v0y = sign_extend16_32(g_cpu.cop2[v] >> 16);
-    u32 v0z = sign_extend16_32(g_cpu.cop2[v + 1]);
-
-    u32 c1 = (s32)(sign_extend16_32(g_cpu.cop2[m]) * v0x +
-                        sign_extend16_32(g_cpu.cop2[m] >> 16) * v0y +
-                            sign_extend16_32(g_cpu.cop2[m + 1]) * v0z) >> (sf * 12);
-
-    u32 c2 = (s32)(sign_extend16_32(g_cpu.cop2[m + 1] >> 16) * v0x +
-                        sign_extend16_32(g_cpu.cop2[m + 2]) * v0y +
-                            sign_extend16_32(g_cpu.cop2[m + 2] >> 16) * v0z) >> (sf * 12);
-
-    u32 c3 = (s32)(sign_extend16_32(g_cpu.cop2[m + 3]) * v0x +
-                        sign_extend16_32(g_cpu.cop2[m + 3] >> 16) * v0y +
-                            sign_extend16_32(g_cpu.cop2[m + 4]) * v0z) >> (sf * 12);
-
-    return v3u(c1, c2, c3);
 }

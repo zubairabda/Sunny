@@ -198,7 +198,7 @@ void execute_gp0_command(u32 word)
         g_gpu.command_type = (enum gpu_command_type)(word >> 29);
         switch (g_gpu.command_type)
         {
-        case 0x0:
+        case COMMAND_TYPE_MISC:
             switch (op)
             {
             case 0x0:
@@ -215,7 +215,7 @@ void execute_gp0_command(u32 word)
                 break;
             }
             break;
-        case 0x1:
+        case COMMAND_TYPE_DRAW_POLYGON:
         {
             // render polygon
             g_gpu.render_flags = op;
@@ -241,7 +241,21 @@ void execute_gp0_command(u32 word)
             ++g_gpu.pending_words;
         } 
         break;
-        case 0x3:
+        case COMMAND_TYPE_DRAW_LINE:
+        {
+            g_gpu.render_flags = op;
+            /* at minimum, we need 2 vertices */
+            if (op & LINE_FLAG_GOURAUD_SHADED) 
+            {
+                g_gpu.pending_words = 4;
+            }
+            else
+            {
+                g_gpu.pending_words = 3;
+            }
+            break;
+        }
+        case COMMAND_TYPE_DRAW_RECT:
         {
             // render rectangle
             g_gpu.render_flags = op;
@@ -250,31 +264,31 @@ void execute_gp0_command(u32 word)
             {
                 ++g_gpu.pending_words;
             }
-            if (!((op >> 3) & 0x3))
+            if (!((op >> 3) & 0x3)) // TODO: change branch cond
             {
                 ++g_gpu.pending_words;
             }
         }
         break;
-        case 0x4:
+        case COMMAND_TYPE_VRAM_TO_VRAM:
         {
             // vram -> vram
             g_gpu.pending_words = 4;
         }
         break;
-        case 0x5:
+        case COMMAND_TYPE_CPU_TO_VRAM:
         {
             // cpu -> vram
             g_gpu.pending_words = 3;
         }
         break;
-        case 0x6:
+        case COMMAND_TYPE_VRAM_TO_CPU:
         {
             // vram -> cpu
             g_gpu.pending_words = 3;
         }
         break;
-        case 0x7:
+        case COMMAND_TYPE_ENV:
         {
             // environment
             g_gpu.pending_words = 1;
@@ -358,6 +372,26 @@ void execute_gp0_command(u32 word)
                 push_polygon(g_gpu.renderer, commands, g_gpu.render_flags, v2f(g_gpu.draw_offset_x, g_gpu.draw_offset_y));
             }
             break;
+            case COMMAND_TYPE_DRAW_LINE:
+            {
+                if (g_gpu.render_flags & LINE_FLAG_POLYLINE)
+                {
+                    if ((word & 0xf000f000) == 0x50005000) // terminator flag
+                    {
+
+                    }
+                    else if (g_gpu.render_flags & LINE_FLAG_GOURAUD_SHADED) 
+                    {
+                        g_gpu.pending_words = 4;
+                    }
+                    else
+                    {
+                        g_gpu.pending_words = 3;
+                    }
+                }
+
+                break;
+            }
             case COMMAND_TYPE_DRAW_RECT:
             {
                 #if 1

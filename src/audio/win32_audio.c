@@ -49,9 +49,11 @@ void play_sound_test(audio_player *audio)
     //IAudioClient_Start(audio->client);
 
     hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
+    SY_ASSERT(hr == S_OK);
     u32 available_frames = audio->buffer_size - pad;
     //Sleep(0);
     hr = IAudioRenderClient_GetBuffer(audio->render_client, available_frames, &pdata);
+    SY_ASSERT(hr == S_OK);
 
     u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
     memcpy(pdata, audio->src_cursor, buffer_size);
@@ -70,6 +72,7 @@ void play_sound_test(audio_player *audio)
     #endif
     audio->src_cursor += buffer_size;
     hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, available_frames, 0);
+    SY_ASSERT(hr == S_OK);
 
     //IAudioClient_Stop(audio->client);
 }
@@ -82,14 +85,17 @@ void debug_play_sound(audio_player *audio, u8 *source_data)
 
     u8 *current = source_data;
 
-    IAudioClient_Start(audio->client);
+    hr = IAudioClient_Start(audio->client);
+    SY_ASSERT(hr == S_OK);
 
     while (1)
     {
         hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
+        SY_ASSERT(hr == S_OK);
         u32 available_frames = audio->buffer_size - pad;
         //Sleep(0);
         hr = IAudioRenderClient_GetBuffer(audio->render_client, available_frames, &pdata);
+        SY_ASSERT(hr == S_OK);
 
         u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
         memcpy(pdata, current, buffer_size);
@@ -108,10 +114,10 @@ void debug_play_sound(audio_player *audio, u8 *source_data)
         #endif
         current += buffer_size;
         hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, available_frames, 0);
+        SY_ASSERT(hr == S_OK);
     }
 
     IAudioClient_Stop(audio->client);
-
 }
 
 static inline char *hr_to_str(HRESULT hr)
@@ -298,7 +304,11 @@ audio_player *audio_init(void)
     format.nBlockAlign = 4;
     format.nAvgBytesPerSec = 176400;
     hr = IAudioClient_Initialize(audio_client, AUDCLNT_SHAREMODE_SHARED, 
-        AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY | AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, &format, NULL);
+                                 AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | 
+                                 AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY | 
+                                 AUDCLNT_STREAMFLAGS_RATEADJUST |
+                                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 
+                                 0, 0, &format, NULL);
     if (hr != S_OK) {
         debug_log("Failed to initialize the audio client\n");
     }
@@ -338,49 +348,4 @@ static void audio_shutdown(audio_player* audio)
 {
     // wait until audio thread finishes
     VirtualFree(audio, 0, MEM_RELEASE);
-}
-
-static void write_wav_file(void *sample_data, u32 size_in_bytes, char *dstpath)
-{
-    FILE *f = fopen(dstpath, "wb");
-    struct wav_header header = {0};
-    header.riff[0] = 'R';
-    header.riff[1] = 'I';
-    header.riff[2] = 'F';
-    header.riff[3] = 'F';
-
-    header.wave[0] = 'W';
-    header.wave[1] = 'A';
-    header.wave[2] = 'V';
-    header.wave[3] = 'E';
-
-    header.chunk_size = size_in_bytes + 36;
-
-    fwrite(&header, sizeof(struct wav_header), 1, f);
-
-    struct wav_format_chunk format = {0};
-    format.fmt[0] = 'f';
-    format.fmt[1] = 'm';
-    format.fmt[2] = 't';
-    format.fmt[3] = ' ';
-    format.bits_per_sample = 16;
-    format.block_align = 4;
-    format.bytes_per_second = 44100 * 4;
-    format.chunk_size = 16;
-    format.format_tag = 1;
-    format.num_channels = 2;
-    format.samples_per_second = 44100;
-    
-    fwrite(&format, sizeof(struct wav_format_chunk), 1, f);
-
-    struct wav_data_chunk chunk = {0};
-    chunk.data[0] = 'd';
-    chunk.data[1] = 'a';
-    chunk.data[2] = 't';
-    chunk.data[3] = 'a';
-    chunk.chunk_size = size_in_bytes;
-
-    fwrite(&chunk, sizeof(struct wav_data_chunk), 1, f);
-    fwrite(sample_data, 1, size_in_bytes, f);
-    fclose(f);
 }
