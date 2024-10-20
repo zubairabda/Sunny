@@ -184,6 +184,19 @@ static inline s64 gte_lim_mac0(s64 v)
     return v;
 }
 
+static inline s32 gte_clamp_vertex(s64 v, u32 flag)
+{
+    if (v > 0x3ff) {
+        g_cpu.cop2[FLAG] |= flag;
+        return 0x3ff;
+    }
+    else if (v < -0x400) {
+        g_cpu.cop2[FLAG] |= flag;
+        return -0x400;
+    }
+    return (s32)v;
+}
+
 static inline u32 gte_clamp_c(s32 value, u32 flag)
 {
     if (value < 0) {
@@ -224,35 +237,24 @@ static inline s64 gte_clamp_ir0(s64 value)
     return value;
 }
 
-static inline void gte_rtps(s8 v, s8 sf, s8 lm)
+static inline void gte_rtps(s8 v, s8 sf, s8 lm, b8 r)
 {
-    g_cpu.cop2[MAC1] = gte_lim_mac((s64)((s32)g_cpu.cop2[TRX]) * 0x1000 + 
-                        (s64)((s16)g_cpu.cop2[RT11RT12]) * (s64)((s16)g_cpu.cop2[v]) + 
-                        (s64)((s16)(g_cpu.cop2[RT11RT12] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16)) +
-                        (s64)((s16)g_cpu.cop2[RT13RT21]) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC1) >> sf;
-#if 0
-    g_cpu.cop2[MAC2] = gte_lim_mac((s64)((s64)g_cpu.cop2[TRY] * 0x1000 + 
-                        sign_extend16_32(g_cpu.cop2[RT13RT21] >> 16) * sign_extend16_32(g_cpu.cop2[v]) + 
-                        sign_extend16_32(g_cpu.cop2[RT22RT23]) * sign_extend16_32(g_cpu.cop2[v] >> 16) +
-                        sign_extend16_32(g_cpu.cop2[RT22RT23] >> 16) * sign_extend16_32(g_cpu.cop2[v + 1])), MAC2) >> (sf * 12);
+    g_cpu.cop2[MAC1] = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[TRX]) << 12) + 
+                        (s64)((s16)g_cpu.cop2[RT11RT12]) * (s64)((s16)g_cpu.cop2[v]), MAC1) + 
+                        (s64)((s16)(g_cpu.cop2[RT11RT12] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16)), MAC1) +
+                        (s64)((s16)g_cpu.cop2[RT13RT21]) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC1)) >> sf;
 
-    g_cpu.cop2[MAC3] = gte_lim_mac((s64)((s64)g_cpu.cop2[TRZ] * 0x1000 + 
-                        sign_extend16_32(g_cpu.cop2[RT31RT32]) * sign_extend16_32(g_cpu.cop2[v]) + 
-                        sign_extend16_32(g_cpu.cop2[RT31RT32] >> 16) * sign_extend16_32(g_cpu.cop2[v] >> 16) +
-                        sign_extend16_32(g_cpu.cop2[RT33]) * sign_extend16_32(g_cpu.cop2[v + 1])), MAC3) >> (sf * 12);
-#else
-    g_cpu.cop2[MAC2] = gte_lim_mac((s64)((s32)g_cpu.cop2[TRY]) * 0x1000 + 
-                        (s64)((s16)(g_cpu.cop2[RT13RT21] >> 16)) * (s64)((s16)g_cpu.cop2[v]) + 
-                        (s64)((s16)(g_cpu.cop2[RT22RT23])) * (s64)((s16)(g_cpu.cop2[v] >> 16)) +
-                        (s64)((s16)(g_cpu.cop2[RT22RT23] >> 16)) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC2) >> sf;
+    g_cpu.cop2[MAC2] = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[TRY]) << 12) + 
+                        (s64)((s16)(g_cpu.cop2[RT13RT21] >> 16)) * (s64)((s16)g_cpu.cop2[v]), MAC2) + 
+                        (s64)((s16)(g_cpu.cop2[RT22RT23])) * (s64)((s16)(g_cpu.cop2[v] >> 16)), MAC2) +
+                        (s64)((s16)(g_cpu.cop2[RT22RT23] >> 16)) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC2)) >> sf;
 
-    s64 mac3 = gte_lim_mac((s64)((s32)g_cpu.cop2[TRZ]) * 0x1000 + 
-                        (s64)((s16)g_cpu.cop2[RT31RT32]) * (s64)((s16)g_cpu.cop2[v]) + 
-                        (s64)((s16)(g_cpu.cop2[RT31RT32] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16)) +
-                        (s64)((s16)g_cpu.cop2[RT33]) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC3) >> sf;
+    s64 mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[TRZ]) << 12) + 
+                (s64)((s16)g_cpu.cop2[RT31RT32]) * (s64)((s16)g_cpu.cop2[v]), MAC3) + 
+                (s64)((s16)(g_cpu.cop2[RT31RT32] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16)), MAC3) +
+                (s64)((s16)g_cpu.cop2[RT33]) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC3)) >> sf;
 
     g_cpu.cop2[MAC3] = (u32)mac3;
-#endif
 
     // NOTE: spx says saturation is always -0x8000..0x7fff?
     g_cpu.cop2[IR1] = gte_clamp_ir((s32)g_cpu.cop2[MAC1], (1 << 24), lm);
@@ -268,10 +270,12 @@ static inline void gte_rtps(s8 v, s8 sf, s8 lm)
             g_cpu.cop2[FLAG] |= (1 << 22);
         }
         else if (mac3_shift > 0x7fffll) {
-            g_cpu.cop2[IR3] = 0x7fff;
+            //g_cpu.cop2[IR3] = 0x7fff;
             g_cpu.cop2[FLAG] |= (1 << 22);
         }
 
+        g_cpu.cop2[IR3] = gte_clamp_ir((s32)g_cpu.cop2[MAC3], 0, lm);
+#if 0
         if (lm) {
             if (mac3_shift < 0x0) {
                 g_cpu.cop2[IR3] = 0x0;
@@ -283,6 +287,7 @@ static inline void gte_rtps(s8 v, s8 sf, s8 lm)
                 g_cpu.cop2[IR3] = -0x8000;
             }
         }
+#endif
     }
 #else
     g_cpu.cop2[IR3] = gte_clamp_ir(g_cpu.cop2[MAC3], IR3, lm);
@@ -294,34 +299,35 @@ static inline void gte_rtps(s8 v, s8 sf, s8 lm)
     }
 #endif
 
+#if 1
+    s64 sz3 = mac3 >> (12 - sf);
+#else
+    g_cpu.cop2[SZ3] = mac3 >> 12;
+#endif
+    /* Lm_D */
+    if (sz3 > 0xffff) {
+        sz3 = 0xffff;
+        g_cpu.cop2[FLAG] |= (1 << 18);
+    }
+    else if (sz3 < 0) {
+        sz3 = 0;
+        g_cpu.cop2[FLAG] |= (1 << 18);
+    }
+
     /* push fifo */
     g_cpu.cop2[SZ0] = g_cpu.cop2[SZ1];
     g_cpu.cop2[SZ1] = g_cpu.cop2[SZ2];
     g_cpu.cop2[SZ2] = g_cpu.cop2[SZ3];
-#if 1
-    g_cpu.cop2[SZ3] = mac3 >> (12 - sf);
-#else
-    g_cpu.cop2[SZ3] = mac3 >> 12;
-#endif
-
-    if ((s32)g_cpu.cop2[SZ3] > 0xffff) {
-        g_cpu.cop2[SZ3] = 0xffff;
-        g_cpu.cop2[FLAG] |= (1 << 18);
-    }
-    else if ((s32)g_cpu.cop2[SZ3] < 0) {
-        g_cpu.cop2[SZ3] = 0;
-        g_cpu.cop2[FLAG] |= (1 << 18);
-    }
+    g_cpu.cop2[SZ3] = sz3;
 
     u32 h = (u32)((u16)g_cpu.cop2[H]);
-    //s32 h = sign_extend16_32(g_cpu.cop2[H]);
     s32 n;
 
-    if (h < g_cpu.cop2[SZ3] * 2)
+    if (h < (sz3 * 2))
     {
-        u32 z = lzcnt32((g_cpu.cop2[SZ3] << 16) | 0xffff);
+        u32 z = lzcnt32((u32)sz3) - 16;
         n = h << z;
-        u32 d = g_cpu.cop2[SZ3] << z;
+        u64 d = sz3 << z;
         u32 u = unr_table[(d - 0x7fc0) >> 7] + 0x101;
         d = ((0x2000080 - (d * u)) >> 8);
         d = ((0x0000080 + (d * u)) >> 8);
@@ -339,35 +345,25 @@ static inline void gte_rtps(s8 v, s8 sf, s8 lm)
     g_cpu.cop2[SXY0] = g_cpu.cop2[SXY1];
     g_cpu.cop2[SXY1] = g_cpu.cop2[SXY2];
 
-    s32 sx2 = gte_lim_mac0((s64)n * sign_extend32_64(g_cpu.cop2[IR1]) + sign_extend32_64(g_cpu.cop2[OFX])) >> 16;
-    if (sx2 > 0x3ff) {
-        sx2 = 0x3ff;
-        g_cpu.cop2[FLAG] |= (1 << 14);
-    }
-    else if (sx2 < -0x400) {
-        g_cpu.cop2[FLAG] |= (1 << 14);
-        sx2 = -0x400;
-    }
+    s32 sx2 = gte_clamp_vertex(gte_lim_mac0((s64)n * sign_extend32_64(g_cpu.cop2[IR1]) + sign_extend32_64(g_cpu.cop2[OFX])) >> 16, (1 << 14));
 
-    s32 sy2 = gte_lim_mac0((s64)n * sign_extend32_64(g_cpu.cop2[IR2]) + sign_extend32_64(g_cpu.cop2[OFY])) >> 16;
-    if (sy2 > 0x3ff) {
-        sy2 = 0x3ff;
-        g_cpu.cop2[FLAG] |= (1 << 13);
-    }
-    else if (sy2 < -0x400) {
-        g_cpu.cop2[FLAG] |= (1 << 13);
-        sy2 = -0x400;
-    }
-#if 0
-    g_cpu.cop2[SXY2] = g_cpu.cop2[SXYP]; // TODO: ?
-    g_cpu.cop2[SXYP] = sx2 | (sy2 << 16);
-#else
+    s32 sy2 = gte_clamp_vertex(gte_lim_mac0((s64)n * sign_extend32_64(g_cpu.cop2[IR2]) + sign_extend32_64(g_cpu.cop2[OFY])) >> 16, (1 << 13));
+
     g_cpu.cop2[SXY2] = g_cpu.cop2[SXYP] = (sx2 & 0xffff) | (sy2 << 16);
-#endif
-    s64 mac0 = gte_lim_mac0(((s64)n * (s64)((s16)g_cpu.cop2[DQA])) + sign_extend32_64(g_cpu.cop2[DQB]));
-    g_cpu.cop2[MAC0] = (u32)mac0;//gte_lim_mac0((s64)n * (s16)g_cpu.cop2[DQA] + g_cpu.cop2[DQB]);
-    //g_cpu.cop2[IR0] = g_cpu.cop2[MAC0] / 0x1000;
-    g_cpu.cop2[IR0] = gte_clamp_ir0(mac0 >> 12);
+
+    if (r) 
+    {
+        s64 mac0 = gte_lim_mac0(((s64)n * (s64)((s16)g_cpu.cop2[DQA])) + sign_extend32_64(g_cpu.cop2[DQB]));
+        g_cpu.cop2[MAC0] = (u32)mac0;
+        g_cpu.cop2[IR0] = gte_clamp_ir0(mac0 >> 12);
+    }
+}
+
+static inline void gte_push_color_fifo(void)
+{
+    g_cpu.cop2[RGB0] = g_cpu.cop2[RGB1];
+    g_cpu.cop2[RGB1] = g_cpu.cop2[RGB2];
+    g_cpu.cop2[RGB2] = gte_clamp_c((s32)g_cpu.cop2[MAC1] >> 4, 1 << 21) | gte_clamp_c((s32)g_cpu.cop2[MAC2] >> 4, 1 << 20) << 8 | gte_clamp_c((s32)g_cpu.cop2[MAC3] >> 4, 1 << 19) << 16 | (g_cpu.cop2[RGBC] & 0xff000000);
 }
 
 static inline void gte_interpolate(s64 c1, s64 c2, s64 c3, u8 sf, u8 lm)
@@ -386,9 +382,7 @@ static inline void gte_interpolate(s64 c1, s64 c2, s64 c3, u8 sf, u8 lm)
     g_cpu.cop2[IR2] = gte_clamp_ir((s32)g_cpu.cop2[MAC2], 1 << 23, lm);
     g_cpu.cop2[IR3] = gte_clamp_ir((s32)g_cpu.cop2[MAC3], 1 << 22, lm);
 
-    g_cpu.cop2[RGB0] = g_cpu.cop2[RGB1];
-    g_cpu.cop2[RGB1] = g_cpu.cop2[RGB2];
-    g_cpu.cop2[RGB2] = gte_clamp_c((s32)g_cpu.cop2[MAC1] >> 4, 1 << 21) | gte_clamp_c((s32)g_cpu.cop2[MAC2] >> 4, 1 << 20) << 8 | gte_clamp_c((s32)g_cpu.cop2[MAC3] >> 4, 1 << 19) << 16 | (g_cpu.cop2[RGBC] & 0xff000000);
+    gte_push_color_fifo();
 }
 
 static inline void gte_ncds(u32 v, u8 sf, u8 lm)
@@ -436,6 +430,108 @@ static inline void gte_ncds(u32 v, u8 sf, u8 lm)
     gte_interpolate(red * ir1, green * ir2, blue * ir3, sf, lm);
 }
 
+static inline void gte_nccs(u32 v, u8 sf, u8 lm)
+{
+    s64 vx = sign_extend16_64(g_cpu.cop2[v]);
+    s64 vy = sign_extend16_64(g_cpu.cop2[v] >> 16);
+    s64 vz = sign_extend16_64(g_cpu.cop2[v + 1]);
+
+    s32 mac1 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
+                            sign_extend16_64(g_cpu.cop2[L11L12] >> 16) * vy +
+                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz, MAC1) >> sf;
+
+    s32 mac2 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
+                            sign_extend16_64(g_cpu.cop2[L22L23]) * vy +
+                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz, MAC2) >> sf;
+
+    s32 mac3 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
+                            sign_extend16_64(g_cpu.cop2[L31L32] >> 16) * vy +
+                            sign_extend16_64(g_cpu.cop2[L33]) * vz, MAC3) >> sf;
+
+    s32 ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
+    s32 ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
+    s32 ir3 = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+    mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
+            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
+            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+
+    mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+
+    mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
+            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
+            sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+
+    ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
+    ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
+    ir3 = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+    s64 red = (g_cpu.cop2[RGBC] & 0xff) << 4;
+    s64 green = ((g_cpu.cop2[RGBC] >> 8) & 0xff) << 4;
+    s64 blue = ((g_cpu.cop2[RGBC] >> 16) & 0xff) << 4;
+
+    mac1 = gte_lim_mac(red * ir1, MAC1) >> sf;
+    mac2 = gte_lim_mac(green * ir2, MAC2) >> sf;
+    mac3 = gte_lim_mac(blue * ir3, MAC3) >> sf;
+
+    g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
+    g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
+    g_cpu.cop2[IR3] = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+    g_cpu.cop2[MAC1] = mac1;
+    g_cpu.cop2[MAC2] = mac2;
+    g_cpu.cop2[MAC3] = mac3;
+
+    gte_push_color_fifo();
+}
+
+void gte_ncs(u32 v, u8 sf, u8 lm)
+{
+    s64 vx = sign_extend16_64(g_cpu.cop2[v]);
+    s64 vy = sign_extend16_64(g_cpu.cop2[v] >> 16);
+    s64 vz = sign_extend16_64(g_cpu.cop2[v + 1]);
+
+    s32 mac1 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
+                            sign_extend16_64(g_cpu.cop2[L11L12] >> 16) * vy +
+                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz, MAC1) >> sf;
+
+    s32 mac2 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
+                            sign_extend16_64(g_cpu.cop2[L22L23]) * vy +
+                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz, MAC2) >> sf;
+
+    s32 mac3 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
+                            sign_extend16_64(g_cpu.cop2[L31L32] >> 16) * vy +
+                            sign_extend16_64(g_cpu.cop2[L33]) * vz, MAC3) >> sf;
+
+    s32 ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
+    s32 ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
+    s32 ir3 = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+    mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
+            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
+            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+
+    mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+
+    mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
+            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
+            sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+
+    g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
+    g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
+    g_cpu.cop2[IR3] = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+    g_cpu.cop2[MAC1] = mac1;
+    g_cpu.cop2[MAC2] = mac2;
+    g_cpu.cop2[MAC3] = mac3;
+
+    gte_push_color_fifo();
+}
+
 void gte_command(u32 command)
 {
     g_cpu.cop2[FLAG] = 0; /* flags reset on new command */
@@ -446,7 +542,7 @@ void gte_command(u32 command)
     {
         u8 sf = ((command & (1 << 19)) != 0) * 12;
         u8 lm = (command & (1 << 10)) != 0;
-        gte_rtps(VXY0, sf, lm);
+        gte_rtps(VXY0, sf, lm, 1);
         break;
     }
     case NCLIP:
@@ -481,7 +577,6 @@ void gte_command(u32 command)
         s64 green = (g_cpu.cop2[RGBC] & 0xff00) << 8;
         s64 blue = (g_cpu.cop2[RGBC] & 0xff0000);
 
-        // NOTE: changed clamp_ir to take an s64 and cast each arg to s32
         gte_interpolate(red, green, blue, sf, lm);
         break;
     }
@@ -533,7 +628,7 @@ void gte_command(u32 command)
         s64 green = ((g_cpu.cop2[RGBC] >> 8) & 0xff) << 4;
         s64 blue = ((g_cpu.cop2[RGBC] >> 16) & 0xff) << 4;
 
-        gte_interpolate(red * ir1, green * ir2, blue * ir3, sf, lm);      
+        gte_interpolate(red * ir1, green * ir2, blue * ir3, sf, lm);
         break;
     }
     case NCDT:
@@ -545,19 +640,229 @@ void gte_command(u32 command)
         gte_ncds(VXY2, sf, lm);
         break;
     }
+    case NCCS:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+        gte_nccs(VXY0, sf, lm);
+        break;
+    }
+    case CC:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+
+        s32 ir1 = sign_extend16_32(g_cpu.cop2[IR1]);
+        s32 ir2 = sign_extend16_32(g_cpu.cop2[IR2]);
+        s32 ir3 = sign_extend16_32(g_cpu.cop2[IR3]);
+
+        s32 mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
+                    sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
+                    sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+
+        s32 mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
+                    sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
+                    sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+
+        s32 mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
+                    sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
+                    sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+
+        ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
+        ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
+        ir3 = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+        s64 red = (g_cpu.cop2[RGBC] & 0xff) << 4;
+        s64 green = ((g_cpu.cop2[RGBC] >> 8) & 0xff) << 4;
+        s64 blue = ((g_cpu.cop2[RGBC] >> 16) & 0xff) << 4;
+
+        mac1 = gte_lim_mac(red * ir1, MAC1) >> sf;
+        mac2 = gte_lim_mac(green * ir2, MAC2) >> sf;
+        mac3 = gte_lim_mac(blue * ir3, MAC3) >> sf;
+
+        g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
+        g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
+        g_cpu.cop2[IR3] = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+        g_cpu.cop2[MAC1] = mac1;
+        g_cpu.cop2[MAC2] = mac2;
+        g_cpu.cop2[MAC3] = mac3;
+
+        g_cpu.cop2[RGB0] = g_cpu.cop2[RGB1];
+        g_cpu.cop2[RGB1] = g_cpu.cop2[RGB2];
+        g_cpu.cop2[RGB2] = gte_clamp_c((s32)g_cpu.cop2[MAC1] >> 4, 1 << 21) | gte_clamp_c((s32)g_cpu.cop2[MAC2] >> 4, 1 << 20) << 8 | gte_clamp_c((s32)g_cpu.cop2[MAC3] >> 4, 1 << 19) << 16 | (g_cpu.cop2[RGBC] & 0xff000000);
+        break;
+    }
+    case NCS:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+        gte_ncs(VXY0, sf, lm);
+        break;
+    }
+    case NCT:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+        gte_ncs(VXY0, sf, lm);
+        gte_ncs(VXY1, sf, lm);
+        gte_ncs(VXY2, sf, lm);
+        break;
+    }
+    case SQR:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        //u8 lm = (command & (1 << 10)) != 0;
+
+        s64 ir1 = sign_extend16_64(g_cpu.cop2[IR1]);
+        s64 ir2 = sign_extend16_64(g_cpu.cop2[IR2]);
+        s64 ir3 = sign_extend16_64(g_cpu.cop2[IR3]);
+
+        s32 mac1 = gte_lim_mac(ir1 * ir1, MAC1) >> sf;
+        s32 mac2 = gte_lim_mac(ir2 * ir2, MAC2) >> sf;
+        s32 mac3 = gte_lim_mac(ir3 * ir3, MAC3) >> sf;
+
+        g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, 0);
+        g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, 0);
+        g_cpu.cop2[IR3] = gte_clamp_ir(mac3, IR3_FLAG, 0);
+
+        g_cpu.cop2[MAC1] = mac1;
+        g_cpu.cop2[MAC2] = mac2;
+        g_cpu.cop2[MAC3] = mac3;
+
+        break;
+    }
+    case DCPL:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+
+        s64 red = (g_cpu.cop2[RGBC] & 0xff) << 4;
+        s64 green = ((g_cpu.cop2[RGBC] >> 8) & 0xff) << 4;
+        s64 blue = ((g_cpu.cop2[RGBC] >> 16) & 0xff) << 4;
+
+        gte_interpolate(red * g_cpu.cop2[IR1], green * g_cpu.cop2[IR2], blue * g_cpu.cop2[IR3], sf, lm);
+        break;
+    }
+    case DPCT:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+
+        for (u32 i = 0; i < 3; ++i)
+        {
+            s64 red = (g_cpu.cop2[RGB0] & 0xff) << 16;
+            s64 green = (g_cpu.cop2[RGB0] & 0xff00) << 8;
+            s64 blue = (g_cpu.cop2[RGB0] & 0xff0000);
+
+            gte_interpolate(red, green, blue, sf, lm);
+        }
+
+        break;
+    }
     case AVSZ3:
     {
-        g_cpu.cop2[MAC0] = sign_extend16_32(g_cpu.cop2[ZSF3]) * (g_cpu.cop2[SZ1] + g_cpu.cop2[SZ2] + g_cpu.cop2[SZ3]);
-        g_cpu.cop2[OTZ] = g_cpu.cop2[MAC0] / 0x1000;
+        s64 zsf3 = sign_extend16_64(g_cpu.cop2[ZSF3]);
+        s64 sz1 = (u16)g_cpu.cop2[SZ1];
+        s64 sz2 = (u16)g_cpu.cop2[SZ2];
+        s64 sz3 = (u16)g_cpu.cop2[SZ3];
+        s64 mac0 = gte_lim_mac0(zsf3 * (sz1 + sz2 + sz3));
+
+        if ((mac0 >> 12) > 0xffff) {
+            g_cpu.cop2[OTZ] = 0xffff;
+            g_cpu.cop2[FLAG] |= (1 << 18);
+        }
+        else if ((mac0 >> 12) < 0) {
+            g_cpu.cop2[OTZ] = 0;
+            g_cpu.cop2[FLAG] |= (1 << 18);
+        }
+        else {
+            g_cpu.cop2[OTZ] = (mac0 >> 12);
+        }
+        g_cpu.cop2[MAC0] = mac0;
+        break;
+    }
+    case AVSZ4:
+    {
+        s64 zsf4 = sign_extend16_64(g_cpu.cop2[ZSF4]);
+        s64 sz1 = (u16)g_cpu.cop2[SZ0];
+        s64 sz2 = (u16)g_cpu.cop2[SZ1];
+        s64 sz3 = (u16)g_cpu.cop2[SZ2];
+        s64 sz4 = (u16)g_cpu.cop2[SZ3];
+        s64 mac0 = gte_lim_mac0(zsf4 * (sz1 + sz2 + sz3 + sz4));
+
+        if ((mac0 >> 12) > 0xffff) {
+            g_cpu.cop2[OTZ] = 0xffff;
+            g_cpu.cop2[FLAG] |= (1 << 18);
+        }
+        else if ((mac0 >> 12) < 0) {
+            g_cpu.cop2[OTZ] = 0;
+            g_cpu.cop2[FLAG] |= (1 << 18);
+        }
+        else {
+            g_cpu.cop2[OTZ] = (mac0 >> 12);
+        }
+        g_cpu.cop2[MAC0] = mac0;    
         break;
     }
     case RTPT:
     {
         u8 sf = ((command & (1 << 19)) != 0) * 12;
         u8 lm = (command & (1 << 10)) != 0;
-        gte_rtps(VXY0, sf, lm);
-        gte_rtps(VXY1, sf, lm);
-        gte_rtps(VXY2, sf, lm);
+        gte_rtps(VXY0, sf, lm, 0);
+        gte_rtps(VXY1, sf, lm, 0);
+        gte_rtps(VXY2, sf, lm, 1);
+        break;
+    }
+    case GPF:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+
+        s64 ir0 = sign_extend16_64(g_cpu.cop2[IR0]);
+        s32 mac1 = gte_lim_mac(ir0 * sign_extend16_64(g_cpu.cop2[IR1]), MAC1) >> sf;
+        s32 mac2 = gte_lim_mac(ir0 * sign_extend16_64(g_cpu.cop2[IR2]), MAC2) >> sf;
+        s32 mac3 = gte_lim_mac(ir0 * sign_extend16_64(g_cpu.cop2[IR3]), MAC3) >> sf;
+
+        g_cpu.cop2[MAC1] = mac1;
+        g_cpu.cop2[MAC2] = mac2;
+        g_cpu.cop2[MAC3] = mac3;
+
+        g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
+        g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
+        g_cpu.cop2[IR3] = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+        gte_push_color_fifo();
+        break;
+    }
+    case GPL:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+
+        s64 ir0 = sign_extend16_64(g_cpu.cop2[IR0]);
+        s32 mac1 = gte_lim_mac((sign_extend32_64(g_cpu.cop2[MAC1]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR1]), MAC1) >> sf;
+        s32 mac2 = gte_lim_mac((sign_extend32_64(g_cpu.cop2[MAC2]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR2]), MAC2) >> sf;
+        s32 mac3 = gte_lim_mac((sign_extend32_64(g_cpu.cop2[MAC3]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR3]), MAC3) >> sf;
+
+        g_cpu.cop2[MAC1] = mac1;
+        g_cpu.cop2[MAC2] = mac2;
+        g_cpu.cop2[MAC3] = mac3;
+
+        g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
+        g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
+        g_cpu.cop2[IR3] = gte_clamp_ir(mac3, IR3_FLAG, lm);
+
+        gte_push_color_fifo();       
+        break;
+    }
+    case NCCT:
+    {
+        u8 sf = ((command & (1 << 19)) != 0) * 12;
+        u8 lm = (command & (1 << 10)) != 0;
+        gte_nccs(VXY0, sf, lm);
+        gte_nccs(VXY1, sf, lm);
+        gte_nccs(VXY2, sf, lm);
         break;
     }
     case MVMVA:

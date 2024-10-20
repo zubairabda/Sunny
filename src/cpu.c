@@ -169,9 +169,10 @@ u64 execute_instruction(u64 min_cycles)
     while (g_cycles_elapsed <= target_cycles)
     {
         ++g_cycles_elapsed;
+        //g_cycles_elapsed += 2;
         //psx->pending_cycles = 1;
         log_tty();
-#if 1
+#if 0
         // exe sideloading
         if (g_cpu.pc == 0x80030000)
         {
@@ -197,6 +198,7 @@ u64 execute_instruction(u64 min_cycles)
         }
 
         instruction ins = {.value = fetch_instruction(g_cpu.pc)};
+        
         g_cpu.current_pc = g_cpu.pc;
 
         g_cpu.pc = g_cpu.next_pc;
