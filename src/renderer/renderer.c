@@ -1,7 +1,13 @@
 #include "renderer.h"
 
-void *push_render_command(renderer_interface *renderer, enum render_command_type type, u64 size)
+renderer_context *g_renderer;
+
+platform_event g_present_ready;
+u32 g_vblank_counter;
+
+void *push_render_command(enum render_command_type type, u64 size)
 {
+    hardware_renderer *renderer = (hardware_renderer *)g_renderer;
     SY_ASSERT((renderer->commands_at + size) <= (renderer->render_commands + renderer->render_commands_size));
     struct render_command_header *result = (struct render_command_header *)renderer->commands_at;
     renderer->commands_at += size;
@@ -10,20 +16,20 @@ void *push_render_command(renderer_interface *renderer, enum render_command_type
     return (void *)result;
 }
 
-void push_draw_area(renderer_interface *renderer, rect2 draw_area)
+void push_draw_area(rect2 draw_area)
 {
-    struct render_command_set_draw_area *cmd = push_render_command(renderer, RENDER_COMMAND_SET_DRAW_AREA, sizeof(struct render_command_set_draw_area));
+    struct render_command_set_draw_area *cmd = push_render_command(RENDER_COMMAND_SET_DRAW_AREA, sizeof(struct render_command_set_draw_area));
     cmd->draw_area = draw_area;
 }
 
-void push_vram_flush(renderer_interface *renderer)
+void push_vram_flush(void)
 {
-    struct render_command_flush_vram *cmd = push_render_command(renderer, RENDER_COMMAND_FLUSH_VRAM, sizeof(struct render_command_flush_vram));
+    struct render_command_flush_vram *cmd = push_render_command(RENDER_COMMAND_FLUSH_VRAM, sizeof(struct render_command_flush_vram));
 }
 
-void push_vram_copy(renderer_interface *renderer, u16 src_x, u16 src_y, u16 dst_x, u16 dst_y, u16 width, u16 height)
+void push_vram_copy(u16 src_x, u16 src_y, u16 dst_x, u16 dst_y, u16 width, u16 height)
 {
-    struct render_command_transfer *cmd = push_render_command(renderer, RENDER_COMMAND_TRANSFER_VRAM_TO_VRAM, sizeof(struct render_command_transfer));
+    struct render_command_transfer *cmd = push_render_command(RENDER_COMMAND_TRANSFER_VRAM_TO_VRAM, sizeof(struct render_command_transfer));
     cmd->x = src_x;
     cmd->y = src_y;
     cmd->x2 = dst_x;
@@ -32,9 +38,9 @@ void push_vram_copy(renderer_interface *renderer, u16 src_x, u16 src_y, u16 dst_
     cmd->height = height;
 }
 
-void push_cpu_to_vram_copy(renderer_interface *renderer, void **buffer, u16 dst_x, u16 dst_y, u16 width, u16 height)
+void push_cpu_to_vram_copy(void **buffer, u16 dst_x, u16 dst_y, u16 width, u16 height)
 {
-    struct render_command_transfer *cmd = push_render_command(renderer, RENDER_COMMAND_TRANSFER_CPU_TO_VRAM, sizeof(struct render_command_transfer));
+    struct render_command_transfer *cmd = push_render_command(RENDER_COMMAND_TRANSFER_CPU_TO_VRAM, sizeof(struct render_command_transfer));
     cmd->buffer = buffer;
     cmd->x = dst_x;
     cmd->y = dst_y;
@@ -42,9 +48,9 @@ void push_cpu_to_vram_copy(renderer_interface *renderer, void **buffer, u16 dst_
     cmd->height = height;
 }
 
-void push_vram_to_cpu_copy(renderer_interface *renderer, void **dst_buffer, u16 src_x, u16 src_y, u16 width, u16 height)
+void push_vram_to_cpu_copy(void **dst_buffer, u16 src_x, u16 src_y, u16 width, u16 height)
 {
-    struct render_command_transfer *cmd = push_render_command(renderer, RENDER_COMMAND_TRANSFER_VRAM_TO_CPU, sizeof(struct render_command_transfer));
+    struct render_command_transfer *cmd = push_render_command(RENDER_COMMAND_TRANSFER_VRAM_TO_CPU, sizeof(struct render_command_transfer));
     cmd->buffer = dst_buffer;
     cmd->x = src_x;
     cmd->y = src_y;
@@ -52,17 +58,20 @@ void push_vram_to_cpu_copy(renderer_interface *renderer, void **dst_buffer, u16 
     cmd->height = height;
 }
 
-void push_primitive(renderer_interface *renderer, u32 vertex_count, u32 texture_mode)
+void push_primitive(u32 vertex_count, u32 texture_mode)
 {
+    hardware_renderer *renderer = (hardware_renderer *)g_renderer;
     enum render_command_type type = texture_mode ? RENDER_COMMAND_DRAW_TEXTURED_PRIMITIVE : RENDER_COMMAND_DRAW_SHADED_PRIMITIVE;
-    struct render_command_draw *cmd = push_render_command(renderer, type, sizeof(struct render_command_draw));
+    struct render_command_draw *cmd = push_render_command(type, sizeof(struct render_command_draw));
     cmd->texture_mode = texture_mode;
     cmd->vertex_count = vertex_count;
     cmd->vertex_array_offset = renderer->total_vertex_count;
 }
 
-void push_polygon(renderer_interface *renderer, u32 *commands, u32 flags, vec2 draw_offset)
+void push_polygon(u32 *commands, u32 flags, vec2 draw_offset)
 {
+    hardware_renderer *renderer = (hardware_renderer *)g_renderer;
+
     u32 in_color = commands[0];
     u32 color[4];
 
@@ -141,7 +150,11 @@ void push_polygon(renderer_interface *renderer, u32 *commands, u32 flags, vec2 d
 
     for (u32 i = 0; i < 3; ++i)
     {
-        v[i].pos = commands[1 + stride * i];//v2add(temp_cvt(commands[1 + stride * i]), draw_offset);
+        s32 vertex = (s32)commands[1 + stride * i];
+        s32 x = (((vertex & 0x7ff) << 21) >> 21) + draw_offset.x;
+        s32 y = (((vertex & 0x7ff0000) << 5) >> 21) + draw_offset.y;
+        v[i].pos = (x & 0xffff) | ((y & 0xffff) << 16);
+
         if (flags & POLYGON_FLAG_TEXTURED)
         {
             v[i].uv = get_texcoord(commands[2 + stride * i]); // NOTE: yucky
@@ -158,7 +171,11 @@ void push_polygon(renderer_interface *renderer, u32 *commands, u32 flags, vec2 d
 
         for (u32 i = 1; i < 4; ++i)
         {
-            v[i + 2].pos = commands[1 + stride * i];//temp_cvt(commands[1 + stride * i]);
+            s32 vertex = (s32)commands[1 + stride * i];
+            s32 x = (((vertex & 0x7ff) << 21) >> 21) + draw_offset.x;
+            s32 y = (((vertex & 0x7ff0000) << 5) >> 21) + draw_offset.y;
+            v[i + 2].pos = (x & 0xffff) | ((y & 0xffff) << 16);
+
             if (flags & POLYGON_FLAG_TEXTURED)
             {
                 v[i + 2].uv = get_texcoord(commands[2 + stride * i]); // NOTE: yucky
@@ -198,14 +215,16 @@ void push_polygon(renderer_interface *renderer, u32 *commands, u32 flags, vec2 d
     affected_area->bottom = max_y;
     #else
     if (mode)
-        push_vram_flush(renderer);
+        push_vram_flush();
     #endif
-    push_primitive(renderer, added_vertices, mode);
+    push_primitive(added_vertices, mode);
     renderer->total_vertex_count += added_vertices;
 }
 
-void push_rect(renderer_interface *renderer, u32 *commands, u32 flags, u32 texpage)
+void push_rect(u32 *commands, u32 flags, u32 texpage, vec2 draw_offset)
 {
+    hardware_renderer *renderer = (hardware_renderer *)g_renderer;
+
     vec2i texture_page = v2i((texpage & 0xf) * 64, ((texpage >> 4) & 0x1) * 256);
     vec2i clut_base;
     u8 uv_x;
@@ -277,8 +296,8 @@ void push_rect(renderer_interface *renderer, u32 *commands, u32 flags, u32 texpa
     for (u32 l = 0, i = loop[0]; l < ARRAYCOUNT(loop); ++l, i = loop[l])
     {
         vertex_attrib current_vertex = {.vertex = sizes[i]};
-        current_vertex.x += base_vertex.x;
-        current_vertex.y += base_vertex.y;
+        current_vertex.x += base_vertex.x + draw_offset.x;
+        current_vertex.y += base_vertex.y + draw_offset.y;
         v[l].pos = current_vertex.vertex;
         //if (current_vertex.y == 44)
         //    DebugBreak();
@@ -301,8 +320,8 @@ void push_rect(renderer_interface *renderer, u32 *commands, u32 flags, u32 texpa
     }
 
     if (mode)
-        push_vram_flush(renderer);
+        push_vram_flush();
 
-    push_primitive(renderer, 6, mode);
+    push_primitive(6, mode);
     renderer->total_vertex_count += 6;
 }

@@ -1,26 +1,13 @@
 #ifndef SY_MATH_H
 #define SY_MATH_H
 
-typedef union
+typedef struct rect2
 {
-    struct
-    {
-        s32 left;
-        s32 top;
-        s32 right;
-        s32 bottom;
-    };
-    s32 r[4];
+    s32 left;
+    s32 top;
+    s32 right;
+    s32 bottom;
 } rect2;
-
-typedef union Bounds16
-{
-    struct
-    {
-        s16 minX, minY, maxX, maxY;
-    };
-    s16 bounds[4];
-} Bounds16;
 
 typedef union vec2i
 {

@@ -22,6 +22,7 @@ static inline reg_tuple set_register(u32 index, u32 value)
     return load;
 }
 
+u32 fetch_instruction(u32 pc); // TODO: temp
 static inline void handle_exception(enum exception_code cause)
 {
 #if 0
@@ -33,7 +34,10 @@ static inline void handle_exception(enum exception_code cause)
 #if 1
     if (cause == EXCEPTION_CODE_INTERRUPT)
     {
-        g_cpu.cop0[COP0_EPC] = g_cpu.pc;
+        if ((fetch_instruction(g_cpu.pc) & 0xfe000000) == 0x4a000000)
+            return;
+        else
+            g_cpu.cop0[COP0_EPC] = g_cpu.pc;
     }
     else
     {
@@ -92,8 +96,10 @@ static inline void log_tty(void)
         case 0x35:
             if (g_cpu.registers[4] != 1)
                 break;
+
             char* str;
             u32 addr = g_cpu.registers[5] & 0x1fffffff;
+
             if (addr >= 0x1fc00000 && addr < 0x1fc80000)
             {
                 str = (char *)(g_bios + (addr - 0x1fc00000));
@@ -102,12 +108,13 @@ static inline void log_tty(void)
             {
                 SY_ASSERT(0);
             }
+            
             u32 size = g_cpu.registers[6];
             while (size--)
-                debug_putchar(*str++);
+                putchar(*str++);
             break;
         case 0x3d:
-            debug_putchar(g_cpu.registers[4]);
+            putchar(g_cpu.registers[4]);
             break;
         }
     }
@@ -117,6 +124,7 @@ void cpu_init(void)
 {
     g_cpu.pc = 0xbfc00000;
     g_cpu.next_pc = 0xbfc00004;
+    
     g_cpu.cop0[15] = 0x2; // PRID
 }
 
@@ -158,39 +166,17 @@ static u32 fetch_instruction(u32 pc)
 
 u64 execute_instruction(u64 min_cycles)
 {
-    b32 branched = SY_FALSE;
+    b8 branched = false;
     reg_tuple new_load = {0};
     reg_tuple write = {0};
     u64 target_cycles = g_cycles_elapsed + min_cycles;
-#if 0
-    char buffer[64];
-    memset(buffer, 0, sizeof(buffer));
-#endif
-    while (g_cycles_elapsed <= target_cycles)
+
+    while (g_cycles_elapsed < target_cycles)
     {
         ++g_cycles_elapsed;
         //g_cycles_elapsed += 2;
-        //psx->pending_cycles = 1;
         log_tty();
-#if 0
-        // exe sideloading
-        if (g_cpu.pc == 0x80030000)
-        {
-            g_debug.show_disasm = 1;
-            u8* fp = g_debug.loaded_exe;
-            u32 dst = U32FromPtr(fp + 0x18);
-            u32 size = U32FromPtr(fp + 0x1c);
-            memcpy((g_ram + (dst & 0x1fffffff)), (fp + 0x800), size);
-            g_cpu.pc = U32FromPtr(fp + 0x10);
-            g_cpu.registers[28] = U32FromPtr(fp + 0x14);
-            if (U32FromPtr(fp + 0x30) != 0)
-            {
-                g_cpu.registers[29] = U32FromPtr(fp + 0x30) + U32FromPtr(fp + 0x34);
-                g_cpu.registers[30] = U32FromPtr(fp + 0x30) + U32FromPtr(fp + 0x34);
-            }
-            g_cpu.next_pc = g_cpu.pc + 4;
-        }
-#endif
+
         if (g_cpu.pc & 0x3) // NOTE: this seems to fix amidog exception tests but im not sure its needed
         {
             g_cpu.cop0[8] = g_cpu.pc;
@@ -200,10 +186,9 @@ u64 execute_instruction(u64 min_cycles)
         instruction ins = {.value = fetch_instruction(g_cpu.pc)};
         
         g_cpu.current_pc = g_cpu.pc;
-
         g_cpu.pc = g_cpu.next_pc;
-        g_cpu.next_pc = g_cpu.pc + 4;
-        
+        g_cpu.next_pc += 4;
+
         u32 immediate = ins.value & 0xffff;
         u32 target = ins.value & 0x3ffffff;
 
@@ -221,7 +206,7 @@ u64 execute_instruction(u64 min_cycles)
 
             if (branch)
                 g_cpu.next_pc = g_cpu.pc + (sign_extend16_32(immediate) << 2);
-            branched = SY_TRUE;
+            branched = true;
             break;
         }
         case ANDI:
@@ -504,7 +489,7 @@ u64 execute_instruction(u64 min_cycles)
             {
                 g_cpu.next_pc = g_cpu.pc + (sign_extend16_32(immediate) << 2);
             }
-            branched = SY_TRUE;
+            branched = true;
             break;
         }
         case BNE:
@@ -513,7 +498,7 @@ u64 execute_instruction(u64 min_cycles)
             {
                 g_cpu.next_pc = g_cpu.pc + (sign_extend16_32(immediate) << 2);
             }
-            branched = SY_TRUE;
+            branched = true;
             break;
         }
         case BLEZ:
@@ -522,7 +507,7 @@ u64 execute_instruction(u64 min_cycles)
             {
                 g_cpu.next_pc = g_cpu.pc + (sign_extend16_32(immediate) << 2);
             }
-            branched = SY_TRUE;
+            branched = true;
             break;
         }
         case BGTZ:
@@ -531,20 +516,20 @@ u64 execute_instruction(u64 min_cycles)
             {               
                 g_cpu.next_pc = g_cpu.pc + (sign_extend16_32(immediate) << 2);
             }
-            branched = SY_TRUE;
+            branched = true;
             break;
         }
         case J:
         {
             g_cpu.next_pc = (g_cpu.pc & 0xf0000000) | (target << 2);
-            branched = SY_TRUE;
+            branched = true;
             break;
         }
         case JAL:
         {
             write = set_register(31, g_cpu.next_pc);
             g_cpu.next_pc = (g_cpu.pc & 0xf0000000) | (target << 2);
-            branched = SY_TRUE;
+            branched = true;
             break;
         }
         case COP0:
@@ -555,6 +540,21 @@ u64 execute_instruction(u64 min_cycles)
                 new_load.value = g_cpu.cop0[ins.rd];
                 break;
             case MTC:
+                if (ins.rd == COP0_CAUSE) {
+                    //printf("writing %08x to CAUSE\n", g_cpu.registers[ins.rt]);
+                    g_cpu.cop0[COP0_CAUSE] &= 0xfffffcff;
+                    g_cpu.cop0[COP0_CAUSE] |= g_cpu.registers[ins.rt] & 0x300;
+                    break;
+                }
+#if 0
+                if (ins.rd == 14) {
+                    printf("writing %08x to EPC\n", g_cpu.registers[ins.rt]);
+                }
+                if (ins.rd == 8) {
+                    printf("writing %08x to BadVaddr\n", g_cpu.registers[ins.rt]);
+                }
+#endif
+
                 g_cpu.cop0[ins.rd] = g_cpu.registers[ins.rt];
                 break;
             case RFE:
@@ -655,12 +655,12 @@ u64 execute_instruction(u64 min_cycles)
                 break;
             case JR:
                 g_cpu.next_pc = g_cpu.registers[ins.rs];
-                branched = SY_TRUE;
+                branched = true;
                 break;
             case JALR:
                 write = set_register(ins.rd, g_cpu.next_pc);
                 g_cpu.next_pc = g_cpu.registers[ins.rs];
-                branched = SY_TRUE;
+                branched = true;
                 break;
             case SYSCALL:
                 handle_exception(EXCEPTION_CODE_SYSCALL);
@@ -795,23 +795,16 @@ u64 execute_instruction(u64 min_cycles)
             }
             default:
                 debug_log("WARNING: Unknown secondary: %x\n", ins.secondary);
+                //handle_exception(EXCEPTION_CODE_RESERVED_INSTRUCTION);
                 break;
             }
             break;
         default:
             debug_log("WARNING: Unknown opcode: %x\n", ins.op);
-            handle_exception(EXCEPTION_CODE_RESERVED_INSTRUCTION);
+            //handle_exception(EXCEPTION_CODE_RESERVED_INSTRUCTION);
             break;
         }
-#if 0
-        if (g_debug.show_disasm)
-        {
-            debug_log("%08x\t%08x\t", g_cpu.current_pc, ins.value);
-            instr_to_string(ins, buffer, sizeof(buffer));
-            debug_log(buffer);
-            debug_log("\n");
-        }
-#endif
+
         if (g_cpu.load_delay.index != new_load.index)
         {
             g_cpu.registers[g_cpu.load_delay.index] = g_cpu.load_delay.value;
@@ -826,7 +819,7 @@ u64 execute_instruction(u64 min_cycles)
         write.value = 0;
 
         g_cpu.in_branch_delay = branched;
-        branched = SY_FALSE;
+        branched = false;
 
         g_cpu.registers[0] = 0;
 

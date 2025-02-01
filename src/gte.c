@@ -161,13 +161,13 @@ static inline s64 sign_extend16_64(s16 value)
     return (s64)value;
 }
 
-static inline s64 gte_lim_mac(s64 v, u32 reg)
+static inline s64 gte_lim_mac(u32 i, s64 v)
 {
     if (v > 0x7ffffffffffll) {
-        g_cpu.cop2[FLAG] |= (1 << (55 - reg));
+        g_cpu.cop2[FLAG] |= (0x80000000 >> i);
     }
     else if (v < -0x80000000000ll) {
-        g_cpu.cop2[FLAG] |= (1 << (52 - reg));
+        g_cpu.cop2[FLAG] |= (0x10000000 >> i);
     }
     /* truncate to s44 */
     return (v << 20) >> 20;
@@ -210,6 +210,17 @@ static inline u32 gte_clamp_c(s32 value, u32 flag)
     return value;
 }
 
+static inline s32 gte_clamp_5bit(s32 value)
+{
+    if (value < 0x0) {
+        return 0x0;
+    }
+    else if (value > 0x1f) {
+        return 0x1f;
+    }
+    return value;
+}
+
 static inline s32 gte_clamp_ir(s64 value, u32 flag, s8 lm)
 {
     s32 min = -0x8000 * !lm;
@@ -239,30 +250,30 @@ static inline s64 gte_clamp_ir0(s64 value)
 
 static inline void gte_rtps(s8 v, s8 sf, s8 lm, b8 r)
 {
-    g_cpu.cop2[MAC1] = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[TRX]) << 12) + 
-                        (s64)((s16)g_cpu.cop2[RT11RT12]) * (s64)((s16)g_cpu.cop2[v]), MAC1) + 
-                        (s64)((s16)(g_cpu.cop2[RT11RT12] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16)), MAC1) +
-                        (s64)((s16)g_cpu.cop2[RT13RT21]) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC1)) >> sf;
+    g_cpu.cop2[MAC1] = (gte_lim_mac(1, gte_lim_mac(1, gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[TRX]) << 12) + 
+                        (s64)((s16)g_cpu.cop2[RT11RT12]) * (s64)((s16)g_cpu.cop2[v])) + 
+                        (s64)((s16)(g_cpu.cop2[RT11RT12] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16))) +
+                        (s64)((s16)g_cpu.cop2[RT13RT21]) * (s64)((s16)(g_cpu.cop2[v + 1])))) >> sf;
 
-    g_cpu.cop2[MAC2] = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[TRY]) << 12) + 
-                        (s64)((s16)(g_cpu.cop2[RT13RT21] >> 16)) * (s64)((s16)g_cpu.cop2[v]), MAC2) + 
-                        (s64)((s16)(g_cpu.cop2[RT22RT23])) * (s64)((s16)(g_cpu.cop2[v] >> 16)), MAC2) +
-                        (s64)((s16)(g_cpu.cop2[RT22RT23] >> 16)) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC2)) >> sf;
+    g_cpu.cop2[MAC2] = (gte_lim_mac(2, gte_lim_mac(2, gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[TRY]) << 12) + 
+                        (s64)((s16)(g_cpu.cop2[RT13RT21] >> 16)) * (s64)((s16)g_cpu.cop2[v])) + 
+                        (s64)((s16)(g_cpu.cop2[RT22RT23])) * (s64)((s16)(g_cpu.cop2[v] >> 16))) +
+                        (s64)((s16)(g_cpu.cop2[RT22RT23] >> 16)) * (s64)((s16)(g_cpu.cop2[v + 1])))) >> sf;
 
-    s64 mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[TRZ]) << 12) + 
-                (s64)((s16)g_cpu.cop2[RT31RT32]) * (s64)((s16)g_cpu.cop2[v]), MAC3) + 
-                (s64)((s16)(g_cpu.cop2[RT31RT32] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16)), MAC3) +
-                (s64)((s16)g_cpu.cop2[RT33]) * (s64)((s16)(g_cpu.cop2[v + 1])), MAC3)) >> sf;
+    s64 mac3 = (gte_lim_mac(3, gte_lim_mac(3, gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[TRZ]) << 12) + 
+                (s64)((s16)g_cpu.cop2[RT31RT32]) * (s64)((s16)g_cpu.cop2[v])) + 
+                (s64)((s16)(g_cpu.cop2[RT31RT32] >> 16)) * (s64)((s16)(g_cpu.cop2[v] >> 16))) +
+                (s64)((s16)g_cpu.cop2[RT33]) * (s64)((s16)(g_cpu.cop2[v + 1])))) >> sf;
 
     g_cpu.cop2[MAC3] = (u32)mac3;
 
     // NOTE: spx says saturation is always -0x8000..0x7fff?
-    g_cpu.cop2[IR1] = gte_clamp_ir((s32)g_cpu.cop2[MAC1], (1 << 24), lm);
-    g_cpu.cop2[IR2] = gte_clamp_ir((s32)g_cpu.cop2[MAC2], (1 << 23), lm);
-#if 1
+    g_cpu.cop2[IR1] = gte_clamp_ir((s32)g_cpu.cop2[MAC1], IR1_FLAG, lm);
+    g_cpu.cop2[IR2] = gte_clamp_ir((s32)g_cpu.cop2[MAC2], IR2_FLAG, lm);
+
     // hardware bug: IR3 saturation flag not set if sf=0 unless range exceeds -0x8000..0x7fff
     if (sf) {
-        g_cpu.cop2[IR3] = gte_clamp_ir((s32)g_cpu.cop2[MAC3], (1 << 22), lm);
+        g_cpu.cop2[IR3] = gte_clamp_ir((s32)g_cpu.cop2[MAC3], IR3_FLAG, lm);
     }
     else {
         s64 mac3_shift = (s32)mac3 >> 12;
@@ -275,29 +286,7 @@ static inline void gte_rtps(s8 v, s8 sf, s8 lm, b8 r)
         }
 
         g_cpu.cop2[IR3] = gte_clamp_ir((s32)g_cpu.cop2[MAC3], 0, lm);
-#if 0
-        if (lm) {
-            if (mac3_shift < 0x0) {
-                g_cpu.cop2[IR3] = 0x0;
-            }
-        }
-        else {
-            if (mac3_shift < -0x8000) {
-                /* flag not set */
-                g_cpu.cop2[IR3] = -0x8000;
-            }
-        }
-#endif
     }
-#else
-    g_cpu.cop2[IR3] = gte_clamp_ir(g_cpu.cop2[MAC3], IR3, lm);
-    if (!sf) {
-        s32 mac3 = (s32)g_cpu.cop2[MAC3] >> 12;
-        if (mac3 > 0x7fff || mac3 < -0x8000) {
-            g_cpu.cop2[FLAG] |= (1 << 22);
-        }
-    }
-#endif
 
 #if 1
     s64 sz3 = mac3 >> (12 - sf);
@@ -368,15 +357,15 @@ static inline void gte_push_color_fifo(void)
 
 static inline void gte_interpolate(s64 c1, s64 c2, s64 c3, u8 sf, u8 lm)
 {
-    s32 mac1 = gte_lim_mac(((s64)((s32)g_cpu.cop2[RFC]) << 12) - c1, MAC1) >> sf;
-    s32 mac2 = gte_lim_mac(((s64)((s32)g_cpu.cop2[GFC]) << 12) - c2, MAC2) >> sf;
-    s32 mac3 = gte_lim_mac(((s64)((s32)g_cpu.cop2[BFC]) << 12) - c3, MAC3) >> sf;
+    s32 mac1 = gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[RFC]) << 12) - c1) >> sf;
+    s32 mac2 = gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[GFC]) << 12) - c2) >> sf;
+    s32 mac3 = gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[BFC]) << 12) - c3) >> sf;
 
     s64 ir0 = (s64)((s16)g_cpu.cop2[IR0]);
 
-    g_cpu.cop2[MAC1] = gte_lim_mac(c1 + (gte_clamp_ir(mac1, 1 << 24, 0) * ir0), MAC1) >> sf;
-    g_cpu.cop2[MAC2] = gte_lim_mac(c2 + (gte_clamp_ir(mac2, 1 << 23, 0) * ir0), MAC2) >> sf;
-    g_cpu.cop2[MAC3] = gte_lim_mac(c3 + (gte_clamp_ir(mac3, 1 << 22, 0) * ir0), MAC3) >> sf;
+    g_cpu.cop2[MAC1] = gte_lim_mac(1, c1 + (gte_clamp_ir(mac1, 1 << 24, 0) * ir0)) >> sf;
+    g_cpu.cop2[MAC2] = gte_lim_mac(2, c2 + (gte_clamp_ir(mac2, 1 << 23, 0) * ir0)) >> sf;
+    g_cpu.cop2[MAC3] = gte_lim_mac(3, c3 + (gte_clamp_ir(mac3, 1 << 22, 0) * ir0)) >> sf;
 
     g_cpu.cop2[IR1] = gte_clamp_ir((s32)g_cpu.cop2[MAC1], 1 << 24, lm);
     g_cpu.cop2[IR2] = gte_clamp_ir((s32)g_cpu.cop2[MAC2], 1 << 23, lm);
@@ -391,33 +380,33 @@ static inline void gte_ncds(u32 v, u8 sf, u8 lm)
     s64 vy = sign_extend16_64(g_cpu.cop2[v] >> 16);
     s64 vz = sign_extend16_64(g_cpu.cop2[v + 1]);
 
-    s32 mac1 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
+    s32 mac1 = gte_lim_mac(1, sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
                             sign_extend16_64(g_cpu.cop2[L11L12] >> 16) * vy +
-                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz, MAC1) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz) >> sf;
 
-    s32 mac2 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
+    s32 mac2 = gte_lim_mac(2, sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
                             sign_extend16_64(g_cpu.cop2[L22L23]) * vy +
-                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz, MAC2) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz) >> sf;
 
-    s32 mac3 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
+    s32 mac3 = gte_lim_mac(3, sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
                             sign_extend16_64(g_cpu.cop2[L31L32] >> 16) * vy +
-                            sign_extend16_64(g_cpu.cop2[L33]) * vz, MAC3) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L33]) * vz) >> sf;
 
     s32 ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
     s32 ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
     s32 ir3 = gte_clamp_ir(mac3, IR3_FLAG, lm);
 
-    mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
-            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
-            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+    mac1 = (gte_lim_mac(1, gte_lim_mac(1, gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3)) >> sf;
 
-    mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
-            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
-            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+    mac2 = (gte_lim_mac(2, gte_lim_mac(2, gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3)) >> sf;
 
-    mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
-            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
-            sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+    mac3 = (gte_lim_mac(3, gte_lim_mac(3, gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LB3]) * ir3)) >> sf;
 
     ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
     ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
@@ -436,33 +425,33 @@ static inline void gte_nccs(u32 v, u8 sf, u8 lm)
     s64 vy = sign_extend16_64(g_cpu.cop2[v] >> 16);
     s64 vz = sign_extend16_64(g_cpu.cop2[v + 1]);
 
-    s32 mac1 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
+    s32 mac1 = gte_lim_mac(1, sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
                             sign_extend16_64(g_cpu.cop2[L11L12] >> 16) * vy +
-                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz, MAC1) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz) >> sf;
 
-    s32 mac2 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
+    s32 mac2 = gte_lim_mac(2, sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
                             sign_extend16_64(g_cpu.cop2[L22L23]) * vy +
-                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz, MAC2) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz) >> sf;
 
-    s32 mac3 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
+    s32 mac3 = gte_lim_mac(3, sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
                             sign_extend16_64(g_cpu.cop2[L31L32] >> 16) * vy +
-                            sign_extend16_64(g_cpu.cop2[L33]) * vz, MAC3) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L33]) * vz) >> sf;
 
     s32 ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
     s32 ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
     s32 ir3 = gte_clamp_ir(mac3, IR3_FLAG, lm);
 
-    mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
-            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
-            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+    mac1 = (gte_lim_mac(1, gte_lim_mac(1, gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3)) >> sf;
 
-    mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
-            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
-            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+    mac2 = (gte_lim_mac(2, gte_lim_mac(2, gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3)) >> sf;
 
-    mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
-            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
-            sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+    mac3 = (gte_lim_mac(3, gte_lim_mac(3, gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LB3]) * ir3)) >> sf;
 
     ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
     ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
@@ -472,9 +461,9 @@ static inline void gte_nccs(u32 v, u8 sf, u8 lm)
     s64 green = ((g_cpu.cop2[RGBC] >> 8) & 0xff) << 4;
     s64 blue = ((g_cpu.cop2[RGBC] >> 16) & 0xff) << 4;
 
-    mac1 = gte_lim_mac(red * ir1, MAC1) >> sf;
-    mac2 = gte_lim_mac(green * ir2, MAC2) >> sf;
-    mac3 = gte_lim_mac(blue * ir3, MAC3) >> sf;
+    mac1 = gte_lim_mac(1, red * ir1) >> sf;
+    mac2 = gte_lim_mac(2, green * ir2) >> sf;
+    mac3 = gte_lim_mac(3, blue * ir3) >> sf;
 
     g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
     g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
@@ -493,33 +482,33 @@ void gte_ncs(u32 v, u8 sf, u8 lm)
     s64 vy = sign_extend16_64(g_cpu.cop2[v] >> 16);
     s64 vz = sign_extend16_64(g_cpu.cop2[v + 1]);
 
-    s32 mac1 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
+    s32 mac1 = gte_lim_mac(1, sign_extend16_64(g_cpu.cop2[L11L12]) * vx + 
                             sign_extend16_64(g_cpu.cop2[L11L12] >> 16) * vy +
-                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz, MAC1) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L13L21]) * vz) >> sf;
 
-    s32 mac2 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
+    s32 mac2 = gte_lim_mac(2, sign_extend16_64(g_cpu.cop2[L13L21] >> 16) * vx + 
                             sign_extend16_64(g_cpu.cop2[L22L23]) * vy +
-                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz, MAC2) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L22L23] >> 16) * vz) >> sf;
 
-    s32 mac3 = gte_lim_mac(sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
+    s32 mac3 = gte_lim_mac(3, sign_extend16_64(g_cpu.cop2[L31L32]) * vx + 
                             sign_extend16_64(g_cpu.cop2[L31L32] >> 16) * vy +
-                            sign_extend16_64(g_cpu.cop2[L33]) * vz, MAC3) >> sf;
+                            sign_extend16_64(g_cpu.cop2[L33]) * vz) >> sf;
 
     s32 ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
     s32 ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
     s32 ir3 = gte_clamp_ir(mac3, IR3_FLAG, lm);
 
-    mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
-            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
-            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+    mac1 = (gte_lim_mac(1, gte_lim_mac(1, gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3)) >> sf;
 
-    mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
-            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
-            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+    mac2 = (gte_lim_mac(2, gte_lim_mac(2, gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3)) >> sf;
 
-    mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
-            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
-            sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+    mac3 = (gte_lim_mac(3, gte_lim_mac(3, gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1) +
+            sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2) +
+            sign_extend16_64(g_cpu.cop2[LB3]) * ir3)) >> sf;
 
     g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
     g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
@@ -559,9 +548,9 @@ void gte_command(u32 command)
     {
         u8 sf = ((command & (1 << 19)) != 0) * 12;
         u8 lm = (command & (1 << 10)) != 0;
-        g_cpu.cop2[MAC1] = gte_lim_mac((s64)((s16)g_cpu.cop2[IR3]) * (s64)((s16)g_cpu.cop2[RT22RT23]) - (s64)((s16)g_cpu.cop2[IR2]) * (s64)((s16)g_cpu.cop2[RT33]), MAC1) >> sf;
-        g_cpu.cop2[MAC2] = gte_lim_mac((s64)((s16)g_cpu.cop2[IR1]) * (s64)((s16)g_cpu.cop2[RT33]) - (s64)((s16)g_cpu.cop2[IR3]) * (s64)((s16)g_cpu.cop2[RT11RT12]), MAC2) >> sf;
-        g_cpu.cop2[MAC3] = gte_lim_mac((s64)((s16)g_cpu.cop2[IR2]) * (s64)((s16)g_cpu.cop2[RT11RT12]) - (s64)((s16)g_cpu.cop2[IR1]) * (s64)((s16)g_cpu.cop2[RT22RT23]), MAC3) >> sf;
+        g_cpu.cop2[MAC1] = gte_lim_mac(1, (s64)((s16)g_cpu.cop2[IR3]) * (s64)((s16)g_cpu.cop2[RT22RT23]) - (s64)((s16)g_cpu.cop2[IR2]) * (s64)((s16)g_cpu.cop2[RT33])) >> sf;
+        g_cpu.cop2[MAC2] = gte_lim_mac(2, (s64)((s16)g_cpu.cop2[IR1]) * (s64)((s16)g_cpu.cop2[RT33]) - (s64)((s16)g_cpu.cop2[IR3]) * (s64)((s16)g_cpu.cop2[RT11RT12])) >> sf;
+        g_cpu.cop2[MAC3] = gte_lim_mac(3, (s64)((s16)g_cpu.cop2[IR2]) * (s64)((s16)g_cpu.cop2[RT11RT12]) - (s64)((s16)g_cpu.cop2[IR1]) * (s64)((s16)g_cpu.cop2[RT22RT23])) >> sf;
 
         g_cpu.cop2[IR1] = gte_clamp_ir((s32)g_cpu.cop2[MAC1], (1 << 24), lm);
         g_cpu.cop2[IR2] = gte_clamp_ir((s32)g_cpu.cop2[MAC2], (1 << 23), lm);
@@ -608,17 +597,17 @@ void gte_command(u32 command)
         s32 ir2 = sign_extend16_32(g_cpu.cop2[IR2]);
         s32 ir3 = sign_extend16_32(g_cpu.cop2[IR3]);
 
-        s32 mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
-                    sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
-                    sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+        s32 mac1 = (gte_lim_mac(1, gte_lim_mac(1, gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1) +
+                    sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2) +
+                    sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3)) >> sf;
 
-        s32 mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
-                    sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
-                    sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+        s32 mac2 = (gte_lim_mac(2, gte_lim_mac(2, gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1) +
+                    sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2) +
+                    sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3)) >> sf;
 
-        s32 mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
-                    sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
-                    sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+        s32 mac3 = (gte_lim_mac(3, gte_lim_mac(3, gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1) +
+                    sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2) +
+                    sign_extend16_64(g_cpu.cop2[LB3]) * ir3)) >> sf;
 
         ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
         ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
@@ -656,17 +645,17 @@ void gte_command(u32 command)
         s32 ir2 = sign_extend16_32(g_cpu.cop2[IR2]);
         s32 ir3 = sign_extend16_32(g_cpu.cop2[IR3]);
 
-        s32 mac1 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1, MAC1) +
-                    sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2, MAC1) +
-                    sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3, MAC1)) >> sf;
+        s32 mac1 = (gte_lim_mac(1, gte_lim_mac(1, gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[RBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR1LR2]) * ir1) +
+                    sign_extend16_64(g_cpu.cop2[LR1LR2] >> 16) * ir2) +
+                    sign_extend16_64(g_cpu.cop2[LR3LG1]) * ir3)) >> sf;
 
-        s32 mac2 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1, MAC2) +
-                    sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2, MAC2) +
-                    sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3, MAC2)) >> sf;
+        s32 mac2 = (gte_lim_mac(2, gte_lim_mac(2, gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[GBK]) << 12) + sign_extend16_64(g_cpu.cop2[LR3LG1] >> 16) * ir1) +
+                    sign_extend16_64(g_cpu.cop2[LG2LG3]) * ir2) +
+                    sign_extend16_64(g_cpu.cop2[LG2LG3] >> 16) * ir3)) >> sf;
 
-        s32 mac3 = (gte_lim_mac(gte_lim_mac(gte_lim_mac(((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1, MAC3) +
-                    sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2, MAC3) +
-                    sign_extend16_64(g_cpu.cop2[LB3]) * ir3, MAC3)) >> sf;
+        s32 mac3 = (gte_lim_mac(3, gte_lim_mac(3, gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[BBK]) << 12) + sign_extend16_64(g_cpu.cop2[LB1LB2]) * ir1) +
+                    sign_extend16_64(g_cpu.cop2[LB1LB2] >> 16) * ir2) +
+                    sign_extend16_64(g_cpu.cop2[LB3]) * ir3)) >> sf;
 
         ir1 = gte_clamp_ir(mac1, IR1_FLAG, lm);
         ir2 = gte_clamp_ir(mac2, IR2_FLAG, lm);
@@ -676,9 +665,9 @@ void gte_command(u32 command)
         s64 green = ((g_cpu.cop2[RGBC] >> 8) & 0xff) << 4;
         s64 blue = ((g_cpu.cop2[RGBC] >> 16) & 0xff) << 4;
 
-        mac1 = gte_lim_mac(red * ir1, MAC1) >> sf;
-        mac2 = gte_lim_mac(green * ir2, MAC2) >> sf;
-        mac3 = gte_lim_mac(blue * ir3, MAC3) >> sf;
+        mac1 = gte_lim_mac(1, red * ir1) >> sf;
+        mac2 = gte_lim_mac(2, green * ir2) >> sf;
+        mac3 = gte_lim_mac(3, blue * ir3) >> sf;
 
         g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, lm);
         g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, lm);
@@ -718,9 +707,9 @@ void gte_command(u32 command)
         s64 ir2 = sign_extend16_64(g_cpu.cop2[IR2]);
         s64 ir3 = sign_extend16_64(g_cpu.cop2[IR3]);
 
-        s32 mac1 = gte_lim_mac(ir1 * ir1, MAC1) >> sf;
-        s32 mac2 = gte_lim_mac(ir2 * ir2, MAC2) >> sf;
-        s32 mac3 = gte_lim_mac(ir3 * ir3, MAC3) >> sf;
+        s32 mac1 = gte_lim_mac(1, ir1 * ir1) >> sf;
+        s32 mac2 = gte_lim_mac(2, ir2 * ir2) >> sf;
+        s32 mac3 = gte_lim_mac(3, ir3 * ir3) >> sf;
 
         g_cpu.cop2[IR1] = gte_clamp_ir(mac1, IR1_FLAG, 0);
         g_cpu.cop2[IR2] = gte_clamp_ir(mac2, IR2_FLAG, 0);
@@ -820,9 +809,9 @@ void gte_command(u32 command)
         u8 lm = (command & (1 << 10)) != 0;
 
         s64 ir0 = sign_extend16_64(g_cpu.cop2[IR0]);
-        s32 mac1 = gte_lim_mac(ir0 * sign_extend16_64(g_cpu.cop2[IR1]), MAC1) >> sf;
-        s32 mac2 = gte_lim_mac(ir0 * sign_extend16_64(g_cpu.cop2[IR2]), MAC2) >> sf;
-        s32 mac3 = gte_lim_mac(ir0 * sign_extend16_64(g_cpu.cop2[IR3]), MAC3) >> sf;
+        s32 mac1 = gte_lim_mac(1, ir0 * sign_extend16_64(g_cpu.cop2[IR1])) >> sf;
+        s32 mac2 = gte_lim_mac(2, ir0 * sign_extend16_64(g_cpu.cop2[IR2])) >> sf;
+        s32 mac3 = gte_lim_mac(3, ir0 * sign_extend16_64(g_cpu.cop2[IR3])) >> sf;
 
         g_cpu.cop2[MAC1] = mac1;
         g_cpu.cop2[MAC2] = mac2;
@@ -841,9 +830,9 @@ void gte_command(u32 command)
         u8 lm = (command & (1 << 10)) != 0;
 
         s64 ir0 = sign_extend16_64(g_cpu.cop2[IR0]);
-        s32 mac1 = gte_lim_mac((sign_extend32_64(g_cpu.cop2[MAC1]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR1]), MAC1) >> sf;
-        s32 mac2 = gte_lim_mac((sign_extend32_64(g_cpu.cop2[MAC2]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR2]), MAC2) >> sf;
-        s32 mac3 = gte_lim_mac((sign_extend32_64(g_cpu.cop2[MAC3]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR3]), MAC3) >> sf;
+        s32 mac1 = gte_lim_mac(1, (sign_extend32_64(g_cpu.cop2[MAC1]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR1])) >> sf;
+        s32 mac2 = gte_lim_mac(2, (sign_extend32_64(g_cpu.cop2[MAC2]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR2])) >> sf;
+        s32 mac3 = gte_lim_mac(3, (sign_extend32_64(g_cpu.cop2[MAC3]) << sf) + ir0 * sign_extend16_64(g_cpu.cop2[IR3])) >> sf;
 
         g_cpu.cop2[MAC1] = mac1;
         g_cpu.cop2[MAC2] = mac2;
@@ -875,7 +864,6 @@ void gte_command(u32 command)
         u8 lm = (command & (1 << 10)) != 0;
 
         u8 tx_index = (command >> 13) & 0x3;
-        //SY_ASSERT(tx_index < 3);
         u8 tx = tx_lookup[tx_index];
         
         s16 vxi[3];
@@ -886,14 +874,12 @@ void gte_command(u32 command)
             vxi[2] = (s16)g_cpu.cop2[IR3];
         }
         else {
-            //vxi = (s16 *)&g_cpu.cop2[vx_index << 1];
             vxi[0] = (s16)g_cpu.cop2[vx_index << 1];
             vxi[1] = (s16)(g_cpu.cop2[vx_index << 1] >> 16);
             vxi[2] = (s16)g_cpu.cop2[(vx_index << 1) + 1];
         }
-        //u8 vx = vx_lookup[vx_index];
+
         s16 mxi[9];
-        
         u8 mx_index = (command >> 17) & 0x3;
         if (mx_index == 3) {
             /* garbage matrix values */
@@ -916,40 +902,38 @@ void gte_command(u32 command)
             mxi[7] = (s16)(g_cpu.cop2[mx_index + 3] >> 16);
             mxi[8] = (s16)g_cpu.cop2[mx_index + 4];
         }
-        //SY_ASSERT(mx_index < 3);
-        //u8 mx = mx_lookup[(command >> 17) & 0x3];
         
         if (tx_index == 2) 
         {
-            g_cpu.cop2[MAC1] = gte_lim_mac(sign_extend16_64(mxi[1]) * sign_extend16_64(vxi[1]) + 
-                                            sign_extend16_64(mxi[2]) * sign_extend16_64(vxi[2]), MAC1) >> sf;
+            g_cpu.cop2[MAC1] = gte_lim_mac(1, sign_extend16_64(mxi[1]) * sign_extend16_64(vxi[1]) + 
+                                            sign_extend16_64(mxi[2]) * sign_extend16_64(vxi[2])) >> sf;
 
-            g_cpu.cop2[MAC2] = gte_lim_mac(sign_extend16_64(mxi[4]) * sign_extend16_64(vxi[1]) + 
-                                            sign_extend16_64(mxi[5]) * sign_extend16_64(vxi[2]), MAC2) >> sf;
+            g_cpu.cop2[MAC2] = gte_lim_mac(2, sign_extend16_64(mxi[4]) * sign_extend16_64(vxi[1]) + 
+                                            sign_extend16_64(mxi[5]) * sign_extend16_64(vxi[2])) >> sf;
                                     
-            g_cpu.cop2[MAC3] = gte_lim_mac(sign_extend16_64(mxi[7]) * sign_extend16_64(vxi[1]) + 
-                                            sign_extend16_64(mxi[8]) * sign_extend16_64(vxi[2]), MAC3) >> sf;
+            g_cpu.cop2[MAC3] = gte_lim_mac(3, sign_extend16_64(mxi[7]) * sign_extend16_64(vxi[1]) + 
+                                            sign_extend16_64(mxi[8]) * sign_extend16_64(vxi[2])) >> sf;
 
-            gte_clamp_ir(gte_lim_mac(((s64)((s32)g_cpu.cop2[tx]) << 12) + sign_extend16_64(mxi[0]) * sign_extend16_64(vxi[0]), MAC1) >> sf, IR1_FLAG, 0);
-            gte_clamp_ir(gte_lim_mac(((s64)((s32)g_cpu.cop2[tx + 1]) << 12) + sign_extend16_64(mxi[3]) * sign_extend16_64(vxi[0]), MAC2) >> sf, IR2_FLAG, 0);
-            gte_clamp_ir(gte_lim_mac(((s64)((s32)g_cpu.cop2[tx + 2]) << 12) + sign_extend16_64(mxi[6]) * sign_extend16_64(vxi[0]), MAC3) >> sf, IR3_FLAG, 0);
+            gte_clamp_ir(gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[tx]) << 12) + sign_extend16_64(mxi[0]) * sign_extend16_64(vxi[0])) >> sf, IR1_FLAG, 0);
+            gte_clamp_ir(gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[tx + 1]) << 12) + sign_extend16_64(mxi[3]) * sign_extend16_64(vxi[0])) >> sf, IR2_FLAG, 0);
+            gte_clamp_ir(gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[tx + 2]) << 12) + sign_extend16_64(mxi[6]) * sign_extend16_64(vxi[0])) >> sf, IR3_FLAG, 0);
         }
         else 
         {
-            g_cpu.cop2[MAC1] = gte_lim_mac(((s64)((s32)g_cpu.cop2[tx]) << 12) + 
+            g_cpu.cop2[MAC1] = gte_lim_mac(1, ((s64)((s32)g_cpu.cop2[tx]) << 12) + 
                                 sign_extend16_64(mxi[0]) * sign_extend16_64(vxi[0]) + 
                                 sign_extend16_64(mxi[1]) * sign_extend16_64(vxi[1]) + 
-                                sign_extend16_64(mxi[2]) * sign_extend16_64(vxi[2]), MAC1) >> sf;
+                                sign_extend16_64(mxi[2]) * sign_extend16_64(vxi[2])) >> sf;
 
-            g_cpu.cop2[MAC2] = gte_lim_mac(((s64)((s32)g_cpu.cop2[tx + 1]) << 12) + 
+            g_cpu.cop2[MAC2] = gte_lim_mac(2, ((s64)((s32)g_cpu.cop2[tx + 1]) << 12) + 
                                 sign_extend16_64(mxi[3]) * sign_extend16_64(vxi[0]) + 
                                 sign_extend16_64(mxi[4]) * sign_extend16_64(vxi[1]) + 
-                                sign_extend16_64(mxi[5]) * sign_extend16_64(vxi[2]), MAC2) >> sf;
+                                sign_extend16_64(mxi[5]) * sign_extend16_64(vxi[2])) >> sf;
 
-            g_cpu.cop2[MAC3] = gte_lim_mac(((s64)((s32)g_cpu.cop2[tx + 2]) << 12) + 
+            g_cpu.cop2[MAC3] = gte_lim_mac(3, ((s64)((s32)g_cpu.cop2[tx + 2]) << 12) + 
                                 sign_extend16_64(mxi[6]) * sign_extend16_64(vxi[0]) + 
                                 sign_extend16_64(mxi[7]) * sign_extend16_64(vxi[1]) + 
-                                sign_extend16_64(mxi[8]) * sign_extend16_64(vxi[2]), MAC3) >> sf;
+                                sign_extend16_64(mxi[8]) * sign_extend16_64(vxi[2])) >> sf;
         }
 
         g_cpu.cop2[IR1] = gte_clamp_ir((s32)g_cpu.cop2[MAC1], IR1_FLAG, lm);
@@ -990,47 +974,36 @@ u32 gte_read(u32 reg)
         return g_cpu.cop2[reg] & 0xffff;
     case IRGB:
     case ORGB:
-        s32 red = (s32)sign_extend16_32(g_cpu.cop2[IR1]) / 0x80;
-        if (red < 0x0) {
-            red = 0x0;
-        }
-        else if (red > 0x1f) {
-            red = 0x1f;
-        }
+    {
+        s32 red = (s32)sign_extend16_32(g_cpu.cop2[IR1]) >> 7;
+        red = gte_clamp_5bit(red);
 
-        s32 green = (s32)sign_extend16_32(g_cpu.cop2[IR2]) / 0x80;
-        if (green < 0x0) {
-            green = 0x0;
-        }
-        else if (green > 0x1f) {
-            green = 0x1f;
-        }
+        s32 green = (s32)sign_extend16_32(g_cpu.cop2[IR2]) >> 7;
+        green = gte_clamp_5bit(green);
 
-        s32 blue = (s32)sign_extend16_32(g_cpu.cop2[IR3]) / 0x80;
-        if (blue < 0x0) {
-            blue = 0x0;
-        }
-        else if (blue > 0x1f) {
-            blue = 0x1f;
-        }
-        //u32 red = (u32)clamp(g_cpu.cop2[IR1] / 0x80, 0x0, 0x1f);
-        //u32 green = (u32)clamp(g_cpu.cop2[IR2] / 0x80, 0x0, 0x1f);
-        //u32 blue = (u32)clamp(g_cpu.cop2[IR3] / 0x80, 0x0, 0x1f);
-        return (red | (green << 5) | (blue << 10)); //g_cpu.cop2[IRGB] & 0x7fff; // ORGB is a readonly mirror of IRGB
+        s32 blue = (s32)sign_extend16_32(g_cpu.cop2[IR3]) >> 7;
+        blue = gte_clamp_5bit(blue);
+
+        return (red | (green << 5) | (blue << 10));   
+    }
     case LZCR:
+    {
         u32 v = g_cpu.cop2[LZCS];
         if ((s32)v < 0) {
             v = ~v;
         }
         return lzcnt32(v);
+    }
     case FLAG:
+    {
         if (g_cpu.cop2[FLAG] & 0x7f800000 || g_cpu.cop2[FLAG] & 0x7e000) {
             g_cpu.cop2[FLAG] |= 0x80000000;
         }
         else {
             g_cpu.cop2[FLAG] &= 0x7fffffff;
         }
-        return g_cpu.cop2[FLAG] & 0xfffff000;  
+        return g_cpu.cop2[FLAG] & 0xfffff000;
+    }
     default:
         return g_cpu.cop2[reg];
     }
@@ -1038,7 +1011,6 @@ u32 gte_read(u32 reg)
 
 void gte_write(u32 reg, u32 value)
 {
-    // TODO: write masks here, don't do them on read
     switch (reg)
     {
     case SXYP:

@@ -11,6 +11,5 @@ struct keyboard_pad
 };
 
 void keyboard_get_digital_pad_input(struct input_device_base *keyboard);
-//void keyboard_get_analog_pad_input(struct input_device_base *keyboard);
 
 #endif /* INPUT_H */

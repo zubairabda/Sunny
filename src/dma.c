@@ -127,7 +127,7 @@ static void process_dma(u32 port)
                     U32FromPtr(g_ram + addr) = gpuread();
                     break;
                 default:
-                    printf("Unhandled DMA direction\n");
+                    debug_log("Unhandled DMA direction\n");
                     SY_ASSERT(0); // TODO: handle this
                     break;
                 }
@@ -174,7 +174,6 @@ static void process_dma(u32 port)
             num_words = entry >> 24;
             while (num_words--)
             {
-                // TODO: make sure in this mode it is only ever incremented
                 addr = (addr + 4) & 0x1ffffc;
                 cmd = U32FromPtr(g_ram + addr);
                 execute_gp0_command(cmd);

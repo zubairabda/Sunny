@@ -6,14 +6,22 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+struct debug_gpu_command
+{
+    s32 type;
+    u32 params[16];
+};
+
 struct debug_state
 {
     FILE *output;
     int last_char;
-    u8 *loaded_exe;
-    b8 show_disasm;
+    //u8 *loaded_exe;
     u16 *sound_buffer;
     u32 sound_buffer_len;
+    u32 gpu_commands_len;
+    struct debug_gpu_command *gpu_commands;
+    b8 log_gpu_commands;
 };
 
 extern struct debug_state g_debug;

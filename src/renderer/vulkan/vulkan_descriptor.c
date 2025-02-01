@@ -1,4 +1,4 @@
-static inline VkDescriptorPool vulkan_create_descriptor_pool(struct vulkan_context *vk, u32 max_sets)
+static inline VkDescriptorPool vulkan_create_descriptor_pool(u32 max_sets)
 {
     VkDescriptorPoolSize pool_sizes[2] = {0};
     pool_sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;

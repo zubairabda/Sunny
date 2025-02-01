@@ -53,7 +53,9 @@ void play_sound_test(audio_player *audio)
     u32 available_frames = audio->buffer_size - pad;
     //Sleep(0);
     hr = IAudioRenderClient_GetBuffer(audio->render_client, available_frames, &pdata);
-    SY_ASSERT(hr == S_OK);
+    if (hr != S_OK) {
+        return;
+    }
 
     u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
     memcpy(pdata, audio->src_cursor, buffer_size);
@@ -86,6 +88,9 @@ void debug_play_sound(audio_player *audio, u8 *source_data)
     u8 *current = source_data;
 
     hr = IAudioClient_Start(audio->client);
+    if (hr != S_OK) {
+        return;
+    }
     SY_ASSERT(hr == S_OK);
 
     while (1)

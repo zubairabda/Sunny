@@ -2,31 +2,26 @@
 #define PSX_H
 
 #include "allocator.h"
-#if 0
-struct cpu_state;
-struct gpu_state;
-struct spu_state;
-struct dma_state;
-struct joypad_state;
-struct cdrom_state;
-struct root_counter;
+#include "config.h"
+#include "platform/platform.h"
 
-struct tick_event;
-
-struct psx_state
+typedef enum psx_image_type
 {
-    struct cpu_state *cpu;
-    struct root_counter *timers[3];
+    EXE,
+    BIN,
+    CUE,
+    ISO
+} psx_image_type;
 
-    struct dma_state *dma;
-    struct gpu_state *gpu;
-    struct spu_state *spu;
-    struct joypad_state *pad;
-    struct cdrom_state *cdrom;
-    u32 pending_cycles;
-};
-#endif
+void psx_mount_image(platform_file file, psx_image_type type);
+b8 psx_mount_from_file(const char *path);
+void psx_load_image(void);
+void psx_reset(void);
+//void bios_init(void *bios);
+//b8 psx_mount_exe(platform_file *file);
+
 void psx_init(struct memory_arena *arena, void *bios);
 void psx_run(void);
+void psx_step(void);
 
 #endif /* PSX_H */

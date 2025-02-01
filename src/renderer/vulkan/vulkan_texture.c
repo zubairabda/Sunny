@@ -1,4 +1,4 @@
-static inline void texture_init(struct vulkan_context *vk, VkImage *image, VkImageView *image_view, u32 width, u32 height,
+static void texture_init(VkImage *image, VkImageView *image_view, u32 width, u32 height,
                                 VkFormat format, VkImageUsageFlags usage, VkDeviceMemory *image_memory)
 {
     VkExtent3D extent = {.width = width, .height = height, .depth = 1};

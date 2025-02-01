@@ -1,5 +1,4 @@
 #include "event.h"
-#include "allocator.h"
 #include "cpu.h"
 
 #define MAX_EVENT_COUNT 16
@@ -27,6 +26,15 @@ static u64 id_count;
 void scheduler_init(struct memory_arena *arena)
 {
     s_event_pool = allocate_pool(arena, sizeof(struct tick_event), MAX_EVENT_COUNT);
+    s_sentinel_event = pool_alloc(&s_event_pool);
+    s_sentinel_event->next = s_sentinel_event;
+    s_sentinel_event->prev = s_sentinel_event;
+    s_sentinel_event->system_cycles_at_event = 0;
+}
+
+void scheduler_reset(void)
+{
+    pool_free_all(&s_event_pool);
     s_sentinel_event = pool_alloc(&s_event_pool);
     s_sentinel_event->next = s_sentinel_event;
     s_sentinel_event->prev = s_sentinel_event;

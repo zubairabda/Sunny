@@ -2,7 +2,7 @@
 #include "event.h"
 #include "debug.h"
 
-#include "fileio.h"
+//#include "fileio.h"
 
 static s16 gauss_table[] = 
 {
@@ -78,7 +78,7 @@ static char *debug_spu_str_table[] = {
                                         "Voice Key Off", "Voice Key Off", "Pitch Modulation", "Pitch Modulation", "Noise Mode Enable", "Noise Mode Enable", "Echo On", 
                                         "Echo On", "Voice key status", "Voice key status", "garbage", "Reverb work start address", "IRQ address", "Data transfer address", 
                                         "Data transfer FIFO", "SPUCNT", "Transfer control", "SPUSTAT", "CD volume left", "CD volume right", "External input volume left",
-                                        "External input volume right"
+                                        "External input volume right", "Current main volume left", "Current main volume right"
                                      };
 
 static char *debug_spu_reg_table[] = {"Volume left", "Volume right", "Sample rate", "Start address", "ADSR lo", "ADSR hi", "ADSR volume", "Repeat address"};
@@ -91,12 +91,13 @@ u16 spu_read(u32 offset)
     u16 result = 0;
     if (offset < 0x180)
     {
-        u8 voice = (offset >> 4) & 0x1f;
+        //u8 voice = (offset >> 4) & 0x1f;
         //debug_log("SPU voice %u\t%-15.15s -> %u\n", voice, debug_spu_reg_table[(offset & 0xf) >> 1], result);
         result = g_spu.voice.regs[(offset & 0x1ff) >> 1];
     }
     else if (offset < 0x1c0)
     {
+#if 0
         switch (offset & 0x3f)
         {
         case 0x0:
@@ -135,7 +136,7 @@ u16 spu_read(u32 offset)
         case 0x1C:
         case 0x1E:
             // ENDX
-            result = 0;//g_spu.cnt.endx << ((offset & 0x2) << 3);
+            result = g_spu.cnt.endx << ((offset & 0x2) << 3);
             break;
         case 0x20:
             // garbage?
@@ -183,11 +184,20 @@ u16 spu_read(u32 offset)
         INVALID_CASE;
         }
         //debug_log("SPU CTRL\t%-20.20s -> %u\n", debug_spu_str_table[(offset & 0x3f) >> 1], result);
+#else
+        result = U16FromPtr(((u8 *)&g_spu.cnt) + (offset & 0x3f));
+#endif
     }
-    else
+    else if (offset < 0x1fc)
     {
         result = g_spu.reverb.regs[(offset & 0x3f) >> 1];
     }
+    else if (offset < 0x260)
+    {
+        debug_log("SPU read internal voice regs\n");
+        //result = g_spu.voice.internal.
+    }
+
     return result;
 }
 
@@ -195,9 +205,10 @@ void spu_write(u32 offset, u32 value)
 {
     if (offset < 0x180)
     {
-        u8 voice = (offset >> 4) & 0x1f;
+        //u8 voice = (offset >> 4) & 0x1f;
         //debug_log("SPU voice %u\t%-15.15s <- %u\n", voice, debug_spu_reg_table[(offset & 0xf) >> 1], value);
         g_spu.voice.regs[(offset & 0x1ff) >> 1] = value;
+        //printf("sent %08x to %04x\n", value, offset);
     }
     else if (offset < 0x1c0)
     {
@@ -226,6 +237,7 @@ void spu_write(u32 offset, u32 value)
                 u32 pos = 1 << i;
                 if (value & pos)
                 {
+                    //debug_log("KON: %d\n", i);
                     g_spu.voice.internal[i].state = ADSR_ATTACK;
                     g_spu.voice.data[i].adsr_volume = 0;
                     // TODO: according to docs, repeat gets set to start addr on key on.. but not sure this is needed?
@@ -234,9 +246,9 @@ void spu_write(u32 offset, u32 value)
                     g_spu.voice.internal[i].pitch_counter = 0;
                     g_spu.voice.internal[i].has_samples = 0;
                     g_spu.voice.internal[i].adsr_cycles = 0;
-                    g_spu.cnt.endx &= ~pos;
                 }
             }
+            g_spu.cnt.endx &= ~(value & 0x00ffffff);
             break;
         case 0xc:
         case 0xe:
@@ -307,8 +319,8 @@ void spu_write(u32 offset, u32 value)
     #endif
             break;
         case 0x2c:
+            SY_ASSERT(value == 4);
             g_spu.cnt.transfer_control = value;
-            SY_ASSERT(((g_spu.cnt.transfer_control >> 1) & 0x7) == 2);
             break;
         case 0x30:
             g_spu.cnt.cd_volume_left = value;
@@ -338,9 +350,14 @@ void spu_write(u32 offset, u32 value)
         }
         //debug_log("SPU CTRL\t%-20.20s <- %u\n", debug_spu_str_table[(offset & 0x3f) >> 1], value);
     }
-    else
+    else if (offset < 0x1fc)
     {
         g_spu.reverb.regs[(offset & 0x3f) >> 1] = value;
+    }
+    else if (offset < 0x260)
+    {
+        debug_log("SPU write internal voice regs\n");
+        //result = g_spu.voice.internal.
     }
     //debug_log("SPU write to: %08x <- %u\n", offset + 0x1f801c00, value);
 }
@@ -530,7 +547,6 @@ void spu_tick(u32 param, s32 cycles_late)
             mode = (regs->adsr >> 21) & 0x1;
             internal->adsr_target = 0;
         } break;
-        INVALID_CASE;
         }
 
         // TODO: this could be off by one, not sure what exactly the behavior is (eg. adsr cycles gets set to 1, should next clock step? I think not)
@@ -615,8 +631,10 @@ void spu_tick(u32 param, s32 cycles_late)
     }
 #if 1
     //if (buffer_index > g_spu.audio_buffer_len)
-    g_spu.audio_buffer[buffer_index] = clamp16(final_vol_left);
-    g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right);
+    if (g_spu.enable_output) {
+        g_spu.audio_buffer[buffer_index] = clamp16(final_vol_left);
+        g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right);
+    }
 
     ++g_spu.num_buffered_frames;
 

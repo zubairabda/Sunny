@@ -1,4 +1,4 @@
-#include "fileio.h"
+#include "stream.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -94,16 +94,16 @@ static inline b8 is_digit(char c)
 
 static inline s32 to_digit(char c)
 {
-    return c - 48;
+    return (s32)c - 48;
 }
 
-b8 allocate_and_read_file(const char* path, struct file_dat* out_file)
+b8 allocate_and_read_file(const char *path, struct file_dat *out_file)
 {
-    b8 result = SY_FALSE;
+    b8 result = false;
 
     FILE* f = fopen(path, "rb");
     if (!f) {
-        return SY_FALSE;
+        return false;
     }
 
     fseek(f, 0, SEEK_END);
@@ -115,7 +115,7 @@ b8 allocate_and_read_file(const char* path, struct file_dat* out_file)
         printf("Failed to read from file %s\n", path);
         goto end;
     }
-    result = SY_TRUE;
+    result = true;
     out_file->memory = buf;
     out_file->size = size;
 end:
@@ -127,7 +127,7 @@ b8 allocate_and_read_file_null_terminated(const char *path, struct file_dat *out
 {
     FILE* f = fopen(path, "rb");
     if (!f) {
-        return SY_FALSE;
+        return false;
     }
     fseek(f, 0, SEEK_END);
     u64 size = ftell(f);
@@ -138,18 +138,18 @@ b8 allocate_and_read_file_null_terminated(const char *path, struct file_dat *out
     {
         printf("Failed to read from file %s\n", path);
         fclose(f);
-        return SY_FALSE;
+        return false;
     }
 
     buf[size] = '\0';
     out_file->memory = buf;
     out_file->size = size + 1;
-    return SY_TRUE;
+    return true;
 }
 
-b8 write_file(struct file_dat* file, char* out)
+b8 write_file(struct file_dat *file, char* out)
 {
-    b8 result = SY_FALSE;
+    b8 result = false;
     FILE* f = fopen(out, "wb");
     if (fwrite(file->memory, 1, file->size, f) != file->size)
     {
@@ -166,9 +166,9 @@ static b8 token_compare(struct cue_token token, const char *match)
     for (u32 i = 0; i < token.length; ++i)
     {
         if (token.text[i] != match[i] || match[i] == '\0')
-            return SY_FALSE;
+            return false;
     }
-    return SY_TRUE;
+    return true;
 }
 
 static struct cue_token get_token(struct cue_parser *parser)
@@ -370,7 +370,7 @@ void parse_cue_file(const char *path)
 
 }
 
-void write_bmp(u32 width, u32 height, u8* data, char* filename)
+void write_bmp(u32 width, u32 height, u8 *data, char *filename)
 {
 #pragma pack(push, 1)
     typedef struct

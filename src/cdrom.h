@@ -1,7 +1,7 @@
 #ifndef CDROM_H
 #define CDROM_H
 
-#include "fileio.h"
+#include "platform/platform.h"
 
 #define CDR_STATUS_TRANSMISSION_BUSY       (1 << 7)
 #define CDR_STATUS_DATA_FIFO_NOT_EMPTY     (1 << 6)
@@ -67,13 +67,13 @@ struct cdrom_state
     b8 is_reading;
     u32 target;
     u32 loc;
-    platform_file disk;
+    platform_file *disk;
     char sector[2352];
 };
 
 extern struct cdrom_state g_cdrom;
 
-void cdrom_init(platform_file disk);
+void cdrom_init(platform_file *disk);
 u8 cdrom_read(u32 offset);
 void cdrom_store(u32 offset, u8 value);
 

@@ -40,7 +40,7 @@ static inline u32 get_memory_type_index(VkPhysicalDeviceMemoryProperties* memory
 }
 #endif
 
-static void transition_layout(struct vulkan_context *vk, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout)
+static void transition_layout(VkImage image, VkImageLayout old_layout, VkImageLayout new_layout)
 {    
     VkAccessFlags src_access = 0, dst_access = 0;
     VkPipelineStageFlags src_stage = 0, dst_stage = 0;

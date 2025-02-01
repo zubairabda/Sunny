@@ -27,14 +27,14 @@ enum sio_state
 {
     SIO_STATE_NONE = 0,
     SIO_STATE_READ_CONTROLLER,
-    SIO_STATE_READ_MEMCARD
+    //SIO_STATE_READ_MEMCARD
 };
 
 enum input_device_type
 {
     INPUT_DEVICE_DIGITAL_PAD,
     INPUT_DEVICE_ANALOG_PAD,
-    INPUT_DEVICE_MULTITAP
+    //INPUT_DEVICE_MULTITAP
 };
 
 typedef union

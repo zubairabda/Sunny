@@ -63,22 +63,22 @@ struct cdrom_state g_cdrom;
 
 static const char *cdrom_command_to_string(enum cdrom_command command);
 
-void cdrom_init(platform_file disk)
+void cdrom_init(platform_file *disk)
 {
+    g_cdrom.stat = 0;
     g_cdrom.status = CDR_STATUS_PARAM_FIFO_EMPTY | CDR_STATUS_PARAM_FIFO_NOT_FULL; // param fifo empty, param fifo not full
     
     g_cdrom.sector_size = 0x800;
     g_cdrom.sector_offset = 24;
 
-    if (!file_is_valid(disk))
-    {
-        g_cdrom.stat |= CDROM_STAT_SHELLOPEN;
-    }
-    else
+    if (disk)
     {
         g_cdrom.disk = disk;
     }
-    //g_cdrom.stat |= CDROM_STAT_SHELLOPEN;
+    else
+    {
+        g_cdrom.stat |= CDROM_STAT_SHELLOPEN;
+    }
 }
 
 static void cdrom_response_event(u32 param, s32 cycles_late)
@@ -94,7 +94,7 @@ static void cdrom_response_event(u32 param, s32 cycles_late)
     {
         //SY_ASSERT(g_cdrom.sector_offset == 24);
         //read_file(g_cdrom.disk, g_cdrom.target + g_cdrom.sector_offset, g_cdrom.sector, g_cdrom.sector_size);
-        read_file(g_cdrom.disk, g_cdrom.loc, g_cdrom.sector, 2352);
+        platform_read_file(g_cdrom.disk, g_cdrom.loc, g_cdrom.sector, 2352);
         g_cdrom.loc += 2352;
         //g_cdrom.status |= CDR_STATUS_DATA_FIFO_NOT_EMPTY;
         g_cdrom.pending_response = 1;

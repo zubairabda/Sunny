@@ -1,8 +1,9 @@
-#define EXPORT_LIB
 #include <immintrin.h>
 #include <stdio.h>
 
 #include "vulkan_renderer.h"
+
+static vulkan_context *vk;
 
 #include "vulkan_descriptor.c"
 #include "vulkan_pipeline.c"
@@ -23,7 +24,7 @@ static const char* device_extensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
-static void vulkan_create_swapchain(struct vulkan_context *vk, u32 width, u32 height)
+static void vulkan_create_swapchain(u32 width, u32 height)
 {
     VkResult res;
     VkSurfaceCapabilitiesKHR surface_caps;
@@ -83,7 +84,7 @@ static void vulkan_create_swapchain(struct vulkan_context *vk, u32 width, u32 he
     vkGetSwapchainImagesKHR(vk->device, vk->swapchain.handle, &vk->swapchain.image_count, vk->swapchain.images);
 }
 
-static void vulkan_create_swapchain_framebuffers(struct vulkan_context *vk)
+static void vulkan_create_swapchain_framebuffers(void)
 {
     for (u32 i = 0; i < vk->swapchain.image_count; ++i)
     {
@@ -110,7 +111,7 @@ static void vulkan_create_swapchain_framebuffers(struct vulkan_context *vk)
     }
 }
 
-static void vulkan_create_swapchain_renderpass(struct vulkan_context *vk)
+static void vulkan_create_swapchain_renderpass(void)
 {
     // TODO: if the swapchains format changes, we need to call this function (though unlikely)
     VkAttachmentDescription color_attachment = {0};
@@ -141,25 +142,24 @@ static void vulkan_create_swapchain_renderpass(struct vulkan_context *vk)
     vkCreateRenderPass(vk->device, &renderpass_info, VK_NULL_HANDLE, &vk->swapchain_renderpass);
 }
 
-static void vulkan_handle_resize(renderer_interface *renderer, u32 new_width, u32 new_height)
+static void vulkan_handle_resize(u32 new_width, u32 new_height)
 {
-    struct vulkan_context *vk = (struct vulkan_context *)renderer;
     if (new_width == 0 || new_height == 0)
     {
         return;
     }
     vkDeviceWaitIdle(vk->device); // NOTE: not sure if this is actually needed
     //VkFormat prev_format = vk->swapchain.format;
-    vulkan_create_swapchain(vk, new_width, new_height);
+    vulkan_create_swapchain(new_width, new_height);
     //if (vk->swapchain.format != prev_format)
     //{
     //    vkDestroyRenderPass(vk->device, vk->swapchain_renderpass, VK_NULL_HANDLE);
     //    create_swapchain_renderpass(vk);
     //}
-    vulkan_create_swapchain_framebuffers(vk);
+    vulkan_create_swapchain_framebuffers();
 }
 
-static int vulkan_make_instance(struct vulkan_context *vk)
+static int vulkan_make_instance(void)
 {
     vkCreateInstance = (PFN_vkCreateInstance)vkGetInstanceProcAddr(NULL, "vkCreateInstance");
 
@@ -183,7 +183,7 @@ static int vulkan_make_instance(struct vulkan_context *vk)
     return 1;
 }
 
-static int vulkan_make_device(struct vulkan_context *vk)
+static int vulkan_make_device(void)
 {
     VkPhysicalDevice physical_devices[MAX_PHYSICAL_DEVICE_COUNT] = {0};
     u32 physical_device_count = ARRAYCOUNT(physical_devices);
@@ -272,7 +272,7 @@ static int vulkan_make_device(struct vulkan_context *vk)
     return 1;
 }
 
-static int vulkan_init_internal(struct vulkan_context *vk)
+static int vulkan_init_internal()
 {
     u32 i;
 
@@ -296,7 +296,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
 
         vkBindBufferMemory(vk->device, vk->vertex_buffer, vk->vertex_buffer_memory, 0);
     }
-    vkMapMemory(vk->device, vk->vertex_buffer_memory, 0, VK_WHOLE_SIZE, 0, (void **)&vk->renderer.vertex_array);
+    vkMapMemory(vk->device, vk->vertex_buffer_memory, 0, VK_WHOLE_SIZE, 0, (void **)&vk->hw.vertex_array);
 
     {
         VkBufferCreateInfo buffer_info = {0};
@@ -321,15 +321,15 @@ static int vulkan_init_internal(struct vulkan_context *vk)
     vkMapMemory(vk->device, vk->staging_buffer_memory, 0, VK_WHOLE_SIZE, 0, &vk->staging_data);
 
     // create VRAM clone to sample from
-    texture_init(vk, &vk->sample_vram, &vk->sample_vram_view, VRAM_WIDTH, VRAM_HEIGHT, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 
+    texture_init(&vk->sample_vram, &vk->sample_vram_view, VRAM_WIDTH, VRAM_HEIGHT, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &vk->sample_vram_memory);
 
     // create the VRAM render target which we draw to
-    texture_init(vk, &vk->render_vram, &vk->render_vram_view, VRAM_WIDTH, VRAM_HEIGHT, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 
+    texture_init(&vk->render_vram, &vk->render_vram_view, VRAM_WIDTH, VRAM_HEIGHT, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, &vk->render_vram_memory);
 
     // create the display vram which is only updated on vblank
-    texture_init(vk, &vk->display_vram, &vk->display_vram_view, VRAM_WIDTH, VRAM_HEIGHT, VK_FORMAT_A1R5G5B5_UNORM_PACK16,
+    texture_init(&vk->display_vram, &vk->display_vram_view, VRAM_WIDTH, VRAM_HEIGHT, VK_FORMAT_A1R5G5B5_UNORM_PACK16,
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &vk->display_vram_memory);
 
     {
@@ -392,9 +392,9 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         vkCreateFramebuffer(vk->device, &framebuffer_info, NULL, &vk->framebuffer);
     }
     // I'm not sure these values even matter, but we may want to pass in the window width and height
-    vulkan_create_swapchain(vk, 1280, 720);
-    vulkan_create_swapchain_renderpass(vk);
-    vulkan_create_swapchain_framebuffers(vk);
+    vulkan_create_swapchain(1280, 720);
+    vulkan_create_swapchain_renderpass();
+    vulkan_create_swapchain_framebuffers();
 
     VkCommandPoolCreateInfo command_pool_info = {0};
     command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -444,11 +444,11 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(vk->command_buffer, &begin_info);
 
-        transition_layout(vk, vk->render_vram, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_layout(vk->render_vram, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
-        transition_layout(vk, vk->sample_vram, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        transition_layout(vk->sample_vram, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-        transition_layout(vk, vk->display_vram, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        transition_layout(vk->display_vram, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         //transition_layout(vk->sample_vram, VK_IMAGE_LAYOUT_UNDEFINED, vk_image_layout)
         vkEndCommandBuffer(vk->command_buffer);
 
@@ -462,10 +462,10 @@ static int vulkan_init_internal(struct vulkan_context *vk)
 
     VkSamplerCreateInfo sampler_info = {0};
     sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    //sampler_info.minFilter = sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = sampler_info.magFilter = VK_FILTER_LINEAR;
     vkCreateSampler(vk->device, &sampler_info, NULL, &vk->sampler);
 
-    vk->descriptor_pool = vulkan_create_descriptor_pool(vk, 4);
+    vk->descriptor_pool = vulkan_create_descriptor_pool(4);
 
     VkDescriptorSetLayoutBinding layout_binding = {0};
     layout_binding.binding = 0;
@@ -533,8 +533,8 @@ static int vulkan_init_internal(struct vulkan_context *vk)
     VkVertexInputAttributeDescription vertex_attributes[5];
     {
         struct shader_obj shaders[2];
-        load_shader_from_file(vk, "shader/vertshader.spv", VK_SHADER_STAGE_VERTEX_BIT, &shaders[0]);
-        load_shader_from_file(vk, "shader/fragshader.spv", VK_SHADER_STAGE_FRAGMENT_BIT, &shaders[1]);
+        load_shader_from_file("shader/vertshader.spv", VK_SHADER_STAGE_VERTEX_BIT, &shaders[0]);
+        load_shader_from_file("shader/fragshader.spv", VK_SHADER_STAGE_FRAGMENT_BIT, &shaders[1]);
 
         vram_pipeline.shaders = shaders;
         vram_pipeline.shader_stage_count = 2;
@@ -580,7 +580,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
         vram_pipeline.vertex_attribute_count = ARRAYCOUNT(vertex_attributes);
     }
     vram_pipeline.renderpass = vk->renderpass;
-    pipeline_create(vk, &vram_pipeline, &vk->pipeline, &vk->pipeline_layout);
+    pipeline_create(&vram_pipeline, &vk->pipeline, &vk->pipeline_layout);
 
     vkDestroyShaderModule(vk->device, vram_pipeline.shaders[0].module, VK_NULL_HANDLE);
     vkDestroyShaderModule(vk->device, vram_pipeline.shaders[1].module, VK_NULL_HANDLE);
@@ -592,12 +592,12 @@ static int vulkan_init_internal(struct vulkan_context *vk)
     fullscreen_pipeline.set_layout_count = 1;
     fullscreen_pipeline.set_layouts = &vk->descriptor_set_layout;
     struct shader_obj shaders[2];
-    load_shader_from_file(vk, "shader/fullscreen_vertex.spv", VK_SHADER_STAGE_VERTEX_BIT, &shaders[0]);
-    load_shader_from_file(vk, "shader/fullscreen_fragment.spv", VK_SHADER_STAGE_FRAGMENT_BIT, &shaders[1]);
+    load_shader_from_file("shader/fullscreen_vertex.spv", VK_SHADER_STAGE_VERTEX_BIT, &shaders[0]);
+    load_shader_from_file("shader/fullscreen_fragment.spv", VK_SHADER_STAGE_FRAGMENT_BIT, &shaders[1]);
     fullscreen_pipeline.shader_stage_count = 2;
     fullscreen_pipeline.shaders = shaders;
 
-    pipeline_create(vk, &fullscreen_pipeline, &vk->fullscreen_pipeline, &vk->fullscreen_pipeline_layout);
+    pipeline_create(&fullscreen_pipeline, &vk->fullscreen_pipeline, &vk->fullscreen_pipeline_layout);
 
     vkDestroyShaderModule(vk->device, fullscreen_pipeline.shaders[0].module, VK_NULL_HANDLE);
     vkDestroyShaderModule(vk->device, fullscreen_pipeline.shaders[1].module, VK_NULL_HANDLE);
@@ -605,7 +605,7 @@ static int vulkan_init_internal(struct vulkan_context *vk)
     return 1;
 }
 
-static inline u32 staging_buffer_write(struct vulkan_context *vk, void* data, u32 size)
+static inline u32 staging_buffer_write(void* data, u32 size)
 {
     u32 result = vk->staging_buffer_offset;
     memcpy(((u8*)vk->staging_data + vk->staging_buffer_offset), data, size);
@@ -613,7 +613,7 @@ static inline u32 staging_buffer_write(struct vulkan_context *vk, void* data, u3
     return result;
 }
 
-static inline void vulkan_begin_renderpass_instance(struct vulkan_context *vk)
+static inline void vulkan_begin_renderpass_instance(void)
 {
     if (vk->in_renderpass)
         return;
@@ -630,7 +630,7 @@ static inline void vulkan_begin_renderpass_instance(struct vulkan_context *vk)
     vk->in_renderpass = 1;
 }
 
-static inline void vulkan_end_renderpass_instance(struct vulkan_context *vk)
+static inline void vulkan_end_renderpass_instance(void)
 {
     if (vk->in_renderpass)
     {
@@ -639,11 +639,10 @@ static inline void vulkan_end_renderpass_instance(struct vulkan_context *vk)
     }
 }
 
-static void vulkan_flush_commands(renderer_interface *renderer)
+static void vulkan_flush_commands(void)
 {
-    struct vulkan_context *vk = (struct vulkan_context *)renderer;
     // no commands have been recorded
-    if (renderer->commands_at == renderer->render_commands)
+    if (vk->hw.commands_at == vk->hw.render_commands)
         return;
 
     //vk->staging_buffer_offset = 0;
@@ -669,8 +668,8 @@ static void vulkan_flush_commands(renderer_interface *renderer)
     VkBuffer vertex_buffers[] = {vk->vertex_buffer};
     vkCmdBindVertexBuffers(vk->command_buffer, 0, 1, vertex_buffers, vb_offsets);
     b8 scissor_set = 0;
-    u8 *at = renderer->render_commands;
-    for (u32 i = 0; i < renderer->render_commands_count; ++i)
+    u8 *at = vk->hw.render_commands;
+    for (u32 i = 0; i < vk->hw.render_commands_count; ++i)
     {
         struct render_command_header *header = (struct render_command_header *)at;
         switch (header->type)
@@ -681,11 +680,15 @@ static void vulkan_flush_commands(renderer_interface *renderer)
             at += sizeof(struct render_command_draw);
             struct render_command_draw *cmd = (struct render_command_draw *)header;
         
-            vulkan_begin_renderpass_instance(vk);
+            vulkan_begin_renderpass_instance();
 
             vkCmdPushConstants(vk->command_buffer, vk->pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(u32), &cmd->texture_mode);
             vkCmdDraw(vk->command_buffer, cmd->vertex_count, 1, cmd->vertex_array_offset, 0);
-            SY_ASSERT(scissor_set);
+            if (!scissor_set) {
+                SY_ASSERT(0);
+                break;
+            }
+            //SY_ASSERT(scissor_set);
         } break;
         case RENDER_COMMAND_SET_DRAW_AREA:
         {
@@ -703,9 +706,9 @@ static void vulkan_flush_commands(renderer_interface *renderer)
         {
             at += sizeof(struct render_command_flush_vram);
 
-            vulkan_end_renderpass_instance(vk);
+            vulkan_end_renderpass_instance();
 
-            transition_layout(vk, vk->sample_vram, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            transition_layout(vk->sample_vram, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
             VkImageCopy image_copy = {0};
             image_copy.extent.depth = 1;
@@ -717,16 +720,16 @@ static void vulkan_flush_commands(renderer_interface *renderer)
             image_copy.dstSubresource.layerCount = 1;
             vkCmdCopyImage(vk->command_buffer, vk->render_vram, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vk->sample_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &image_copy);
 
-            transition_layout(vk, vk->sample_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            transition_layout(vk->sample_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         } break;
         case RENDER_COMMAND_TRANSFER_CPU_TO_VRAM:
         {
             at += sizeof(struct render_command_transfer);
             struct render_command_transfer *cmd = (struct render_command_transfer *)header;
             
-            vulkan_end_renderpass_instance(vk);
+            vulkan_end_renderpass_instance();
 
-            transition_layout(vk, vk->render_vram, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            transition_layout(vk->render_vram, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             void *dst = (u8 *)vk->staging_data + staging_buffer_offset;
             size_t size = cmd->width * cmd->height * 2;
             memcpy(dst, (void *)cmd->buffer, size);
@@ -741,14 +744,14 @@ static void vulkan_flush_commands(renderer_interface *renderer)
             buffer_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             vkCmdCopyBufferToImage(vk->command_buffer, vk->staging_buffer, vk->render_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buffer_copy);
 
-            transition_layout(vk, vk->render_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition_layout(vk->render_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
             staging_buffer_offset += size;
         } break;
         case RENDER_COMMAND_TRANSFER_VRAM_TO_CPU:
         {
             at += sizeof(struct render_command_transfer);
             struct render_command_transfer *cmd = (struct render_command_transfer *)header;
-            vulkan_end_renderpass_instance(vk);
+            vulkan_end_renderpass_instance();
 
             VkBufferImageCopy image_copy = {0};
             image_copy.bufferOffset = staging_buffer_offset;
@@ -774,11 +777,11 @@ static void vulkan_flush_commands(renderer_interface *renderer)
         }
     }
 
-    vulkan_end_renderpass_instance(vk);
+    vulkan_end_renderpass_instance();
 
-    vk->renderer.render_commands_count = 0;
-    vk->renderer.commands_at = vk->renderer.render_commands;
-    vk->renderer.total_vertex_count = 0;
+    vk->hw.render_commands_count = 0;
+    vk->hw.commands_at = vk->hw.render_commands;
+    vk->hw.total_vertex_count = 0;
     
     vkEndCommandBuffer(vk->command_buffer);
 
@@ -789,18 +792,17 @@ static void vulkan_flush_commands(renderer_interface *renderer)
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = cmdbuffers;
     
-    EnterCriticalSection(&vk->critical_section);
+    platform_lock_mutex(&vk->mutex);
 
     vkQueueSubmit(vk->graphics_queue, 1, &submit_info, vk->render_fence);
 
-    LeaveCriticalSection(&vk->critical_section);
+    platform_unlock_mutex(&vk->mutex);
 
     vkWaitForFences(vk->device, 1, &vk->render_fence, VK_TRUE, UINT64_MAX);
 }
 
-void present_frame(renderer_interface *renderer)
+void present_frame(void)
 {
-    struct vulkan_context *vk = (struct vulkan_context *)renderer;
     VkFence fences[] = {vk->present_thread_fence};
 
     vkWaitForFences(vk->device, 1, fences, VK_TRUE, UINT64_MAX);
@@ -859,18 +861,16 @@ void present_frame(renderer_interface *renderer)
     present_info.waitSemaphoreCount = 1;
     present_info.pWaitSemaphores = &vk->submission_complete;
 
-    EnterCriticalSection(&vk->critical_section);
+    platform_lock_mutex(&vk->mutex);
 
     vkQueueSubmit(vk->graphics_queue, 1, &submit_info, vk->present_thread_fence);
     vkQueuePresentKHR(vk->graphics_queue, &present_info);
 
-    LeaveCriticalSection(&vk->critical_section);
+    platform_unlock_mutex(&vk->mutex);
 }
 
-void vulkan_update_display(renderer_interface *renderer)
-{
-    struct vulkan_context *vk = (struct vulkan_context *)renderer;
-    
+void vulkan_update_display(void)
+{   
     vkResetFences(vk->device, 1, &vk->render_fence);
     vkResetCommandPool(vk->device, vk->command_pool, 0);
 
@@ -879,7 +879,7 @@ void vulkan_update_display(renderer_interface *renderer)
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(vk->command_buffer, &begin_info);
 
-    transition_layout(vk, vk->display_vram, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    transition_layout(vk->display_vram, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     VkImageCopy image_copy = {0};
     image_copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -892,7 +892,7 @@ void vulkan_update_display(renderer_interface *renderer)
 
     vkCmdCopyImage(vk->command_buffer, vk->render_vram, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vk->display_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &image_copy);
 
-    transition_layout(vk, vk->display_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    transition_layout(vk->display_vram, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     vkEndCommandBuffer(vk->command_buffer);
 
@@ -902,18 +902,17 @@ void vulkan_update_display(renderer_interface *renderer)
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = cmdbuffers;
     
-    EnterCriticalSection(&vk->critical_section);
+    platform_lock_mutex(&vk->mutex);
 
     vkQueueSubmit(vk->graphics_queue, 1, &submit_info, vk->render_fence);
 
-    LeaveCriticalSection(&vk->critical_section);
+    platform_unlock_mutex(&vk->mutex);
 
     vkWaitForFences(vk->device, 1, &vk->render_fence, VK_TRUE, UINT64_MAX);
 }
 
-void vulkan_destroy_context(renderer_interface *renderer)
+void vulkan_destroy_context(void)
 {
-    struct vulkan_context *vk = (struct vulkan_context *)renderer;
     vkDeviceWaitIdle(vk->device);
 
     vkDestroySemaphore(vk->device, vk->image_acquired, NULL);
@@ -951,8 +950,7 @@ void vulkan_destroy_context(renderer_interface *renderer)
     vkDestroySurfaceKHR(vk->instance, vk->surface, NULL);
     vkDestroyInstance(vk->instance, NULL);
 
-    DeleteCriticalSection(&vk->critical_section);
+    platform_destroy_mutex(&vk->mutex);
 
-    VirtualFree(renderer->render_commands, 0, MEM_DECOMMIT | MEM_RELEASE);
-    VirtualFree(vk, 0, MEM_DECOMMIT | MEM_RELEASE);
+    free(vk);
 }

@@ -4,9 +4,10 @@
 #include "common.h"
 #include "sy_math.h"
 #include "gpu_common.h"
-#include "platform/sync.h"
+#include "platform/platform.h"
 
-extern signal_event_handle g_present_thread_handle;
+extern platform_event g_present_ready;
+extern platform_mutex g_renderer_mutex;
 extern u32 g_vblank_counter;
 
 #define VRAM_WIDTH 1024
@@ -72,58 +73,59 @@ struct render_command_transfer
     void **buffer;
 };
 
-typedef struct renderer_interface_s renderer_interface;
-
-typedef void (*fp_renderer_flush_commands)(renderer_interface *renderer);
-//typedef void (*fp_renderer_end_commands)(renderer_interface *renderer);
-typedef void (*fp_renderer_shutdown)(renderer_interface *renderer);
-typedef void (*fp_renderer_handle_resize)(renderer_interface *renderer, u32 width, u32 height);
-typedef void (*fp_renderer_transfer)(void *data, u32 dst_x, u32 dst_y, u32 width, u32 height);
-typedef void (*fp_renderer_read_vram)(void *data, u32 src_x, u32 src_y, u32 width, u32 height);
-typedef void (*fp_renderer_copy)(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height);
-typedef void (*fp_renderer_update_display)(renderer_interface *renderer);
-typedef void (*fp_renderer_present)(renderer_interface *renderer);
-
-struct render_batch
+typedef struct renderer_context
 {
-    u32 texture_mode;
-    rect2 draw_area;
-    u32 vertex_count;
-    u32 vertex_array_offset;
-    render_vertex *vertex_array;
-};
-
-struct renderer_interface_s
-{
-    //fp_renderer_initialize initialize;
-    fp_renderer_flush_commands flush_commands;
-    fp_renderer_update_display update_display;
-    fp_renderer_present present;
-    fp_renderer_shutdown shutdown;
-    fp_renderer_handle_resize handle_resize;
+    b8 is_initialized;
+    b8 is_threaded_present;
+#if 0
     u8 *render_commands;
     u8 *commands_at;
     u32 render_commands_size;
     u32 total_vertex_count;
     render_vertex *vertex_array;
     u32 render_commands_count;
-    u32 batch_count;
-    u32 dirty_region_count;
-    rect2 dirty_regions[128];
-    struct render_batch batches[MAX_DRAW_BATCH_COUNT];
-#if 0
-    fp_renderer_draw_polygon draw_polygon;
-    fp_renderer_draw_rect draw_rect;
-    fp_renderer_transfer transfer;
-    fp_renderer_read_vram read_vram;
-    fp_renderer_copy copy;
-    fp_renderer_set_scissor set_scissor;
 #endif
-};
+    //void (*flush_commands)(void);
+    void (*handle_resize)(u32 new_width, u32 new_height);
+    void (*update_display)(void);
+    void (*present)(void);
+    void (*shutdown)(void);
+} renderer_context;
+
+typedef struct hardware_renderer
+{
+    renderer_context base;
+    void (*flush_commands)(void);
+    void *(*get_vram_ptr)(void);
+
+    u8 *render_commands;
+    u8 *commands_at;
+    u32 render_commands_size;
+    u32 total_vertex_count;
+    render_vertex *vertex_array;
+    u32 render_commands_count;
+} hardware_renderer;
+
+typedef struct software_renderer
+{
+    renderer_context base;
+    void *vram;
+} software_renderer;
+
+extern renderer_context *g_renderer;
 
 inline vec2 get_texcoord(u32 texcoord)
 {
     return v2f((f32)(texcoord & 0xff), (f32)((texcoord >> 8) & 0xff));
+}
+
+inline u16 swizzle_texel(u16 pixel)
+{
+    u16 red = (pixel & 0x1f);
+    u16 green = ((pixel >> 5) & 0x1f);
+    u16 blue = ((pixel >> 10) & 0x1f);
+    u16 mask = pixel & 0x8000;
+    return mask | (red << 10) | (green << 5) | blue;
 }
 
 inline b8 rectangles_intersect(rect2 a, rect2 b)
@@ -131,14 +133,15 @@ inline b8 rectangles_intersect(rect2 a, rect2 b)
     return (a.right >= b.left && a.bottom >= b.top && a.left <= b.right && b.top <= a.bottom);
 }
 
-void *push_render_command(renderer_interface *renderer, enum render_command_type type, u64 size);
-void push_draw_area(renderer_interface *renderer, rect2 draw_area);
-void push_vram_flush(renderer_interface *renderer);
-void push_vram_copy(renderer_interface *renderer, u16 src_x, u16 src_y, u16 dst_x, u16 dst_y, u16 width, u16 height);
-void push_cpu_to_vram_copy(renderer_interface *renderer, void **buffer, u16 dst_x, u16 dst_y, u16 width, u16 height);
-void push_vram_to_cpu_copy(renderer_interface *renderer, void **dst_buffer, u16 src_x, u16 src_y, u16 width, u16 height);
-void push_primitive(renderer_interface *renderer, u32 vertex_count, u32 texture_mode);
-void push_polygon(renderer_interface *renderer, u32 *commands, u32 flags, vec2 draw_offset);
-void push_rect(renderer_interface *renderer, u32 *commands, u32 flags, u32 texpage);
+/* Retained API functions */
+void *push_render_command(enum render_command_type type, u64 size);
+void push_draw_area(rect2 draw_area);
+void push_vram_flush(void);
+void push_vram_copy(u16 src_x, u16 src_y, u16 dst_x, u16 dst_y, u16 width, u16 height);
+void push_cpu_to_vram_copy(void **src_buffer, u16 dst_x, u16 dst_y, u16 width, u16 height);
+void push_vram_to_cpu_copy(void **dst_buffer, u16 src_x, u16 src_y, u16 width, u16 height);
+void push_primitive(u32 vertex_count, u32 texture_mode);
+void push_polygon(u32 *commands, u32 flags, vec2 draw_offset);
+void push_rect(u32 *commands, u32 flags, u32 texpage, vec2 draw_offset);
 
-#endif
+#endif /* RENDERER_H */

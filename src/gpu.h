@@ -17,20 +17,7 @@ enum gpu_command_type
     COMMAND_TYPE_VRAM_TO_CPU = 0x6,
     COMMAND_TYPE_ENV = 0x7
 };
-
-typedef union
-{
-    struct
-    {
-        u8 raw_texture : 1;
-        u8 semi_transparent : 1;
-        u8 textured : 1;
-        u8 is_quad : 1;
-        u8 gouraud : 1;
-        u8 cmd : 3;
-    };
-    u8 value;
-} polygon_params;
+typedef enum gpu_command_type gpu_command_type;
 
 struct load_params
 {
@@ -78,8 +65,10 @@ typedef union
 
 struct gpu_state
 {
-    renderer_interface *renderer;
-    enum gpu_command_type command_type;
+    //renderer_interface *renderer;
+    b8 software_rendering;
+    b8 enable_output;
+    gpu_command_type command_type;
     u8 render_flags;
 
     u32 fifo[16];
@@ -106,7 +95,6 @@ struct gpu_state
     u16 *readback_buffer;
     u16 *copy_buffer_at;
     
-    u8 *vram;
     rect2 drawing_area;
     s16 draw_offset_x;
     s16 draw_offset_y;

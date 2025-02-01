@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 typedef uint8_t     u8;
 typedef uint16_t    u16;
@@ -15,7 +16,7 @@ typedef int32_t     s32;
 typedef int64_t     s64;
 typedef float       f32;
 typedef double      f64;
-typedef s8          b8;
+typedef _Bool       b8;
 typedef s16         b16;
 typedef s32         b32;
 
@@ -32,17 +33,8 @@ typedef s32         b32;
 
 #define NoImplementation
 
-#ifdef EXPORT_LIB
-#define SUNNY_API __declspec(dllexport)
-#else
-#define SUNNY_API __declspec(dllimport)
-#endif
-
 #define KILOBYTES(val) ((val) * 1024u)
 #define MEGABYTES(val) (KILOBYTES(val) * 1024u)
-
-#define SY_TRUE     1u
-#define SY_FALSE    0u
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))

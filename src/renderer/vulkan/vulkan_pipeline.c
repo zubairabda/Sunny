@@ -22,7 +22,7 @@ struct vulkan_pipeline_config
     VkVertexInputAttributeDescription *vertex_attributes;
 };
 
-static b8 load_shader_from_file(struct vulkan_context *vk, char *path, VkShaderStageFlags stage, struct shader_obj *shader)
+static b8 load_shader_from_file(const char *path, VkShaderStageFlags stage, struct shader_obj *shader)
 {
     b8 result = 0;
     FILE* f = fopen(path, "rb");
@@ -60,7 +60,7 @@ exit:
     return result;
 }
 
-static b8 pipeline_create(struct vulkan_context *vk, struct vulkan_pipeline_config *config, VkPipeline *out_pipeline, VkPipelineLayout *out_pipeline_layout)
+static b8 pipeline_create(struct vulkan_pipeline_config *config, VkPipeline *out_pipeline, VkPipelineLayout *out_pipeline_layout)
 {
     VkResult res;
 

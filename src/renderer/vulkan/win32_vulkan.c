@@ -1,6 +1,6 @@
 #include "vulkan_renderer.c"
 
-static struct vulkan_context *win32_vulkan_init(HWND hwnd, HINSTANCE hinstance)
+static vulkan_context *win32_vulkan_init(HWND hwnd, HINSTANCE hinstance)
 {
     HMODULE lib = LoadLibraryA("vulkan-1.dll");
 
@@ -12,13 +12,32 @@ static struct vulkan_context *win32_vulkan_init(HWND hwnd, HINSTANCE hinstance)
 
     vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)GetProcAddress(lib, "vkGetInstanceProcAddr");
 
-    struct vulkan_context *vk = VirtualAlloc(0, sizeof(struct vulkan_context), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    vk = malloc(sizeof(vulkan_context));
+    if (!vk) {
+        return NULL;
+    }
+    memset(vk, 0, sizeof(vulkan_context));
 
-    InitializeCriticalSection(&vk->critical_section);
+    vk->hw.render_commands_size = KILOBYTES(64);
+    vk->hw.render_commands = malloc(vk->hw.render_commands_size);
+    if (!vk->hw.render_commands) {
+        goto exit_error;
+    }
+    memset(vk->hw.render_commands, 0, vk->hw.render_commands_size);
+    
 
-    vulkan_make_instance(vk);
+    vk->hw.vertex_array = malloc(KILOBYTES(64));
+    if (!vk->hw.vertex_array) {
+        free(vk->hw.render_commands);
+        goto exit_error;
+    }
+    memset(vk->hw.vertex_array, 0, KILOBYTES(64));
 
-    vulkan_make_device(vk);
+    platform_create_mutex(&vk->mutex);
+
+    vulkan_make_instance();
+
+    vulkan_make_device();
 
     VkWin32SurfaceCreateInfoKHR surface_info = {0};
     surface_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
@@ -32,27 +51,31 @@ static struct vulkan_context *win32_vulkan_init(HWND hwnd, HINSTANCE hinstance)
     if (present_supported == VK_FALSE)
     {
         printf("Presentation is not supported on this device\n");
-        return 0;
+        goto exit_error;
     }
     // init here
-    vulkan_init_internal(vk);
+    vulkan_init_internal();
 
     return vk;
+
+exit_error:
+    free(vk);
+    return NULL;
 }
 
-SUNNY_API renderer_interface *win32_load_renderer(HWND hwnd, HINSTANCE hinstance)
+SY_EXPORT renderer_context *win32_load_renderer(HWND hwnd, HINSTANCE hinstance)
 {
-    renderer_interface *result = (renderer_interface *)win32_vulkan_init(hwnd, hinstance);
-    size_t render_commands_size = MEGABYTES(1);//KILOBYTES(64);
-    result->render_commands = VirtualAlloc(0, render_commands_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    result->commands_at = result->render_commands;
-    result->render_commands_size = (u32)render_commands_size;
+    vk = win32_vulkan_init(hwnd, hinstance);
+    if (!vk) {
+        return NULL;
+    }
     // link function pointers
-    result->handle_resize = vulkan_handle_resize;
-    result->update_display = vulkan_update_display;
-    result->flush_commands = vulkan_flush_commands;
-    result->present = present_frame;
-    //result->shutdown = vulkan_destroy_context;
+    vk->hw.base.handle_resize = vulkan_handle_resize;
+    vk->hw.base.update_display = vulkan_update_display;
+    vk->hw.base.present = present_frame;
+    vk->hw.base.shutdown = vulkan_destroy_context;
 
-    return result;
+    vk->hw.flush_commands = vulkan_flush_commands;
+
+    return (renderer_context *)vk;
 }

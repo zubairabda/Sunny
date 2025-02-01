@@ -8,45 +8,133 @@
 #include "dma.h"
 #include "spu.h"
 #include "memory.h"
+#include "stream.h"
 
-//#include "fileio.h"
+struct psx_image
+{
+    platform_file file;
+    psx_image_type type;
+};
 
-// TODO: read bios file in here so we can push it to the arena?
-// TODO: pass in audio buffer size?
+static struct psx_image mounted_image;
+static struct psx_image loaded_image;
+
+b8 psx_load_exe(platform_file *file)
+{
+    u64 fsize = platform_get_file_size(file);
+    void *buffer = malloc(fsize);
+    platform_read_file(file, 0, buffer, fsize);
+
+    u8 *fp = buffer;
+    if (memcmp(fp, "PS-X EXE", 8))
+    {
+        return false;
+    }
+
+    g_gpu.enable_output = false;
+    g_spu.enable_output = false;
+
+    while (g_cpu.pc != 0x80030000)
+        psx_step();
+
+    g_gpu.enable_output = true;
+    g_spu.enable_output = true;
+
+    u32 dst = U32FromPtr(fp + 0x18);
+    u32 size = U32FromPtr(fp + 0x1c);
+    memcpy((g_ram + (dst & 0x1fffffff)), (fp + 0x800), size);
+    g_cpu.pc = U32FromPtr(fp + 0x10);
+    g_cpu.registers[28] = U32FromPtr(fp + 0x14);
+    if (U32FromPtr(fp + 0x30) != 0)
+    {
+        g_cpu.registers[29] = U32FromPtr(fp + 0x30) + U32FromPtr(fp + 0x34);
+        g_cpu.registers[30] = U32FromPtr(fp + 0x30) + U32FromPtr(fp + 0x34);
+    }
+    g_cpu.next_pc = g_cpu.pc + 4;
+
+    return true;
+}
+
+b8 psx_mount_from_file(const char *path)
+{
+    if (platform_open_file(path, &mounted_image.file))
+    {
+        if (string_ends_with_ignore_case(path, ".exe"))
+        {
+            mounted_image.type = EXE;
+        }
+        else if (string_ends_with_ignore_case(path, ".bin"))
+        {
+            mounted_image.type = BIN;
+        }
+        else
+        {
+            SY_ASSERT(0);
+        }
+        return true;
+    }
+    return false;
+}
+
+void psx_load_image(void)
+{
+    loaded_image = mounted_image;
+    switch (loaded_image.type)
+    {
+    case EXE:
+    {
+        cdrom_init(NULL);
+        if (!psx_load_exe(&loaded_image.file))
+            return;
+        break;
+    }
+    case BIN:
+    {
+        cdrom_init(&loaded_image.file);
+        break;
+    }
+    INVALID_CASE;
+    }
+}
+
+void psx_mount_image(platform_file file, psx_image_type type)
+{
+    mounted_image.file = file;
+    mounted_image.type = type;
+}
+
+void psx_reset(void)
+{
+    cpu_init();
+    gpu_reset();
+    dma_init();
+    scheduler_reset();
+    schedule_event(spu_tick, 0, 768);
+    schedule_event(gpu_scanline_complete, 0, (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE));
+    psx_load_image();
+}
+
 void psx_init(struct memory_arena *arena, void *bios)
 {
-    //struct psx_state* result = push_arena(arena, sizeof(struct psx_state));
-#if 0
-    psx->cpu = push_arena(arena, sizeof(struct cpu_state));
-    psx->timers[0] = push_arena(arena, sizeof(struct root_counter));
-    psx->timers[1] = push_arena(arena, sizeof(struct root_counter));
-    psx->timers[2] = push_arena(arena, sizeof(struct root_counter));
-    psx->gpu = push_arena(arena, sizeof(struct gpu_state));
-    psx->spu = push_arena(arena, sizeof(struct spu_state));
-    psx->cdrom = push_arena(arena, sizeof(struct cdrom_state));
-    psx->dma = push_arena(arena, sizeof(struct dma_state));
-    psx->pad = push_arena(arena, sizeof(struct joypad_state));
-#endif
     cpu_init();
 
     g_bios = bios;
+    
     g_ram = push_arena(arena, MEGABYTES(2));
     g_scratch = push_arena(arena, KILOBYTES(1));
 
-    g_gpu.vram = push_arena(arena, VRAM_SIZE);
+    //g_gpu.vram = push_arena(arena, VRAM_SIZE);
     g_gpu.copy_buffer = push_arena(arena, VRAM_SIZE);
     //result->gpu.readback_buffer = push_arena(arena, VRAM_SIZE);
     // set to NTSC timings by default
     gpu_reset();
+    g_gpu.enable_output = true;
     g_gpu.vertical_timing = 263;
     g_gpu.horizontal_timing = NTSC_VIDEO_CYCLES_PER_SCANLINE;
     // make sure we set draw area on the first draw in case it wasnt set by the program
-    g_gpu.draw_area_changed = 1;
+    g_gpu.draw_area_changed = true;
     
-    
-    platform_file disk = open_file("C:\\Users\\Zubair\\Desktop\\psx\\Crash Bandicoot (USA)\\Crash Bandicoot (USA).bin");
-    //platform_file disk = open_file("C:\\Users\\Zubair\\Desktop\\psx\\Spyro - Year of the Dragon (USA) (Rev 1)\\Spyro - Year of the Dragon (USA) (Rev 1).bin");
-    cdrom_init(disk);
+    cdrom_init(NULL);
 
     //result->cdrom.status = 0x8; // set parameter fifo to empty
 
@@ -57,6 +145,7 @@ void psx_init(struct memory_arena *arena, void *bios)
     g_gpu.stat.value = 0x14802000;
     memset(g_ram, 0xcf, MEGABYTES(2)); // initialize with known garbage value 0xcf
 
+    g_spu.enable_output = true;
     g_spu.dram = push_arena(arena, KILOBYTES(512));
     g_spu.buffered_samples = push_arena(arena, 2048);
 
@@ -76,35 +165,16 @@ void psx_init(struct memory_arena *arena, void *bios)
 
 void psx_run(void)
 {
-    // get input
-    #if 0
-    dinput_get_data(input);
-    cpu->pad.buttons = input->pad;
-    #endif
-    //s32 cycles_to_run = min(cpu->cycles_until_next_event, 384);
+    // TODO: cycles_ran does nothing
     u64 tick_count = get_tick_count();
-    // NOTE: leftover_cycles are extra cycles that the cpu ran ahead of the cycles to run
-    //s32 leftover_cycles = execute_instruction(cpu, cycles_to_run);
-    // the cpu may have had to halt execution if an event was scheduled sooner than the cycles remaining
+
     u64 cycles_ran = execute_instruction(tick_count);
-    // TODO: add in extra cycles executed by the cpu if any
-    //s32 tick_count = cycles_executed;/*cycles_to_run + leftover_cycles;*/
 
     tick_events(cycles_ran);
-    
-#if 0
-    cpu->spu.ticks += tick_count;
-    if (cpu->spu.ticks > 768.0f) {
-        spu_tick(cpu, 0);
-        cpu->spu.ticks -= 768.0f;
-    }
-    b8 vsync = 0;
-    cpu->gpu.ticks += tick_count * (715909.0f / 451584.0f);
-    if (gpu_run(&cpu->gpu)) {
-        vsync = 1;
-        ++g_vblank_counter;
-        cpu->i_stat |= INTERRUPT_VBLANK;
-        SetEvent(g_present_thread_handle);
-    }
-#endif
+}
+
+void psx_step(void)
+{
+    u64 cycles_ran = execute_instruction(1);
+    tick_events(cycles_ran);
 }

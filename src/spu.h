@@ -73,19 +73,19 @@ struct spu_control
     // starts ADSR envelope
     u32 keyon;  // D88
     u32 keyoff;
-    u32 pmon;
+    u32 pmon; // D90
+    u32 noise_mode_enable;
+    u32 reverb_mode_enable;
     u32 endx;
-    u32 noise_mode;
-    u32 reverb_mode;
-    u32 status;
     u16 unk0; // DA0
     u16 reverb_work_start_addr;
     u16 irq_addr;
     u16 data_transfer_addr;
+    u16 tx_fifo; // ?
     u16 spucnt; // DAA
     u16 transfer_control;
     u16 spustat; // DAE
-    u16 cd_volume_left;
+    u16 cd_volume_left; // DB0
     u16 cd_volume_right;
     u16 extern_volume_left;
     u16 extern_volume_right;
@@ -136,6 +136,7 @@ union reverb_regs
 struct spu_state
 {
     //f32 ticks;
+    u8 enable_output;
     union reverb_regs reverb;
 
     struct spu_voice

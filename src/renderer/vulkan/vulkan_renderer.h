@@ -18,11 +18,13 @@ struct vulkan_swapchain
     VkFramebuffer framebuffers[3];
 };
 
-struct vulkan_context
-{
-    renderer_interface renderer;
+// TODO: pre-record the update_display command buffer
+// look into combining the renderer functions and having a separate call for executing commands/queue submission
 
-    CRITICAL_SECTION critical_section;
+typedef struct vulkan_context
+{
+    hardware_renderer hw;
+    platform_mutex mutex;
 
     VkInstance instance;
     VkPhysicalDevice physical_device;
@@ -90,7 +92,7 @@ struct vulkan_context
 
     VkDeviceMemory vertex_buffer_memory;
     VkBuffer vertex_buffer;
-};
+} vulkan_context;
 
 static inline u32 vulkan_find_memory_type(VkPhysicalDevice physical_device, VkMemoryPropertyFlags desired_properties, u32 type_bits)
 {

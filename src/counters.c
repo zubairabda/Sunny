@@ -6,17 +6,15 @@
 
 struct root_counter g_counters[3];
 
-void calculate_timer_irq(u32 index)
-{
-    struct root_counter *counter = &g_counters[index];
-    //if (timer)
-}
-
 static inline void add_sysclk_ticks(struct root_counter *counter)
 {
-    u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->prev_cycle_count);
+    u64 ticks = g_cycles_elapsed - counter->prev_cycle_count;
+    if (ticks > 0xffff) {
+        ticks = 0xffff;
+    }
+    //u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->prev_cycle_count);
     counter->prev_cycle_count = g_cycles_elapsed;
-    counter->value += ticks_to_add;
+    counter->value += ticks;//ticks_to_add;
 }
 
 static void tick_counter(u32 index)
@@ -140,7 +138,6 @@ static void tick_counter(u32 index)
         counter->mode.reached_target = 1;
         if (counter->mode.reset_after_target && counter->value > counter->target)
         {
-            //g_debug.show_disasm = 1;
             // if the timer resets by reaching the target value, it will stay at 0 for 2 cycles
             u32 wrap_count = (counter->value + 1) / (counter->target + 2);
 
@@ -195,12 +192,19 @@ static u32 get_timer_ticks_until_interrupt(u32 timer_index)
     {
         if (!counter->mode.sync_enable || counter->mode.sync_mode == 1 || counter->mode.sync_mode == 2)
         {
+            u32 tick_count = 0;
             if (counter->mode.irq_on_target) {
-                return counter->target;
+                tick_count = counter->target;
             }
             else if (counter->mode.irq_on_overflow) {
-                return 0xffff;
+                tick_count = 0xffff;
             }
+
+            if (counter->mode.clock_source & 0x2) {
+                tick_count <<= 3;
+            }
+
+            return tick_count;
         }
         break;
     }
@@ -212,6 +216,7 @@ static u32 get_timer_ticks_until_interrupt(u32 timer_index)
 
 static void timer_interrupt(u32 timer_index, s32 cycles_late)
 {
+    // TODO: currently timer interrupts break the shell
     g_cpu.i_stat |= ((u32)INTERRUPT_TIMER0) << timer_index;
     g_counters[timer_index].interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
 }
@@ -236,7 +241,7 @@ void counters_store(u32 offset, u32 value)
             // NOTE: hmm, don't think there are any tests for this
             counter->is_write_above_target = 1;
         }
-        counter->clock_delay = 1;
+        //counter->clock_delay = 1;
         // NOTE: there is also an overflow check delay, but we won't handle that for now
         break;
     case 0x4:
@@ -250,7 +255,7 @@ void counters_store(u32 offset, u32 value)
         u32 old_value = counter->mode.value;
         counter->mode.value = value & 0x3ff; // bit 10 11 12 are readonly
         counter->mode.irq = 1;
-        counter->clock_delay = 1;
+        //counter->clock_delay = 1;
         counter->value = 0;
         counter->prev_cycle_count = g_cycles_elapsed;
         counter->sync = 0;
