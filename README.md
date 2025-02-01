@@ -8,9 +8,9 @@ Vulkan SDK 1.2 or higher is required for the hardware renderer.
 Note that a valid BIOS file is required to run the application.
 
 ## TODO
-Given this emulator is in its very early stages, some major components are missing.
+Given this emulator is in its early stages, some major components are missing.
 Some components that are upcoming however:
-- MDEC completion
+- MDEC
 - CDROM completion
 - GPU completion/GTE timings
 - DMA timings
