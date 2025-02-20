@@ -219,7 +219,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             char buf[256];
             for (int i = 0; i < 24; ++i)
             {
-                snprintf(buf, sizeof(buf), "Voice #%d: %s | ADSR: %d", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume);
+                snprintf(buf, sizeof(buf), "Voice #%d: %s | ADSR: %d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume, g_spu.cnt.endx & (1 << i) ? "true" : "false");
                 debug_ui_label(buf);
                 //snprintf(buf, sizeof(buf), "ADSR: %d", g_spu.voice.data[i].adsr_volume);
                 //debug_ui_label(buf);
@@ -258,9 +258,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
         if (debug_ui_button("Reset"))
         {
-            psx_reset();
-            // TODO: this is an error, because we dont handle the bios not being loaded
-            state = SYSTEM_STATE_RUNNING;
+            if (bios.memory)
+            {
+                psx_reset();
+                state = SYSTEM_STATE_RUNNING;
+            }
         }
 
         debug_ui_pop_layout();

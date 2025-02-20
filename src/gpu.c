@@ -104,6 +104,7 @@ u32 gpuread(void)
 
 void gpu_reset(void)
 {
+    // TODO: clear vram
     g_gpu.fifo_len = 0;
     g_gpu.pending_load = 0;
     g_gpu.pending_store = 0;
@@ -460,7 +461,7 @@ void execute_gp0_command(u32 word)
 
                 SY_ASSERT(width && height);
                 if (g_gpu.software_rendering) {
-                    SY_ASSERT(0);
+                    //SY_ASSERT(0);
                 }
                 else {
                     push_vram_copy(src_x, src_y, dst_x, dst_y, width, height);

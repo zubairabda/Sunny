@@ -1,7 +1,8 @@
 #include "debug_ui.h"
 #include "atlas.h"
+#include "platform/platform.h"
 
-#include <stdlib.h>
+//#include <stdlib.h>
 
 //b8 g_update_ui;
 #define MAX_UI_PANELS 16
@@ -38,11 +39,6 @@ struct debug_ui_state
     u32 commands_at;
     u32 next_command;
     u64 frame_counter;
-#if 0
-    u32 reserved;
-    u32 layout_stack_idx;
-    struct debug_ui_layout layout_stack[MAX_UI_LAYOUT_STACK];
-#endif
     char file_dialog_dir[MAX_UI_FILE_PATH];
     struct debug_ui_panel panels[MAX_UI_PANELS];
     //struct debug_ui_panel *current_panel;
@@ -112,7 +108,8 @@ void debug_ui_reset_command_ptr(void)
 
 struct debug_ui_command_header *debug_ui_next_command(void)
 {
-    if (g_debug_ui.next_command == g_debug_ui.commands_at) {
+    if (g_debug_ui.next_command == g_debug_ui.commands_at)
+    {
         return NULL;
     }
 
@@ -189,10 +186,12 @@ static int get_text_width(const char *text, int *p_len)
     {
         ++len;
         int c = *p;
-        if (c > 126) {
+        if (c > 126)
+        {
             c = '?';
         }
-        else if (c == ' ') {
+        else if (c == ' ')
+        {
             width += 6; // TODO: font metrics
             continue;
         }
@@ -306,6 +305,12 @@ void debug_ui_quad(int x, int y, int w, int h)
     quad->r = bounds;
 }
 
+void debug_ui_scrollable_region(const char *name)
+{
+    u32 id = fnv1a(name);
+
+}
+
 void debug_ui_push_clip_rect(rect2 r)
 {
     g_debug_ui.clip_stack[g_debug_ui.clip_stack_index++] = r;
@@ -358,9 +363,7 @@ void debug_ui_open_file_dialog(const char *title)
     panel->first_frame = true;
     g_debug_ui.dialog_is_open = true;
 }
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#include <fileapi.h>
+
 b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file_types, struct debug_ui_file_dialog_result *out_file)
 {
     struct debug_ui_panel *panel = get_panel(title);
@@ -388,6 +391,15 @@ b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file
     rect2 dialog_rect = {panel_x, panel_y, panel_x + panel_width, panel_y + panel_height};
     debug_ui_quad(panel_x, panel_y, panel_width, panel_height);
     debug_ui_label(title);
+    
+    debug_ui_push_layout(HORIZONTAL, panel_x + panel_width - 20, panel_y);
+    // TODO: ID collision resolver
+    if (debug_ui_button("X"))
+    {
+        panel->is_open = false;
+        g_debug_ui.dialog_is_open = false;
+    }
+    debug_ui_pop_layout();
     //debug_ui_layout_row();
 
     debug_ui_push_clip_rect(dialog_rect);
@@ -407,6 +419,26 @@ b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file
     else
     {
         dir_len = (u32)strlen(dir) - 2;
+    }
+
+    if (debug_ui_button("../"))
+    {
+        u32 len = dir_len;
+        char *p = dir + len;
+        //--len;
+        SY_ASSERT(*p == '\\');
+        while (len--)
+        {
+            char *c = dir + len;
+            if (*c == '\\')
+            {
+                dir[len + 1] = '*';
+                dir[len + 2] = '\0';
+                dir_len = len;
+                break;
+            }
+        }
+        //printf("%s\n", dir);
     }
 
     b8 result = false;
@@ -467,27 +499,6 @@ b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file
                 result = true;
                 break;
             }
-#if 0
-                if (strcmp(file, "../") == 0)
-                {
-                    u32 len = dir_len;
-                    char *p = dir + len;
-                    //--len;
-                    SY_ASSERT(*p == '\\');
-                    while (len--)
-                    {
-                        char *c = dir + len;
-                        if (*c == '\\')
-                        {
-                            dir[len + 1] = '*';
-                            dir[len + 2] = '\0';
-                            dir_len = len;
-                            break;
-                        }
-                    }
-                    //printf("%s\n", dir);
-                }
-#endif
         }
     } while (FindNextFileA(find, &data) != FALSE);
     FindClose(find);

@@ -100,6 +100,8 @@ static inline void log_tty(void)
             char* str;
             u32 addr = g_cpu.registers[5] & 0x1fffffff;
 
+            str = mem_read(addr);
+            #if 0
             if (addr >= 0x1fc00000 && addr < 0x1fc80000)
             {
                 str = (char *)(g_bios + (addr - 0x1fc00000));
@@ -108,7 +110,7 @@ static inline void log_tty(void)
             {
                 SY_ASSERT(0);
             }
-            
+            #endif
             u32 size = g_cpu.registers[6];
             while (size--)
                 putchar(*str++);
@@ -540,21 +542,12 @@ u64 execute_instruction(u64 min_cycles)
                 new_load.value = g_cpu.cop0[ins.rd];
                 break;
             case MTC:
-                if (ins.rd == COP0_CAUSE) {
-                    //printf("writing %08x to CAUSE\n", g_cpu.registers[ins.rt]);
+                if (ins.rd == COP0_CAUSE)
+                {
                     g_cpu.cop0[COP0_CAUSE] &= 0xfffffcff;
                     g_cpu.cop0[COP0_CAUSE] |= g_cpu.registers[ins.rt] & 0x300;
                     break;
                 }
-#if 0
-                if (ins.rd == 14) {
-                    printf("writing %08x to EPC\n", g_cpu.registers[ins.rt]);
-                }
-                if (ins.rd == 8) {
-                    printf("writing %08x to BadVaddr\n", g_cpu.registers[ins.rt]);
-                }
-#endif
-
                 g_cpu.cop0[ins.rd] = g_cpu.registers[ins.rt];
                 break;
             case RFE:
@@ -563,7 +556,8 @@ u64 execute_instruction(u64 min_cycles)
                 u32 stack = (g_cpu.cop0[12] >> 2) & 0xf;
                 g_cpu.cop0[12] &= ~0xf;
                 g_cpu.cop0[12] |= stack;
-            }   break;
+                break;
+            }
             default:
                 debug_log("WARNING: Unknown coprocessor op: %x\n", ins.rs); // NOTE: RI exception
                 break;

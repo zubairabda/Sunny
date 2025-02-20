@@ -2,8 +2,6 @@
 #include "event.h"
 #include "debug.h"
 
-//#include "fileio.h"
-
 static s16 gauss_table[] = 
 {
     -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001,
@@ -85,6 +83,12 @@ static char *debug_spu_reg_table[] = {"Volume left", "Volume right", "Sample rat
 #endif
 
 struct spu_state g_spu;
+
+void spu_reset(void)
+{
+    memset(&g_spu.voice, 0, sizeof(struct spu_voice));
+    g_spu.cnt.endx = 0x00ffffff;
+}
 
 u16 spu_read(u32 offset)
 {
@@ -188,7 +192,7 @@ u16 spu_read(u32 offset)
         result = U16FromPtr(((u8 *)&g_spu.cnt) + (offset & 0x3f));
 #endif
     }
-    else if (offset < 0x1fc)
+    else if (offset < 0x200)
     {
         result = g_spu.reverb.regs[(offset & 0x3f) >> 1];
     }
@@ -265,6 +269,7 @@ void spu_write(u32 offset, u32 value)
                     g_spu.voice.internal[i].state = ADSR_RELEASE;
                 }
             }
+            g_spu.cnt.endx |= (value & 0x00ffffff);
             break;
         case 0x10:
         case 0x12:
@@ -290,7 +295,8 @@ void spu_write(u32 offset, u32 value)
         case 0x1c:
         case 0x1e:
             // ENDX
-            g_spu.cnt.endx = value;
+            //g_spu.cnt.endx = value;
+            debug_log("SPU: attempted to write %xh to ENDX\n", value);
             break;
         case 0x20:
             // garbage?
@@ -350,14 +356,13 @@ void spu_write(u32 offset, u32 value)
         }
         //debug_log("SPU CTRL\t%-20.20s <- %u\n", debug_spu_str_table[(offset & 0x3f) >> 1], value);
     }
-    else if (offset < 0x1fc)
+    else if (offset < 0x200)
     {
         g_spu.reverb.regs[(offset & 0x3f) >> 1] = value;
     }
     else if (offset < 0x260)
     {
         debug_log("SPU write internal voice regs\n");
-        //result = g_spu.voice.internal.
     }
     //debug_log("SPU write to: %08x <- %u\n", offset + 0x1f801c00, value);
 }
@@ -371,8 +376,9 @@ void spu_tick(u32 param, s32 cycles_late)
     // pending transfers also happen on the next tick
     if (g_spu.transfer_fifo_len)
     {
-        memcpy((g_spu.dram + g_spu.current_transfer_addr), g_spu.transfer_fifo, g_spu.transfer_fifo_len * 2);
-        g_spu.current_transfer_addr += g_spu.transfer_fifo_len * 2;
+        u32 size = g_spu.transfer_fifo_len * 2;
+        memcpy((g_spu.dram + g_spu.current_transfer_addr), g_spu.transfer_fifo, size);
+        g_spu.current_transfer_addr += size;
         g_spu.transfer_fifo_len = 0;
     }
     // each buffered sample has 2 channels
@@ -399,7 +405,8 @@ void spu_tick(u32 param, s32 cycles_late)
 
             u8 *adpcm_block = data;
             u8 shift = adpcm_block[0] & 0xf;
-            if (shift > 12) {
+            if (shift > 12)
+            {
                 shift = 9;
             }
             u8 amt = 12 - shift;
@@ -407,7 +414,8 @@ void spu_tick(u32 param, s32 cycles_late)
             u8 flags = adpcm_block[1];
 
             // loop start flag
-            if (flags & 0x4) {
+            if (flags & 0x4)
+            {
                 regs->repeat_addr = (u16)internal->current_addr;
             }
             // store flags for when we process them later
@@ -522,7 +530,8 @@ void spu_tick(u32 param, s32 cycles_late)
             shift = (regs->adsr >> 10) & 0x1f;
             stepval = 7 - ((regs->adsr >> 8) & 0x3);
             internal->adsr_target = 0x7fff;
-        } break;
+            break;
+        }
         case ADSR_DECAY:
         {
             level = ((regs->adsr & 0xf) + 1) * 0x800;
@@ -531,14 +540,16 @@ void spu_tick(u32 param, s32 cycles_late)
             dir = 1;
             stepval = -8;
             shift = (regs->adsr >> 4) & 0xf;
-        } break;
+            break;
+        }
         case ADSR_SUSTAIN:
         {
             shift = (regs->adsr >> 24) & 0x1f;
             dir = (regs->adsr >> 30) & 0x1;
             stepval = dir ? -8 + ((regs->adsr >> 22) & 0x3) : 7 - ((regs->adsr >> 22) & 0x3);
             mode = (regs->adsr >> 31);
-        } break;
+            break;
+        }
         case ADSR_RELEASE:
         {
             dir = 1;
@@ -546,7 +557,8 @@ void spu_tick(u32 param, s32 cycles_late)
             shift = (regs->adsr >> 16) & 0x1f;
             mode = (regs->adsr >> 21) & 0x1;
             internal->adsr_target = 0;
-        } break;
+            break;
+        }
         }
 
         // TODO: this could be off by one, not sure what exactly the behavior is (eg. adsr cycles gets set to 1, should next clock step? I think not)
@@ -558,10 +570,12 @@ void spu_tick(u32 param, s32 cycles_late)
         {
             s32 adsr_cycles = 1 << MAX(0, shift - 11);
             s32 adsr_step = (s32)stepval << MAX(0, 11 - shift);
-            if (mode && !dir && (regs->adsr_volume > 0x6000)) {
+            if (mode && !dir && (regs->adsr_volume > 0x6000))
+            {
                 adsr_cycles *= 4;
             }
-            if (mode && dir) {
+            if (mode && dir)
+            {
                 adsr_step = (adsr_step * regs->adsr_volume) >> 15;
             }
             internal->adsr_cycles = adsr_cycles;
@@ -598,7 +612,8 @@ void spu_tick(u32 param, s32 cycles_late)
         {
             s16 factor = internal->prev_amplitude;
         }
-        if (step > 0x3fff) {
+        if (step > 0x3fff)
+        {
             step = 0x4000;
         }
         internal->pitch_counter += step;
@@ -618,20 +633,23 @@ void spu_tick(u32 param, s32 cycles_late)
             {
                 internal->current_addr = regs->repeat_addr;
                 g_spu.cnt.endx |= (1 << i);
-                if (!(internal->block_flags & 0x2)) {
+                if (!(internal->block_flags & 0x2))
+                {
                     internal->state = ADSR_RELEASE;
                     regs->adsr_volume = 0;
                     internal->adsr_cycles = 0;
                 }
             }
-            else {
+            else
+            {
                 internal->current_addr += 2;
             }
         }
     }
 #if 1
     //if (buffer_index > g_spu.audio_buffer_len)
-    if (g_spu.enable_output) {
+    if (g_spu.enable_output)
+    {
         g_spu.audio_buffer[buffer_index] = clamp16(final_vol_left);
         g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right);
     }

@@ -9,7 +9,8 @@ struct root_counter g_counters[3];
 static inline void add_sysclk_ticks(struct root_counter *counter)
 {
     u64 ticks = g_cycles_elapsed - counter->prev_cycle_count;
-    if (ticks > 0xffff) {
+    if (ticks > 0xffff)
+    {
         ticks = 0xffff;
     }
     //u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->prev_cycle_count);
@@ -110,7 +111,8 @@ static void tick_counter(u32 index)
     }
     case 2:
     {
-        if (counter->mode.sync_enable && (counter->mode.sync_mode == 0 || counter->mode.sync_mode == 3)) {
+        if (counter->mode.sync_enable && (counter->mode.sync_mode == 0 || counter->mode.sync_mode == 3))
+        {
             return;
         }
         u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->prev_cycle_count);
@@ -193,14 +195,17 @@ static u32 get_timer_ticks_until_interrupt(u32 timer_index)
         if (!counter->mode.sync_enable || counter->mode.sync_mode == 1 || counter->mode.sync_mode == 2)
         {
             u32 tick_count = 0;
-            if (counter->mode.irq_on_target) {
+            if (counter->mode.irq_on_target)
+            {
                 tick_count = counter->target;
             }
-            else if (counter->mode.irq_on_overflow) {
+            else if (counter->mode.irq_on_overflow)
+            {
                 tick_count = 0xffff;
             }
-
-            if (counter->mode.clock_source & 0x2) {
+            
+            if (counter->mode.clock_source & 0x2)
+            {
                 tick_count <<= 3;
             }
 
@@ -262,8 +267,8 @@ void counters_store(u32 offset, u32 value)
         counter->pause_ticks = 0;
         counter->timestamp = g_cycles_elapsed; // TODO: remove?
         counter->remainder = 0;
-
-        if (counter->mode.value & (0x3 << 4)) 
+        // check bit 4-5 for IRQ mode
+        if (counter->mode.value & (0x3 << 4) && timer_index == 2) 
         {
             remove_event(counter->interrupt_event_id);
             counter->interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));

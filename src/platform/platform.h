@@ -9,8 +9,10 @@
 #endif
 
 #include "common.h"
+#include <stdlib.h>
 
 #if defined(SY_PLATFORM_WIN32)
+    #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
     typedef HANDLE platform_file_handle;
     typedef HANDLE platform_event_handle;
@@ -39,6 +41,8 @@ SY_API b8 platform_open_file(const char *path, platform_file *out_file);
 SY_API u32 platform_read_file(platform_file *file, u64 offset, void *dst_buffer, u32 bytes_to_read);
 SY_API u64 platform_get_file_size(platform_file *file);
 SY_API void platform_close_file(platform_file *file);
+
+SY_API u64 platform_get_current_dir(char *buffer, u64 buffer_len);
 
 typedef struct {
     platform_mutex_handle handle;
@@ -154,6 +158,7 @@ u32 platform_read_file(platform_file *file, u64 offset, void *dst_buffer, u32 by
     HANDLE hfile = file->handle;
     
     DWORD bytes_read;
+
     OVERLAPPED overlapped = {0};
     overlapped.Offset = (DWORD)offset;
     overlapped.OffsetHigh = (DWORD)(offset >> 32);
@@ -180,7 +185,27 @@ void platform_close_file(platform_file *file)
         ZERO_STRUCT(file);
     }
 }
-#endif
+
+u64 platform_get_current_dir(char *buffer, u64 buffer_len)
+{
+    u64 len = buffer_len / sizeof(WCHAR);
+    DWORD size = GetCurrentDirectoryW(len, (LPWSTR)buffer);
+    if (size)
+    {
+        // TODO: temp
+        u64 sz_bytes = size * sizeof(WCHAR);
+        WCHAR *temp = malloc(sz_bytes);
+        SY_ASSERT(temp);
+        memcpy(temp, buffer, sz_bytes);
+        int result = WideCharToMultiByte(CP_UTF8, 0, temp, size, buffer, buffer_len - 1, NULL, NULL);
+        if (result)
+            buffer[result] = '\0';
+        free(temp);
+        return result;
+    }
+    return 0;
+}
+#endif /* SY_PLATFORM_WIN32 */
 
 #endif /* SY_PLATFORM_IMPL */
 

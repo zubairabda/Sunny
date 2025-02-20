@@ -272,15 +272,19 @@ static inline void gte_rtps(s8 v, s8 sf, s8 lm, b8 r)
     g_cpu.cop2[IR2] = gte_clamp_ir((s32)g_cpu.cop2[MAC2], IR2_FLAG, lm);
 
     // hardware bug: IR3 saturation flag not set if sf=0 unless range exceeds -0x8000..0x7fff
-    if (sf) {
+    if (sf)
+    {
         g_cpu.cop2[IR3] = gte_clamp_ir((s32)g_cpu.cop2[MAC3], IR3_FLAG, lm);
     }
-    else {
+    else
+    {
         s64 mac3_shift = (s32)mac3 >> 12;
-        if (mac3_shift < -0x8000ll) {
+        if (mac3_shift < -0x8000ll)
+        {
             g_cpu.cop2[FLAG] |= (1 << 22);
         }
-        else if (mac3_shift > 0x7fffll) {
+        else if (mac3_shift > 0x7fffll)
+        {
             //g_cpu.cop2[IR3] = 0x7fff;
             g_cpu.cop2[FLAG] |= (1 << 22);
         }

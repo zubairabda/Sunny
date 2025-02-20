@@ -84,17 +84,27 @@ static void process_dma(u32 port)
                 addr += step;
                 store32(word, addr);
             }
-            /* store OTC end marker */
+            // store OTC end marker
             store32(word, 0xffffff);
         }
         else
         {
-            if (!g_cdrom.data_fifo_end)
-            {
-                SY_ASSERT(0);
-            }
+            SY_ASSERT(g_cdrom.data_fifo_end);
+
             u32 fifo_len = g_cdrom.data_fifo_end - g_cdrom.data_fifo_index;
             u16 rem = fifo_len & 0x3;
+#if 1
+            u32 sz_bytes = size << 2;
+
+            SY_ASSERT(sz_bytes <= fifo_len);
+
+            if (sz_bytes == fifo_len)
+                g_cdrom.status &= ~(CDR_STATUS_DATA_FIFO_NOT_EMPTY);
+            
+            memcpy((g_ram + addr), &g_cdrom.sector[g_cdrom.data_fifo_index], sz_bytes);
+            g_cdrom.data_fifo_index += sz_bytes;
+            
+#else
             if (fifo_len <= (size << 2))
             {
                 memcpy(g_ram + addr, &g_cdrom.sector[g_cdrom.data_fifo_index], fifo_len);
@@ -104,7 +114,7 @@ static void process_dma(u32 port)
             {
                 SY_ASSERT(0);
             }
-                
+#endif           
         }
 
         break;
@@ -119,7 +129,7 @@ static void process_dma(u32 port)
         u32 dir = channel->control & 0x1;
         while (size--)
         {
-            if (dir == 0) // to RAM
+            if (dir == 0) // Device to RAM
             {
                 switch (port)
                 {
@@ -128,11 +138,11 @@ static void process_dma(u32 port)
                     break;
                 default:
                     debug_log("Unhandled DMA direction\n");
-                    SY_ASSERT(0); // TODO: handle this
+                    SY_ASSERT(0);
                     break;
                 }
             }
-            else // from RAM
+            else // RAM to Device
             {
                 word = U32FromPtr(g_ram + addr);
                 switch (port)
@@ -185,9 +195,11 @@ static void process_dma(u32 port)
     }
     }
 
-    if (dma.interrupt & ((1 << port) << 16)) {
+    if (dma.interrupt & ((1 << port) << 16))
+    {
         dma.interrupt |= ((1 << port) << 24);
-        if (dma.interrupt & (1 << 23)) {
+        if (dma.interrupt & (1 << 23))
+        {
             dma.interrupt |= (1 << 31);
             g_cpu.i_stat |= INTERRUPT_DMA;
         }
@@ -223,7 +235,8 @@ void dma_write(u32 offset, u32 value)
             {
                 // writing 1 to irq flags acks them
                 u32 pos = 0x1000000 << i;
-                if (dma.interrupt & pos) {
+                if (dma.interrupt & pos)
+                {
                     dma.interrupt &= ~pos;
                 }
             }
@@ -231,7 +244,8 @@ void dma_write(u32 offset, u32 value)
         else
         {
             dma.control = value;
-            for (int i = 0; i < 7; ++i) {
+            for (int i = 0; i < 7; ++i)
+            {
                 dma_check_port(i);
             }
         }

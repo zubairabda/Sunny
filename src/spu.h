@@ -167,6 +167,8 @@ struct spu_state
 
 extern struct spu_state g_spu;
 
+void spu_reset(void);
+
 u16 spu_read(u32 offset);
 void spu_write(u32 offset, u32 value);
 void spu_tick(u32 param, s32 cycles_late);

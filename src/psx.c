@@ -83,14 +83,13 @@ void psx_load_image(void)
     {
     case EXE:
     {
-        cdrom_init(NULL);
         if (!psx_load_exe(&loaded_image.file))
             return;
         break;
     }
     case BIN:
     {
-        cdrom_init(&loaded_image.file);
+        cdrom_load_disk(loaded_image.file);
         break;
     }
     INVALID_CASE;
@@ -108,6 +107,8 @@ void psx_reset(void)
     cpu_init();
     gpu_reset();
     dma_init();
+    spu_reset();
+    cdrom_reset();
     scheduler_reset();
     schedule_event(spu_tick, 0, 768);
     schedule_event(gpu_scanline_complete, 0, (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE));
@@ -134,7 +135,7 @@ void psx_init(struct memory_arena *arena, void *bios)
     // make sure we set draw area on the first draw in case it wasnt set by the program
     g_gpu.draw_area_changed = true;
     
-    cdrom_init(NULL);
+    cdrom_reset();
 
     //result->cdrom.status = 0x8; // set parameter fifo to empty
 
@@ -145,6 +146,7 @@ void psx_init(struct memory_arena *arena, void *bios)
     g_gpu.stat.value = 0x14802000;
     memset(g_ram, 0xcf, MEGABYTES(2)); // initialize with known garbage value 0xcf
 
+    spu_reset();
     g_spu.enable_output = true;
     g_spu.dram = push_arena(arena, KILOBYTES(512));
     g_spu.buffered_samples = push_arena(arena, 2048);
@@ -157,7 +159,6 @@ void psx_init(struct memory_arena *arena, void *bios)
     //g_sio.buttons.value = 0xffff;
 
     schedule_event(spu_tick, 0, 768);
-    //schedule_event(result, gpu_scanline_complete, 0, video_to_cpu_cycles(3413));
     // TODO: reschedule gpu events when display settings are changed
     schedule_event(gpu_scanline_complete, 0, (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE));
     //schedule_event(cpu, gpu_hblank_event, 0, cpu->gpu.horizontal_display_x2 - cpu->gpu.horizontal_display_x1, EVENT_ID_GPU_HBLANK);
