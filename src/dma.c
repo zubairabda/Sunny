@@ -99,7 +99,7 @@ static void process_dma(u32 port)
             SY_ASSERT(sz_bytes <= fifo_len);
 
             if (sz_bytes == fifo_len)
-                g_cdrom.status &= ~(CDR_STATUS_DATA_FIFO_NOT_EMPTY);
+                g_cdrom.status.DRQSTS = false;
             
             memcpy((g_ram + addr), &g_cdrom.sector[g_cdrom.data_fifo_index], sz_bytes);
             g_cdrom.data_fifo_index += sz_bytes;

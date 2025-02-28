@@ -5,23 +5,29 @@
 
 #define CDROM_SECTOR_SIZE 2352
 
-#define CDROM_STAT_PLAYING   (1 << 7)
-#define CDROM_STAT_SEEKING   (1 << 6)
-#define CDROM_STAT_READING   (1 << 5)
-#define CDROM_STAT_SHELLOPEN (1 << 4)
-#define CDROM_STAT_IDERR     (1 << 3)
-#define CDROM_STAT_SEEKERR   (1 << 2)
-#define CDROM_STAT_MOTORON   (1 << 1)
-#define CDROM_STAT_ERROR     (1 << 0)
+enum cdrstat_flags
+{
+    CDR_STAT_ERROR   = (1 << 0),
+    CDR_STAT_MOTOR   = (1 << 1),
+    CDR_STAT_SEEKERR = (1 << 2),
+    CDR_STAT_IDERR   = (1 << 3),
+    CDR_STAT_SHELL   = (1 << 4),
+    CDR_STAT_READING = (1 << 5),
+    CDR_STAT_SEEKING = (1 << 6),
+    CDR_STAT_PLAYING = (1 << 7)
+};
 
-#define CDROM_MODE_DOUBLE_SPEED (1 << 7)
-#define CDROM_MODE_XAADPCM      (1 << 6)
-#define CDROM_MODE_SECTORSIZE   (1 << 5)
-#define CDROM_MODE_IGNOREBIT    (1 << 4)
-#define CDROM_MODE_XAFILTER     (1 << 3)
-#define CDROM_MODE_REPORT       (1 << 2)
-#define CDROM_MODE_AUTOPAUSE    (1 << 1)
-#define CDROM_MODE_CDDA         (1 << 0)
+enum cdrmode_flags
+{
+    CDR_MODE_CDDA      = (1 << 0),
+    CDR_MODE_AUTOPAUSE = (1 << 1),
+    CDR_MODE_REPORT    = (1 << 2),
+    CDR_MODE_XAFILTER  = (1 << 3),
+    CDR_MODE_IGNORE    = (1 << 4),
+    CDR_MODE_SIZE      = (1 << 5),
+    CDR_MODE_XAADPCM   = (1 << 6),
+    CDR_MODE_SPEED     = (1 << 7)
+};
 
 #define BFWR 0x40
 #define BFRD 0x80
@@ -74,8 +80,8 @@ void cdrom_reset(void)
     g_cdrom.is_reading = false;
     g_cdrom.pending_response = false;
     g_cdrom.mode = 0;
-    g_cdrom.stat = g_cdrom.disk ? 0 : CDROM_STAT_SHELLOPEN; // TODO: make cdrom stat accessed through a getter
-    g_cdrom.status = CDR_STATUS_PARAM_FIFO_EMPTY | CDR_STATUS_PARAM_FIFO_NOT_FULL;
+    g_cdrom.stat = g_cdrom.disk ? 0 : CDR_STAT_SHELL;
+    g_cdrom.status.value = 0x18; // param fifo not full, param fifo empty
     g_cdrom.interrupt_flag = 0;
 
     g_cdrom.response_fifo_count = g_cdrom.response_fifo_current = 0;
@@ -91,11 +97,12 @@ void cdrom_load_disk(disk_image *disk)
     if (g_cdrom.disk)
     {
         close_disk(g_cdrom.disk);
+        g_cdrom.disk = NULL;
     }
     if (disk)
     {
         g_cdrom.disk = disk;
-        g_cdrom.stat &= ~CDROM_STAT_SHELLOPEN;
+        g_cdrom.stat &= ~CDR_STAT_SHELL;
     }
 }
 
@@ -108,7 +115,7 @@ static inline void cdrom_queue_int(s32 delay)
 static void cdrom_response_event(u32 param, s32 cycles_late)
 {
     g_cdrom.response_event_id = 0;
-    g_cdrom.status |= 0x20; // response fifo not empty
+    g_cdrom.status.RSLRRDY = true;
     //cpu->cdrom.status &= 0x7f; // unset busy bit
 
     if (g_cdrom.is_reading)
@@ -122,9 +129,9 @@ static void cdrom_response_event(u32 param, s32 cycles_late)
                 g_cdrom.interrupt_flag = 0x1;
                 g_cdrom.response_fifo_count = 1;
                 g_cdrom.response_fifo[0] = g_cdrom.stat;
-                g_cdrom.response_delay_cycles = g_cdrom.mode & CDROM_MODE_DOUBLE_SPEED ? READ_2X_DELAY : READ_DELAY;
+                g_cdrom.response_delay_cycles = g_cdrom.mode & CDR_MODE_SPEED ? READ_2X_DELAY : READ_DELAY;
                 g_cdrom.pending_response = true;
-                g_cdrom.status |= CDR_STATUS_DATA_FIFO_NOT_EMPTY;
+                g_cdrom.status.DRQSTS = true;
             }
             else
             {
@@ -140,7 +147,7 @@ static void cdrom_response_event(u32 param, s32 cycles_late)
             g_cdrom.is_reading = false;
         }
         //g_cdrom.queued_response.cause = 0x1;
-        g_cdrom.queued_response.response[0] = g_cdrom.stat | CDROM_STAT_MOTORON | CDROM_STAT_READING; // NOTE: flags uneeded
+        g_cdrom.queued_response.response[0] = g_cdrom.stat | CDR_STAT_MOTOR | CDR_STAT_READING; // NOTE: flags uneeded
         g_cdrom.queued_response.response_count = 1;
         
         g_cdrom.command_timestamp = g_cycles_elapsed;
@@ -158,17 +165,17 @@ static void cdrom_queue_response(u8 response)
     g_cdrom.response_fifo[0] = response;
     g_cdrom.response_fifo_count = 1;
     g_cdrom.interrupt_flag |= 0x3;
-    g_cdrom.status |= 0x20;
+    g_cdrom.status.RSLRRDY = true;
     cdrom_queue_int(INT_DELAY);
 }
 
 static void cdrom_queue_error(u8 error) 
 {
-    g_cdrom.response_fifo[0] = g_cdrom.stat | CDROM_STAT_ERROR;
+    g_cdrom.response_fifo[0] = g_cdrom.stat | CDR_STAT_ERROR;
     g_cdrom.response_fifo[1] = error;
     g_cdrom.response_fifo_count = 2;
     g_cdrom.interrupt_flag |= 0x5;
-    g_cdrom.status |= 0x20;
+    g_cdrom.status.RSLRRDY = true;
     cdrom_queue_int(INT_DELAY);
 }
 
@@ -179,21 +186,22 @@ static inline b8 is_valid_bcd(u8 value)
 
 static inline u8 bcd_to_decimal(u8 bcd)
 {
-    return bcd - 0x6 * (bcd >> 4);
+    return (bcd - 0x6 * (bcd >> 4));
 }
 
-static void cdrom_command(u8 cmd)
+static void cdrom_command(u8 command)
 {
     //SY_ASSERT(g_cdrom.response_fifo_count == 0);
     //g_cdrom.status &= 0x7f;
-    switch ((enum cdrom_command)cmd)
+    enum cdrom_command cmd = (enum cdrom_command)command;
+    switch (cmd)
     {
     case Getstat:
         g_cdrom.response_fifo[0] = g_cdrom.stat;
         g_cdrom.response_fifo_count = 1;
         
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= 0x20;
+        g_cdrom.status.RSLRRDY = true;
         cdrom_queue_int(INT_DELAY);
         break;
     case Setloc:
@@ -234,17 +242,17 @@ static void cdrom_command(u8 cmd)
         g_cdrom.response_fifo[0] = g_cdrom.stat | 0x2;
         g_cdrom.response_fifo_count = 1;
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= 0x20;
+        g_cdrom.status.RSLRRDY = true;
         cdrom_queue_int(INT_DELAY);
         break;
     }
     case ReadN:
     {
-        g_cdrom.stat |= CDROM_STAT_MOTORON;
+        g_cdrom.stat |= CDR_STAT_MOTOR;
         g_cdrom.response_fifo[0] = g_cdrom.stat;
         g_cdrom.response_fifo_count = 1;
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= 0x20;
+        g_cdrom.status.RSLRRDY = true;
 
         cdrom_queue_int(INT_DELAY);
 #if 0
@@ -272,14 +280,14 @@ static void cdrom_command(u8 cmd)
         g_cdrom.response_fifo[0] = g_cdrom.stat;
         g_cdrom.response_fifo_count = 1;
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= CDR_STATUS_RESPONSE_FIFO_NOT_EMPTY;
+        g_cdrom.status.RSLRRDY = true;
 
         u32 delay;
         if (!g_cdrom.is_reading)
         {
             delay = 7000;
         }
-        else if (g_cdrom.mode & CDROM_MODE_DOUBLE_SPEED)
+        else if (g_cdrom.mode & CDR_MODE_SPEED)
         {
             delay = (PAUSE_DELAY >> 1);
         }
@@ -296,7 +304,7 @@ static void cdrom_command(u8 cmd)
         printf("Removed CDROM interrupts.\n");
         cdrom_queue_int(INT_DELAY);
 
-        g_cdrom.stat &= ~(CDROM_STAT_READING | CDROM_STAT_PLAYING);
+        g_cdrom.stat &= ~(CDR_STAT_READING | CDR_STAT_PLAYING);
         g_cdrom.pending_response = true;
         g_cdrom.queued_response.cause = 0x2;
         g_cdrom.queued_response.response[0] = g_cdrom.stat;
@@ -316,10 +324,10 @@ static void cdrom_command(u8 cmd)
         g_cdrom.sector_offset = 12;
         g_cdrom.mode = 0x20;
 
-        g_cdrom.stat |= CDROM_STAT_MOTORON;
+        g_cdrom.stat |= CDR_STAT_MOTOR;
         g_cdrom.response_fifo[0] = g_cdrom.stat;
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= 0x20;
+        g_cdrom.status.RSLRRDY = true;
         g_cdrom.response_fifo_count = 1;
 
         g_cdrom.pending_response = true;
@@ -337,7 +345,7 @@ static void cdrom_command(u8 cmd)
     {
         g_cdrom.response_fifo[0] = g_cdrom.stat;
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= CDR_STATUS_RESPONSE_FIFO_NOT_EMPTY;
+        g_cdrom.status.RSLRRDY = true;
         g_cdrom.response_fifo_count = 1;
         cdrom_queue_int(INT_DELAY);
         break;
@@ -354,19 +362,19 @@ static void cdrom_command(u8 cmd)
             return;
         }
 
-        u8 prev = g_cdrom.mode & CDROM_MODE_DOUBLE_SPEED;
+        u8 prev = g_cdrom.mode & CDR_MODE_SPEED;
 
         g_cdrom.mode = g_cdrom.param_fifo[0];
 
         // speed switch delay is around 650ms
-        if ((g_cdrom.mode & CDROM_MODE_DOUBLE_SPEED) != prev)
+        if ((g_cdrom.mode & CDR_MODE_SPEED) != prev)
         {
             g_cdrom.pending_speed_switch_delay = true;
         }
         
-        if (!(g_cdrom.mode & CDROM_MODE_IGNOREBIT))
+        if (!(g_cdrom.mode & CDR_MODE_IGNORE))
         {
-            if (g_cdrom.mode & CDROM_MODE_SECTORSIZE)
+            if (g_cdrom.mode & CDR_MODE_SIZE)
             {
                 g_cdrom.sector_size = 0x924;
                 g_cdrom.sector_offset = 12;
@@ -382,7 +390,7 @@ static void cdrom_command(u8 cmd)
         g_cdrom.response_fifo_count = 1;
         
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= 0x20;
+        g_cdrom.status.RSLRRDY = true;
         cdrom_queue_int(INT_DELAY);
         break;
     }
@@ -423,7 +431,7 @@ static void cdrom_command(u8 cmd)
             g_cdrom.response_fifo_count = 4;
 
             g_cdrom.interrupt_flag |= 0x3;
-            g_cdrom.status |= 0x20;
+            g_cdrom.status.RSLRRDY = true;
             //schedule_event(cpu, cdrom_ack, DATA_PARAM(0x3), INT_DELAY, EVENT_ID_CDROM_CAUSE);
             cdrom_queue_int(INT_DELAY);
             break;
@@ -439,17 +447,17 @@ static void cdrom_command(u8 cmd)
     {
         g_cdrom.is_reading = false; // TODO: seeks supposedly stop any pending reads
         g_cdrom.loc = g_cdrom.target;
-        g_cdrom.response_fifo[0] = g_cdrom.stat | CDROM_STAT_MOTORON;
+        g_cdrom.response_fifo[0] = g_cdrom.stat | CDR_STAT_MOTOR;
         g_cdrom.response_fifo_count = 1;
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= 0x20;
+        g_cdrom.status.RSLRRDY = true;
 
         cdrom_queue_int(INT_DELAY);
 
         g_cdrom.pending_response = true;
         g_cdrom.response_delay_cycles = INT_DELAY;
         g_cdrom.queued_response.cause = 0x2;
-        g_cdrom.queued_response.response[0] = g_cdrom.stat | CDROM_STAT_MOTORON | CDROM_STAT_SEEKING;
+        g_cdrom.queued_response.response[0] = g_cdrom.stat | CDR_STAT_MOTOR | CDR_STAT_SEEKING;
         g_cdrom.queued_response.response_count = 1;
         break;
     }
@@ -461,7 +469,7 @@ static void cdrom_command(u8 cmd)
             g_cdrom.response_fifo[1] = 0x20;
             g_cdrom.response_fifo_count = 2;
             g_cdrom.interrupt_flag |= 0x5;
-            g_cdrom.status |= 0x20;
+            g_cdrom.status.RSLRRDY = true;
             cdrom_queue_int(INT_DELAY);
             return;
         }
@@ -469,7 +477,7 @@ static void cdrom_command(u8 cmd)
         g_cdrom.response_fifo[0] = g_cdrom.stat;
         g_cdrom.response_fifo_count = 1;
         g_cdrom.interrupt_flag |= 0x3;
-        g_cdrom.status |= 0x20;
+        g_cdrom.status.RSLRRDY = true;
         cdrom_queue_int(INT_DELAY);
 
         g_cdrom.pending_response = true;
@@ -501,18 +509,21 @@ u8 cdrom_read(u32 offset)
     u8 result = 0;
     switch (offset)
     {
-    case 0: // reg 0 is always the status
-        result = g_cdrom.status;
+    case 0:
+    {
+        result = g_cdrom.status.value;
         debug_log("[CDROM] read status register -> 0x%02x\n", result);
         break;
-    case 1: // reg 1 is always the response fifo
+    }
+    case 1:
+    {
         // TODO: clear to zero every reset?
         u8 value = g_cdrom.response_fifo[g_cdrom.response_fifo_current++];
         g_cdrom.response_fifo_current &= 0xf;
         result = value;
         if (g_cdrom.response_fifo_current == g_cdrom.response_fifo_count)
         {
-            g_cdrom.status &= ~(0x20);
+            g_cdrom.status.RSLRRDY = false;
             //g_cdrom.response_fifo_count = 0;
             //g_cdrom.response_fifo_current = 0;
             debug_log("[CDROM] read last response byte\n");
@@ -523,30 +534,35 @@ u8 cdrom_read(u32 offset)
         }
         debug_log("[CDROM] read response fifo: %02xh\n", value);
         break;
-    case 2: // reg 2 is always the data fifo
+    }
+    case 2:
+    {
         if (g_cdrom.data_fifo_end)
         {
             result = g_cdrom.sector[g_cdrom.data_fifo_index++];
             if (g_cdrom.data_fifo_index >= g_cdrom.data_fifo_end)
             {
-                g_cdrom.status &= ~CDR_STATUS_DATA_FIFO_NOT_EMPTY;
+                g_cdrom.status.DRQSTS = false;
                 g_cdrom.data_fifo_end = 0;
             }
         }
         debug_log("[CDROM] read data fifo: %02xh\n", result);
         break;
+    }
     case 3:
-        if (g_cdrom.status & 0x1) // index 1 or 3 = interrupt flag reg
+    {
+        if (g_cdrom.status.value & 0x1)
         {
             result = g_cdrom.interrupt_flag |= ~0x1f;
             debug_log("[CDROM] read interrupt flag register: 0x%02x\n", g_cdrom.interrupt_flag);
         }
-        else // 0 or 2 = interrupt enable register
+        else
         {
             result = g_cdrom.interrupt_enable |= ~0x1f;
             debug_log("[CDROM] read interrupt enable register\n");
         }
         break;
+    }
     INVALID_CASE;
     }
     return result;
@@ -554,19 +570,20 @@ u8 cdrom_read(u32 offset)
 
 void cdrom_store(u32 offset, u8 value)
 {
-    switch (offset + ((g_cdrom.status & 0x3) * 4))
+    u8 reg = offset + (g_cdrom.status.index) * 4;
+    switch (reg)
     {
     case 0:
     case 4:
     case 8:
-    case 12: // status reg (0-1 writable)
-        g_cdrom.status = (g_cdrom.status & ~0x3) | (value & 0x3); // bits 0-1 writable
+    case 12:
+        g_cdrom.status.index = value;
         //debug_log("[CDROM] status index <- %hhu\n", value);
         break;
-    case 1: // command reg
+    case 1:
         //SY_ASSERT(!(g_cdrom.interrupt_flag & 0x1f)); // interrupts must be acknowledged before sending a new command
         debug_log("[CDROM] send command <- %s\n", cdrom_command_to_string((enum cdrom_command)value));
-        g_cdrom.status |= 0x8; // param fifo empty
+        g_cdrom.status.PRMEMPT = true; // TODO: set this when the command begins
         cdrom_command(value);
         g_cdrom.param_fifo_count = 0;
         g_cdrom.command_timestamp = g_cycles_elapsed;
@@ -576,27 +593,27 @@ void cdrom_store(u32 offset, u8 value)
         g_cdrom.param_fifo[g_cdrom.param_fifo_count++] = value;
         if (g_cdrom.param_fifo_count == 16)
         {
-            g_cdrom.status &= ~(0x10);
+            g_cdrom.status.PRMWRDY = false;
         }
-        g_cdrom.status &= ~(0x8);
+        g_cdrom.status.PRMEMPT = false;
         debug_log("[CDROM] send parameter: <- 0x%02x\n", value);
         break;
     case 3: // request reg
         // NOTE: we only consider mode bit 5 when it is requested, not during transfers
         if (value & BFRD)
         {
-            if (!(g_cdrom.status & CDR_STATUS_DATA_FIFO_NOT_EMPTY))
+            if (!g_cdrom.status.DRQSTS)
             {
                 g_cdrom.data_fifo_index = g_cdrom.sector_offset;
                 g_cdrom.data_fifo_end = g_cdrom.data_fifo_index + g_cdrom.sector_size;
-                g_cdrom.status |= CDR_STATUS_DATA_FIFO_NOT_EMPTY;
+                g_cdrom.status.DRQSTS = true;
             }
         }
         else
         {
             // data fifo is cleared when BFRD is not set
             g_cdrom.data_fifo_end = 0;
-            g_cdrom.status &= ~CDR_STATUS_DATA_FIFO_NOT_EMPTY;
+            g_cdrom.status.DRQSTS = false;
         }
         debug_log("[CDROM] request register <- 0x%02x\n", value);
         break;
@@ -632,7 +649,7 @@ void cdrom_store(u32 offset, u8 value)
         if (value & 0x40) // ref: psx-spx
         {
             g_cdrom.param_fifo_count = 0;
-            g_cdrom.status |= 0x8; // bit 3 set when param_fifo empty
+            g_cdrom.status.PRMEMPT = true;
         }
         debug_log("[CDROM] acknowledge interrupts: %02x\n", value);
         break;

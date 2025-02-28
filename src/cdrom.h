@@ -3,27 +3,20 @@
 
 #include "stream.h"
 
-#define CDR_STATUS_TRANSMISSION_BUSY       (1 << 7)
-#define CDR_STATUS_DATA_FIFO_NOT_EMPTY     (1 << 6)
-#define CDR_STATUS_RESPONSE_FIFO_NOT_EMPTY (1 << 5)
-#define CDR_STATUS_PARAM_FIFO_NOT_FULL     (1 << 4)
-#define CDR_STATUS_PARAM_FIFO_EMPTY        (1 << 3)
-#define CDR_STATUS_ADPCM_FIFO_NOT_EMPTY    (1 << 2)
-
-union CDROM_STATUS
+typedef union
 {
     struct
     {
         u8 index : 2;
-        u8 adpcm_fifo_empty : 1;
-        u8 param_fifo_empty : 1;
-        u8 param_fifo_full : 1;
-        u8 response_fifo_empty : 1;
-        u8 data_fifo_empty : 1;
-        u8 transmission_busy : 1;
+        u8 ADPBUSY : 1;
+        u8 PRMEMPT : 1;
+        u8 PRMWRDY : 1;
+        u8 RSLRRDY : 1;
+        u8 DRQSTS  : 1;
+        u8 BUSYSTS : 1;
     };
     u8 value;
-};
+} cdrom_status;
 
 struct cdrom_response
 {
@@ -34,7 +27,7 @@ struct cdrom_response
 
 struct cdrom_state
 {
-    u8 status;
+    cdrom_status status;
     u8 interrupt_enable;
     u8 interrupt_flag;
     u8 stat;
