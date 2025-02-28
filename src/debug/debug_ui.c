@@ -494,8 +494,8 @@ b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file
                 
                 u32 path_len = dir_len + 1;
                 SY_ASSERT((path_len + strlen(data.cFileName)) < MAX_PATH);
-                memcpy(out_file->file_name, dir, path_len);
-                strcpy(out_file->file_name + path_len, data.cFileName);
+                memcpy(out_file->path, dir, path_len);
+                strcpy(out_file->path + path_len, data.cFileName);
                 result = true;
                 break;
             }

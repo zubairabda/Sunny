@@ -1,5 +1,6 @@
 #include "config.h"
 #include "stream.h"
+#include "allocator.h"
 
 #define MAX_CONFIG_TABLES 64
 #define CONFIG_TABLE_LEN 256
@@ -53,16 +54,6 @@ typedef struct config_parser
     struct config_table *current_table;
     b8 done;
 } config_parser;
-
-static inline b8 is_alpha(char c)
-{
-    return ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_');
-}
-
-static inline b8 is_digit(char c)
-{
-    return (c >= '0' && c <= '9');
-}
 
 static u32 get_identifier_len(config_parser *parser)
 {
@@ -345,8 +336,8 @@ static b8 config_get_bool(struct config_table_entry *entry, b8 *result)
 b8 load_config(void)
 {
     load_default_config();
-    struct file_dat file;
-    if (allocate_and_read_file_null_terminated("sunny.cfg", &file))
+    struct file_dat file; // TODO: free file
+    if (allocate_and_read_file("sunny.cfg", FILE_FLAG_NULL_TERMINATE, &file))
     {
         struct config_table *table = parse_config(file.memory);
         if (!table)

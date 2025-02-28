@@ -8,20 +8,11 @@
 #include "dma.h"
 #include "spu.h"
 #include "memory.h"
-#include "stream.h"
-
-struct psx_image
-{
-    platform_file file;
-    psx_image_type type;
-};
-
-static struct psx_image mounted_image;
-static struct psx_image loaded_image;
 
 b8 psx_load_exe(platform_file *file)
 {
     u64 fsize = platform_get_file_size(file);
+    SY_ASSERT(fsize <= 0xffffffff);
     void *buffer = malloc(fsize);
     platform_read_file(file, 0, buffer, fsize);
 
@@ -43,6 +34,7 @@ b8 psx_load_exe(platform_file *file)
     u32 dst = U32FromPtr(fp + 0x18);
     u32 size = U32FromPtr(fp + 0x1c);
     memcpy((g_ram + (dst & 0x1fffffff)), (fp + 0x800), size);
+    free(buffer);
     g_cpu.pc = U32FromPtr(fp + 0x10);
     g_cpu.registers[28] = U32FromPtr(fp + 0x14);
     if (U32FromPtr(fp + 0x30) != 0)
@@ -55,51 +47,44 @@ b8 psx_load_exe(platform_file *file)
     return true;
 }
 
-b8 psx_mount_from_file(const char *path)
+b8 psx_load_image(const char *path)
 {
-    if (platform_open_file(path, &mounted_image.file))
+    psx_image_type type;
+    if (string_ends_with_ignore_case(path, ".exe"))
     {
-        if (string_ends_with_ignore_case(path, ".exe"))
-        {
-            mounted_image.type = EXE;
-        }
-        else if (string_ends_with_ignore_case(path, ".bin"))
-        {
-            mounted_image.type = BIN;
-        }
-        else
-        {
-            SY_ASSERT(0);
-        }
+        platform_file exe;
+        if (!platform_open_file(path, &exe))
+            return false;
+        psx_reset();
+        psx_load_exe(&exe);
+        platform_close_file(&exe);
         return true;
     }
-    return false;
-}
+    else if (string_ends_with_ignore_case(path, ".bin"))
+    {
+        type = BIN;
+    }
+    else if (string_ends_with_ignore_case(path, ".cue"))
+    {
+        type = CUE;
+    }
+    else
+    {
+        printf("Unrecognized file extension for file: %s\n", path);
+        return false;
+    }
 
-void psx_load_image(void)
-{
-    loaded_image = mounted_image;
-    switch (loaded_image.type)
+    disk_image *disk = open_disk(path, type);
+    if (disk)
     {
-    case EXE:
+        psx_reset();
+        cdrom_load_disk(disk);
+        return true;
+    }
+    else
     {
-        if (!psx_load_exe(&loaded_image.file))
-            return;
-        break;
+        return false;
     }
-    case BIN:
-    {
-        cdrom_load_disk(loaded_image.file);
-        break;
-    }
-    INVALID_CASE;
-    }
-}
-
-void psx_mount_image(platform_file file, psx_image_type type)
-{
-    mounted_image.file = file;
-    mounted_image.type = type;
 }
 
 void psx_reset(void)
@@ -112,7 +97,7 @@ void psx_reset(void)
     scheduler_reset();
     schedule_event(spu_tick, 0, 768);
     schedule_event(gpu_scanline_complete, 0, (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE));
-    psx_load_image();
+    //psx_load_image();
 }
 
 void psx_init(struct memory_arena *arena, void *bios)

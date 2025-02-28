@@ -146,7 +146,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     load_config();
 
     struct file_dat bios;
-    allocate_and_read_file(g_config.bios_path, &bios);
+    allocate_and_read_file(g_config.bios_path, 0, &bios);
 
     psx_init(&arena, bios.memory);
 
@@ -188,11 +188,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     if (bios.memory)
     {
-        psx_mount_from_file(g_config.boot_file);
-        psx_load_image();
-        state = SYSTEM_STATE_RUNNING;
+        if (psx_load_image(g_config.boot_file))
+        {
+            state = SYSTEM_STATE_RUNNING;
+        }
     }
-    
+
     while (g_running)
     {
         MSG msg = {0};
@@ -245,14 +246,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         struct debug_ui_file_dialog_result file;
         if (debug_ui_file_dialog("Image Select", file_ext, ARRAYCOUNT(file_ext), &file))
         {
-            platform_file image;
-            if (!platform_open_file(file.file_name, &image))
+            if (bios.memory)
             {
-                printf("Error loading file: %s\n", file.file_name);
-            }
-            else
-            {
-                psx_mount_image(image, (psx_image_type)file.index);
+                if (psx_load_image(file.path))
+                {
+                    state = SYSTEM_STATE_RUNNING;
+                }
+                else
+                {
+                    printf("Error loading file: %s\n", file.path);
+                }
             }
         }
 

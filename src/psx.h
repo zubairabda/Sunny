@@ -3,22 +3,10 @@
 
 #include "allocator.h"
 #include "config.h"
-#include "platform/platform.h"
+#include "stream.h"
 
-typedef enum psx_image_type
-{
-    EXE,
-    BIN,
-    CUE,
-    ISO
-} psx_image_type;
-
-void psx_mount_image(platform_file file, psx_image_type type);
-b8 psx_mount_from_file(const char *path);
-void psx_load_image(void);
+b8 psx_load_image(const char *path);
 void psx_reset(void);
-//void bios_init(void *bios);
-//b8 psx_mount_exe(platform_file *file);
 
 void psx_init(struct memory_arena *arena, void *bios);
 void psx_run(void);

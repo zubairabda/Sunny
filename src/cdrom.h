@@ -1,7 +1,7 @@
 #ifndef CDROM_H
 #define CDROM_H
 
-#include "platform/platform.h"
+#include "stream.h"
 
 #define CDR_STATUS_TRANSMISSION_BUSY       (1 << 7)
 #define CDR_STATUS_DATA_FIFO_NOT_EMPTY     (1 << 6)
@@ -38,7 +38,6 @@ struct cdrom_state
     u8 interrupt_enable;
     u8 interrupt_flag;
     u8 stat;
-    //u8 request_reg;
 
     u16 response_fifo_current;
     u16 response_fifo_count;
@@ -60,16 +59,17 @@ struct cdrom_state
     u16 sector_size;
     u8 sector_offset;
     b8 is_reading;
+    b8 pending_speed_switch_delay;
     u32 target;
     u32 loc;
-    platform_file disk; // TODO: temp
+    disk_image *disk;
     char sector[2352];
 };
 
 extern struct cdrom_state g_cdrom;
 
 void cdrom_reset(void);
-void cdrom_load_disk(platform_file disk);
+void cdrom_load_disk(disk_image *disk);
 u8 cdrom_read(u32 offset);
 void cdrom_store(u32 offset, u8 value);
 

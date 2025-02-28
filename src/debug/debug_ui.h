@@ -9,7 +9,7 @@
 struct debug_ui_file_dialog_result
 {
     int index;
-    char file_name[280];
+    char path[280];
 };
 
 enum debug_ui_mouse_button
