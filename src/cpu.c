@@ -13,8 +13,6 @@ struct cpu_state g_cpu;
 
 void set_interrupt(u32 param, s32 cycles_late)
 {
-    if (param == INTERRUPT_CDROM)
-        printf("Interrupt fired!\n");
     g_cpu.i_stat |= param;
 }
 

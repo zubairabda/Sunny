@@ -13,6 +13,7 @@
 #include "psx.h"
 #include "debug.h"
 #include "allocator.h"
+#include "disasm.h"
 #include "gpu.h"
 #include "spu.h"
 #include "audio/audio.h"

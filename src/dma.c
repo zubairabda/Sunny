@@ -90,7 +90,7 @@ static void process_dma(u32 port)
         else
         {
             SY_ASSERT(g_cdrom.data_fifo_end);
-
+            
             u32 fifo_len = g_cdrom.data_fifo_end - g_cdrom.data_fifo_index;
             u16 rem = fifo_len & 0x3;
 #if 1
@@ -101,7 +101,8 @@ static void process_dma(u32 port)
             if (sz_bytes == fifo_len)
                 g_cdrom.status.DRQSTS = false;
             
-            memcpy((g_ram + addr), &g_cdrom.sector[g_cdrom.data_fifo_index], sz_bytes);
+            struct cdrom_sector *sector = &g_cdrom.buffered_sector;
+            memcpy((g_ram + addr), &sector->data[g_cdrom.data_fifo_index], sz_bytes);
             g_cdrom.data_fifo_index += sz_bytes;
             
 #else

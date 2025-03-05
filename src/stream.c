@@ -636,7 +636,6 @@ disk_image *open_disk(const char *path, psx_image_type type)
             for (u32 i = 0; i < data->file_count; ++i)
             {
                 strcat(file_path, data->files[i]);
-                printf("%s\n", file_path);
                 if (!platform_open_file(file_path, &result->files[i]))
                 {
                     close_disk(result); // TODO:

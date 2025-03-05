@@ -25,7 +25,13 @@ struct cdrom_response
     u8 response[16];
 };
 
-struct cdrom_state
+struct cdrom_sector
+{
+    u32 pos;
+    u8 data[2352];
+};
+
+struct cdrom_context
 {
     cdrom_status status;
     u8 interrupt_enable;
@@ -41,9 +47,9 @@ struct cdrom_state
     b8 pending_response;
     struct cdrom_response queued_response;
     u32 response_delay_cycles;
-    u64 command_timestamp; // cycle count when we sent the command
+    u64 timestamp;
     u64 response_event_id;
-    u64 interrupt_event_id;
+    u64 read_event_id;
     u16 data_fifo_end;
     u16 data_fifo_index;
     u16 param_fifo_count;
@@ -53,13 +59,16 @@ struct cdrom_state
     u8 sector_offset;
     b8 is_reading;
     b8 pending_speed_switch_delay;
+    u8 next_sector_index;
+    b8 read_error;
     u32 target;
     u32 loc;
     disk_image *disk;
-    char sector[2352];
+    struct cdrom_sector newest_sector;
+    struct cdrom_sector buffered_sector;
 };
 
-extern struct cdrom_state g_cdrom;
+extern struct cdrom_context g_cdrom;
 
 void cdrom_reset(void);
 void cdrom_load_disk(disk_image *disk);
