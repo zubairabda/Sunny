@@ -1,4 +1,5 @@
 #include "spu.h"
+#include "cdrom.h"
 #include "event.h"
 #include "debug.h"
 
@@ -458,14 +459,6 @@ void spu_tick(u32 param, s32 cycles_late)
                 internal->decoded_samples[3 + j * 2 + 1] = sample1;
             }
             internal->has_samples = 1;
-            #if 0
-            debug_log("Decoded samples for voice: %u, addr: %u\n", i, g_spu.voice.internal[i].current_addr);
-
-            for (u32 j = 0; j < ARRAYCOUNT(internal->decoded_samples); ++j)
-            {
-                debug_log("\t%hi\n", internal->decoded_samples[j]);
-            }
-            #endif
         }
         // gauss table index
         u32 g = ((internal->pitch_counter >> 4) & 0xff);
@@ -646,7 +639,20 @@ void spu_tick(u32 param, s32 cycles_late)
             }
         }
     }
-#if 1
+
+    if (g_spu.cnt.spucnt & 0x1 && g_cdrom.state == CDROM_STATE_PLAYING)
+    {
+        s16 *samples = (s16 *)g_cdrom.newest_sector.data;
+        s16 raw_left = samples[g_spu.sector_sample_index];
+        s16 raw_right = samples[g_spu.sector_sample_index + 1];
+        s16 left = ((raw_left * g_cdrom.vol_LL) >> 7) + ((raw_right * g_cdrom.vol_RL) >> 7);
+        s16 right = ((raw_right * g_cdrom.vol_RR) >> 7) + ((raw_left * g_cdrom.vol_LR) >> 7);
+        s16 cd_vol_left = (s16)((left * g_spu.cnt.cd_volume_left) >> 15);
+        s16 cd_vol_right = (s16)((right * g_spu.cnt.cd_volume_right) >> 15);
+        final_vol_left += cd_vol_left;
+        final_vol_right += cd_vol_right;
+        g_spu.sector_sample_index += 2;
+    }
     //if (buffer_index > g_spu.audio_buffer_len)
     if (g_spu.enable_output)
     {
@@ -657,28 +663,31 @@ void spu_tick(u32 param, s32 cycles_late)
     ++g_spu.num_buffered_frames;
 
     schedule_event(spu_tick, 0, 768 - cycles_late);
-#endif
 #if 0
-    if (((g_debug.sound_buffer_len + 2) * 2) < MEGABYTES(16))
+    static b8 was_down = false;
+    b8 is_down = false;
+    struct keyboard_pad *kbd = (struct keyboard_pad *)g_sio.devices[0];
+    static u8 counter = 0;
+    if (kbd->keystates['P']) {
+        is_down = true;
+        if (!was_down)
+        {
+            ++counter;
+        }
+    }
+    b8 has_space = ((g_debug.sound_buffer_len + 2) * 2) < MEGABYTES(16);
+    if (has_space && (counter == 1))
     {
         g_debug.sound_buffer[g_debug.sound_buffer_len++] = clamp16(final_vol_left);
         g_debug.sound_buffer[g_debug.sound_buffer_len++] = clamp16(final_vol_right);
     }
-    else
+    else if (!has_space || counter == 2)
     {
-        static b8 b = 0;
-        if (!b) {
-            b = 1;
+        static b8 lock = false;
+        if (!lock)
             write_wav_file(g_debug.sound_buffer, g_debug.sound_buffer_len * 2, "output.wav");
-        }
+        lock = true;
     }
-#endif
-#if 0
-    if (g_spu.num_buffered_samples >= 441)
-    {
-
-        play_sound(g_audio, g_spu.buffered_samples, g_spu.num_buffered_samples);
-        g_spu.num_buffered_samples = 0;
-    }
+    was_down = is_down;
 #endif
 }

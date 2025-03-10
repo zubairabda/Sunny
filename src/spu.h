@@ -90,7 +90,7 @@ struct spu_control
     u16 extern_volume_left;
     u16 extern_volume_right;
     u16 current_main_volume_left;
-    u16 current_main_volume_right;          
+    u16 current_main_volume_right;
 };
 
 union reverb_regs
@@ -135,7 +135,7 @@ union reverb_regs
 
 struct spu_state
 {
-    //f32 ticks;
+    u32 sector_sample_index;
     u8 enable_output;
     union reverb_regs reverb;
 

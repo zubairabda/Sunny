@@ -37,35 +37,6 @@ enum cue_context_type
     CUE_CONTEXT_TRACK
 };
 
-enum cue_token_type
-{
-    CUE_TOKEN_INVALID,
-    CUE_TOKEN_IDENTIFIER,
-    CUE_TOKEN_KEYWORD,
-    CUE_TOKEN_NUMBER,
-    CUE_TOKEN_STRING,
-    CUE_TOKEN_COLON,
-    CUE_TOKEN_NEWLINE
-};
-
-enum cue_keyword_id
-{
-    CUE_ID_NONE,
-    CUE_ID_FILE,
-    CUE_ID_INDEX,
-    CUE_ID_TRACK,
-    CUE_ID_BINARY,
-    CUE_ID_AUDIO,
-
-};
-
-struct cue_token
-{
-    const char *text;
-    u32 length;
-    enum cue_token_type type;
-};
-
 typedef struct
 {
     const char *str;
@@ -75,17 +46,24 @@ typedef struct
 struct cue_parser
 {
     const char *at;
-    struct cue_token token;
     b8 done;
     b8 error;
     const char *msg;
+};
+
+struct cue_track
+{
+    u32 file_index;
+    u32 pregap;
+    u32 file_offset;
+    u32 flags;
 };
 
 typedef struct
 {
     const char **files;
     u32 file_count;
-    u32 *track_indices;
+    struct cue_track *tracks;
     u32 track_count;
     struct memory_arena arena;
 } cue_data;
@@ -171,85 +149,8 @@ static b8 token_equals(cue_string token, const char *match)
     return (match[i] == '\0');
 }
 
-static struct cue_token consume_token(struct cue_parser *parser, u32 length, enum cue_token_type type)
-{
-    parser->token.length = length;
-    parser->token.type = type;
-    parser->token.text = parser->at;
-    return parser->token;
-}
-
-static struct cue_token parse_string(struct cue_parser *parser)
-{
-    ++parser->at;
-    parser->token.text = parser->at;
-    parser->token.type = CUE_TOKEN_STRING;
-
-    while (*parser->at)
-    {
-        if (*parser->at == '"')
-        {
-            parser->token.length = parser->at - parser->token.text;
-            return parser->token;
-        }
-    };
-    parser->token.type = CUE_TOKEN_INVALID;
-    return parser->token;
-}
-
 static cue_string get_token(struct cue_parser *parser)
 {
-#if 0
-    char c;
-    while ((c = parser->at[0]))
-    {
-        if (is_whitespace(c))
-        {
-            ++parser->at;
-        }
-        else if (is_alpha(c))
-        {
-            struct cue_token result;
-            result.type = CUE_TOKEN_IDENTIFIER;
-            result.text = parser->at;
-            do
-            {
-                ++parser->at;
-            } while (is_alpha(*parser->at) || is_digit(*parser->at));
-            result.length = parser->at - result.text;
-            parser->token = result;
-            return result;
-        }
-        else if (is_digit(c))
-        {
-            struct cue_token result;
-            result.type = CUE_TOKEN_NUMBER;
-            result.text = parser->at;
-            do
-            {
-                ++parser->at;
-            } while (is_digit(*parser->at));
-            result.length = parser->at - result.text;
-            parser->token = result;
-            return result;
-        }
-        else if (c == '"')
-        {
-            return parse_string(parser);
-        }
-        else if (c == ':')
-        {
-            return consume_token(parser, 1, CUE_TOKEN_COLON);
-        }
-        else
-        {
-            printf("Error: unknown identifier '%c'\n", c);
-            return consume_token(parser, 1, CUE_TOKEN_INVALID);
-        }
-    }
-    
-    parser->done = true;
-#else
     cue_string result = {0};
     char c;
     while ((c = parser->at[0]))
@@ -268,7 +169,6 @@ static cue_string get_token(struct cue_parser *parser)
         }
     }
     return result;
-#endif
 }
 
 static b8 parse_number(struct cue_parser *parser, s32 *value)
@@ -280,7 +180,7 @@ static b8 parse_number(struct cue_parser *parser, s32 *value)
         ++parser->at;
     } while (is_digit(parser->at[0]));
 
-    if (!parser->at[0] || is_whitespace(parser->at[0]))
+    if (!parser->at[0] || is_whitespace(parser->at[0]) || parser->at[0] == ':')
     {
         u32 len = parser->at - start;
         s32 place = 1;
@@ -295,12 +195,6 @@ static b8 parse_number(struct cue_parser *parser, s32 *value)
         return true;
     }
     return false;
-}
-
-static void parser_consume_space(struct cue_parser *parser)
-{
-    while (is_space(parser->at[0]))
-        ++parser->at;
 }
 
 static void parser_skip_line(struct cue_parser *parser)
@@ -362,7 +256,7 @@ static b8 parse_cue_file(struct cue_parser *parser, cue_string *file_path)
     return false;
 }
 
-static b8 parse_cue_track(struct cue_parser *parser, s32 *index)
+static b8 parse_index(struct cue_parser *parser, s32 *out_index)
 {
     char c;
     while ((c = parser->at[0]))
@@ -373,10 +267,48 @@ static b8 parse_cue_track(struct cue_parser *parser, s32 *index)
         }
         else if (is_digit(c))
         {
-            s32 track_index;
-            if (!parse_number(parser, &track_index))
+            s32 index;
+            if (!parse_number(parser, &index))
                 break;
-            *index = track_index;
+            *out_index = index;
+            return true;
+        }
+        else
+        {
+            break;
+        }
+    }
+    return false;
+}
+
+static b8 parse_msf(struct cue_parser *parser, s32 *offset)
+{
+    char c;
+    while ((c = parser->at[0]))
+    {
+        if (is_space(c))
+        {
+            ++parser->at;
+        }
+        else if (is_digit(c))
+        {
+            s32 mm, ss, ff;
+            b8 res[3];
+            res[0] = parse_number(parser, &mm);
+            if (parser->at[0] != ':')
+                return false;
+            ++parser->at;
+            res[1] = parse_number(parser, &ss);
+            if (parser->at[0] != ':')
+                return false;
+            ++parser->at;
+            res[2] = parse_number(parser, &ff);
+
+            if (!(res[0] & res[1] & res[2]))
+                return false;
+
+            *offset = (((mm * 60) + ss) * 75 + ff) * 2352; // TODO: change to lba
+
             return true;
         }
         else
@@ -398,12 +330,23 @@ static inline char *push_cue_string(struct memory_arena *arena, cue_string strin
 #define MAX_CUE_TRACKS 99
 #define MAX_CUE_FILES 99
 
+enum
+{
+    CUE_TRACK_FLAG_LAST_TRACK = (1 << 0)
+};
+
 static void free_cue_sheet(cue_data *data)
 {
     free_arena(&data->arena);
     free(data->files);
-    free(data->track_indices);
+    free(data->tracks);
     free(data);
+}
+
+static inline void parser_error(struct cue_parser *parser, const char *msg)
+{
+    printf("%s", msg);
+    parser->error = true;
 }
 
 static b8 parse_cue_sheet(const char *path, cue_data **data)
@@ -421,15 +364,16 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
     u32 file_count = 0;
     u32 current_file_index = 0;
 
-    u32 track_count = 0;
+    s32 track_count = 0;
 
     s32 current_track_number = -1;
+    s32 current_track_index = -1;
+    s32 prev_track_offset = 0;
 
     cue_data *result = malloc(sizeof(cue_data));
-    result->track_indices = malloc(sizeof(u32) * MAX_CUE_TRACKS);
+    result->tracks = malloc(sizeof(struct cue_track) * MAX_CUE_TRACKS);
     result->files = malloc(sizeof(const char *) * MAX_CUE_FILES);
     result->arena = allocate_arena(KILOBYTES(8));
-    //s32 current_track_index = -1;
 
     enum cue_context_type context = CUE_CONTEXT_NONE;
 
@@ -448,16 +392,14 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
             
             if (file_count >= MAX_CUE_FILES)
             {
-                printf("Error: maximum file count reached\n");
-                parser.error = true;
+                parser_error(&parser, "Error: maximum file count reached\n");
                 break;
             }
 
             cue_string file;
             if (!parse_cue_file(&parser, &file))
             {
-                printf("Error: failed to parse FILE in cue sheet\n");
-                parser.error = true;
+                parser_error(&parser, "Error: failed to parse FILE in cue sheet\n");
                 break;
             }
 
@@ -484,30 +426,29 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
         {
             if (context == CUE_CONTEXT_NONE)
             {
-                printf("Error: TRACK command must be under a FILE command\n");
+                parser_error(&parser, "Error: TRACK command must be under a FILE command\n");
                 break;
             }
+            // TODO: check that index 1 exists per track
+
             context = CUE_CONTEXT_TRACK;
 
             if (track_count >= MAX_CUE_TRACKS)
             {
-                printf("Error: maximum track count reached\n");
-                parser.error = true;
+                parser_error(&parser, "Error: maximum track count reached\n");
                 break;
             }
 
             s32 index;
-            if (!parse_cue_track(&parser, &index))
+            if (!parse_index(&parser, &index))
             {
-                printf("Error: failed to parse track\n");
-                parser.error = true;
+                parser_error(&parser, "Error: failed to parse track index\n");
                 break;
             }
 
             if (index < 1 || index > 99)
             {
-                printf("Error: track number must be from 1-99\n");
-                parser.error = true;
+                parser_error(&parser, "Error: track number must be from 1-99\n");
                 break;
             }
 
@@ -517,12 +458,16 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
             }
             else if (index != ++current_track_number)
             {
-                printf("Error: track number did not increment by 1\n");
-                parser.error = true;
+                parser_error(&parser, "Error: track number did not increment by 1\n");
                 break;
             }
 
-            result->track_indices[track_count++] = current_file_index;
+            // reset the index counter
+            current_track_index = -1;
+
+            struct cue_track *track = &result->tracks[track_count++];
+            track->file_index = current_file_index;
+            track->flags = 0;
 
             printf("  Track: %d\n", index);
         }
@@ -530,41 +475,79 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
         {
             if (context != CUE_CONTEXT_TRACK)
             {
-                printf("Error: INDEX command found in incorrect context\n");
+                parser_error(&parser, "Error: INDEX command found in incorrect context\n");
                 break;
             }
-#if 0
-            token = get_token(&parser);
-            s32 index = parse_number(token);
+
+            s32 index;
+            if (!parse_index(&parser, &index))
+            {
+                parser_error(&parser, "Error: failed to parse index number\n");
+                break;
+            }
+
+            if (index < 0 || index > 99)
+            {
+                parser_error(&parser, "Error: index number must be from 0-99\n");
+                break;
+            }
+
+            // TODO: if only index 1 is present, we should assume no pregap
+            s32 prev_track_index = current_track_index;
             if (current_track_index < 0)
             {
-                if (index == 0)
+                if (index > 1)
                 {
-                    // get track pregap start time
-                }
-                else if (index == 1)
-                {
-
-                }
-                else
-                {
-                    printf("Error: starting index must be 0 or 1\n");
+                    parser_error(&parser, "Error: index number must begin at either 0 or 1\n");
                     break;
                 }
                 current_track_index = index;
             }
             else if (index != ++current_track_index)
             {
-                printf("Error: track index did not increment by 1\n");
+                parser_error(&parser, "Error: index number did not increment by 1\n");
                 break;
             }
-#endif
+
+            s32 offset;
+            if (!parse_msf(&parser, &offset))
+            {
+                parser_error(&parser, "Error: failed to parse mm:ss:ff location\n");
+                break;
+            }
+
+            struct cue_track *track = &result->tracks[track_count - 1];
+            if (index == 1)
+            {
+                if (prev_track_index == 0)
+                {
+                    track->pregap = offset - prev_track_offset; // pregap is defined
+                    track->file_offset = prev_track_offset;   
+                }
+                else
+                {
+                    track->pregap = 0;
+                    track->file_offset = offset; // TODO: is this right?
+                }
+            }
+
+            if (index <= 1 && track_count > 1)
+            {
+                struct cue_track *prev_track = &result->tracks[track_count - 2];
+                if (prev_track->file_index != current_file_index)
+                {
+                    track->file_offset = 0;
+                    prev_track->flags |= CUE_TRACK_FLAG_LAST_TRACK;
+                }
+            }
+            prev_track_offset = offset;
+
+            printf("    Index: %d\n", index);
         }
         else
         {
             parser_skip_line(&parser);
         }
-        //printf("%.*s\n", token.length, token.text);
     }
 
     free(cue_sheet.memory);
@@ -578,6 +561,11 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
     {
         printf("Error: each file requires at least one track\n");
         goto error;
+    }
+
+    if (track_count)
+    {
+        result->tracks[track_count - 1].flags |= CUE_TRACK_FLAG_LAST_TRACK;
     }
 
     result->track_count = track_count;
@@ -607,6 +595,7 @@ disk_image *open_disk(const char *path, psx_image_type type)
         }
         result->tracks[0].file = &result->files[0];
         result->tracks[0].size = platform_get_file_size(&result->files[0]);
+        result->tracks[0].offset = 0;
         break;
     }
     case CUE:
@@ -643,11 +632,28 @@ disk_image *open_disk(const char *path, psx_image_type type)
                 }
                 file_path[dir_index + 1] = '\0';
             }
+            u32 track_offset = 0;
+            //u32 prev_track_offset = 0;
             for (u32 i = 0; i < data->track_count; ++i)
             {
-                platform_file *file = &result->files[data->track_indices[i]];
+                platform_file *file = &result->files[data->tracks[i].file_index];
                 result->tracks[i].file = file;
-                result->tracks[i].size = platform_get_file_size(file);
+                u32 file_size = (u32)platform_get_file_size(file);
+                result->tracks[i].pregap = data->tracks[i].pregap;
+                // if this is the last track within a file, the size is calculated differently
+                if (data->tracks[i].flags & CUE_TRACK_FLAG_LAST_TRACK)
+                {
+                    result->tracks[i].size = file_size - data->tracks[i].file_offset;
+                }
+                else
+                {
+                    result->tracks[i].size = data->tracks[i + 1].file_offset - data->tracks[i].file_offset;
+                }
+                result->tracks[i].offset = track_offset;
+
+                //prev_track_offset = data->tracks[i].file_offset;
+                track_offset += result->tracks[i].size;
+                printf("Track #%2d, offset: %d, size: %d\n", (i + 1), result->tracks[i].offset, result->tracks[i].size);
             }
             result->file_count = data->file_count;
             result->track_count = data->track_count;
@@ -671,7 +677,6 @@ void close_disk(disk_image *disk)
     free(disk->files);
     free(disk->tracks);
     free(disk);
-    memset(disk, 0, sizeof(disk_image));
 }
 
 b8 read_disk_data(disk_image *disk, u32 offset, void *buffer)
