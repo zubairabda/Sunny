@@ -369,6 +369,34 @@ static void cdrom_queue_error(u8 error)
     g_cdrom.first_response.cause = 5;
 }
 
+static void cdrom_begin_read(void)
+{
+    g_cdrom.first_response.fifo[0] = cdrom_get_stat() | CDR_STAT_MOTOR;
+    g_cdrom.first_response.count = 1;
+    g_cdrom.first_response.cause = 3;
+
+    g_cdrom.state = CDROM_STATE_READING;
+
+    u32 delay = 0;
+    if (g_cdrom.pending_speed_switch_delay)
+    {
+        g_cdrom.pending_speed_switch_delay = false;
+        delay += SPEED_SWITCH_DELAY;
+    }
+    
+    if (g_cdrom.seek_pending)
+    {
+        // TODO: seek delay
+        g_cdrom.seek_pending = false;
+        g_cdrom.loc = g_cdrom.seek_target;
+    }
+
+    g_cdrom.read_error = false;
+
+    u32 next_int = cdrom_read_next_sector();
+    g_cdrom.read_event_id = schedule_event(cdrom_read_handler, 0, next_int + delay);
+}
+
 static void cdrom_command(u32 command, s32 cycles_late)
 {
     //SY_ASSERT(g_cdrom.response_fifo_count == 0);
@@ -468,31 +496,7 @@ static void cdrom_command(u32 command, s32 cycles_late)
     }
     case ReadN:
     {
-        g_cdrom.first_response.fifo[0] = cdrom_get_stat() | CDR_STAT_MOTOR;
-        g_cdrom.first_response.count = 1;
-        g_cdrom.first_response.cause = 3;
-
-        g_cdrom.state = CDROM_STATE_READING;
-
-        u32 delay = 0;
-        if (g_cdrom.pending_speed_switch_delay)
-        {
-            g_cdrom.pending_speed_switch_delay = false;
-            delay += SPEED_SWITCH_DELAY;
-        }
-        
-        if (g_cdrom.seek_pending)
-        {
-            // TODO: seek delay
-            g_cdrom.seek_pending = false;
-            g_cdrom.loc = g_cdrom.seek_target;
-        }
-
-        g_cdrom.read_error = false;
-
-        u32 next_int = cdrom_read_next_sector();
-        g_cdrom.read_event_id = schedule_event(cdrom_read_handler, 0, next_int + delay);
-
+        cdrom_begin_read();
         break;
     }
     case Pause:
@@ -779,6 +783,7 @@ static void cdrom_command(u32 command, s32 cycles_late)
     }
     case ReadS:
     {
+        cdrom_begin_read();
         break;
     }
     default:

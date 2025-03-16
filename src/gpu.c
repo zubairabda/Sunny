@@ -155,7 +155,22 @@ void execute_gp1_command(u32 command)
     }
     case 0x4:
     {
-        g_gpu.stat.data_request = (command & 0x3);
+        g_gpu.stat.dma_direction = (command & 0x3);
+        switch (g_gpu.stat.dma_direction)
+        {
+        case 0:
+            g_gpu.stat.data_request = 0;
+            break;
+        case 1:
+            g_gpu.stat.data_request = (g_gpu.fifo_len != 16);
+            break;
+        case 2:
+            g_gpu.stat.data_request = g_gpu.stat.ready_to_receive_dma;
+            break;
+        case 3:
+            g_gpu.stat.data_request = g_gpu.stat.ready_to_send_vram;
+            break;
+        }
         break;
     }
     case 0x5:

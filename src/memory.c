@@ -8,6 +8,7 @@
 #include "dma.h"
 #include "debug.h"
 #include "sio.h"
+#include "mdec.h"
 
 #define DELAY_CYCLES(cycles) g_cycles_elapsed += (cycles)
 //#define DELAY_CYCLES(cycles)
@@ -46,6 +47,10 @@ static u32 io_read32(u32 addr)
         return gpuread();
     case 0x1f801814:
         return g_gpu.stat.value & ~(1 << 19);
+    case 0x1f801820:
+        return mdec_read();
+    case 0x1f801824:
+        return mdec_getstat();
     default:
         if (addr >= 0x1f801080 && addr < 0x1f8010f8)
         {
@@ -122,6 +127,12 @@ static void io_write32(u32 addr, u32 value)
         break;
     case 0x1f801814:
         execute_gp1_command(value);
+        break;
+    case 0x1f801820:
+        mdec_command(value);
+        break;
+    case 0x1f801824:
+        mdec_reset(value);
         break;
     default:
         if (addr >= 0x1f801000 && addr < 0x1f801024)
