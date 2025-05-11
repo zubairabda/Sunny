@@ -10,9 +10,7 @@
 #include "sio.h"
 #include "mdec.h"
 
-#define DELAY_CYCLES(cycles) g_cycles_elapsed += (cycles)
-//#define DELAY_CYCLES(cycles)
-//#define debug_log
+//#define DELAY_CYCLES(cycles) g_cycles_elapsed += (cycles)
 
 u8 *g_bios;
 u8 *g_ram;
@@ -34,6 +32,24 @@ enum address_mapping
     SPU_REVERB_START = 0x1f801dc0,
     CDROM_START = 0x1f801800
 };
+
+#define RAM_READ_DELAY 4
+#define SPU_READ_DELAY 18
+#define COUNTERS_READ_DELAY 2
+#define SIO_READ_DELAY 3
+
+u32 get_read_delay(u32 addr)
+{
+    if (addr < 0x800000)
+        return RAM_READ_DELAY;
+    else if (addr >= 0x1f801100 && addr < 0x1f801130)
+        return COUNTERS_READ_DELAY;
+    else if (addr >= 0x1f801c00 && addr < 0x1f801fff)
+        return SPU_READ_DELAY;
+    else if (addr >= 0x1f801040 && addr < 0x1f801050)
+        return SIO_READ_DELAY;
+    return 0;
+}
 
 static u32 io_read32(u32 addr)
 {
@@ -76,17 +92,14 @@ static u16 io_read16(u32 addr)
     default:
         if (addr >= 0x1f801100 && addr < 0x1f801130)
         {
-            DELAY_CYCLES(2);
             return counters_read(addr & 0x3f);
         }
         else if (addr >= 0x1f801c00 && addr < 0x1f801fff)
         {
-            DELAY_CYCLES(18);
             return spu_read(addr & 0x3ff);
         }
         else if (addr >= 0x1f801040 && addr < 0x1f801050)
         {
-            DELAY_CYCLES(3);
             return sio_read(addr & 0x1f);
         }
         debug_log("Unknown 16-bit read address: %08x\n", addr);
@@ -194,7 +207,6 @@ void *mem_read(u32 addr)
     void *result = NULL;
     if (addr < 0x800000)
     {
-        DELAY_CYCLES(4);
         result = g_ram + (addr & 0x1fffff);
     }
     else if (addr >= 0x1f000000 && addr < 0x1f800000)
@@ -207,7 +219,6 @@ void *mem_read(u32 addr)
     }
     else if (addr >= 0x1fc00000 && addr < 0x1fc80000)
     {
-        //DELAY_CYCLES(15);
         result = g_bios + (addr & 0x7ffff);
     }
     return result;
@@ -238,6 +249,7 @@ void *mem_write(u32 addr)
 u32 load32(u32 vaddr)
 {
     u32 addr = vaddr & 0x1fffffff;
+    g_cycles_elapsed += get_read_delay(addr);
     void *mem = mem_read(addr);
 
     if (mem)
@@ -253,6 +265,7 @@ u32 load32(u32 vaddr)
 u16 load16(u32 vaddr)
 {
     u32 addr = vaddr & 0x1fffffff;
+    g_cycles_elapsed += get_read_delay(addr);
     void *mem = mem_read(addr);
 
     if (mem)
@@ -268,6 +281,7 @@ u16 load16(u32 vaddr)
 u8 load8(u32 vaddr)
 {
     u32 addr = vaddr & 0x1fffffff;
+    g_cycles_elapsed += get_read_delay(addr);
     void *mem = mem_read(addr);
 
     if (mem)

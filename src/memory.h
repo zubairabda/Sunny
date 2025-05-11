@@ -8,6 +8,8 @@ extern u8 *g_ram;
 extern u8 *g_scratch;
 extern u8 *g_peripheral;
 
+u32 get_read_delay(u32 addr);
+
 void *mem_read(u32 addr);
 void *mem_write(u32 addr);
 

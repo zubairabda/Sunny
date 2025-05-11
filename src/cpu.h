@@ -176,6 +176,7 @@ inline u64 sign_extend32_64(u64 val)
 }
 
 void cpu_init(void);
+u32 fetch_instruction(u32 pc);
 u64 execute_instruction(u64 min_cycles);
 void set_interrupt(u32 interrupt, s32 cycles_late);
 

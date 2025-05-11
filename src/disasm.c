@@ -135,14 +135,15 @@ static const char* secondary_op_str_table[] =
     "sltu"
 };
 
-void instr_to_string(instruction ins, char *buffer, u32 len)
+const char *instr_to_string(u32 i, char *buffer, u32 len)
 {
+    instruction ins = {.value = i};
     const char *op;
     u8 primary = ins.op;
     if (ins.value == 0)
     {
-        snprintf(buffer, len, "nop");
-        return;
+        snprintf(buffer, len, "");
+        return "nop";
     }
     if (ins.op) 
     {
@@ -167,31 +168,32 @@ void instr_to_string(instruction ins, char *buffer, u32 len)
                 else
                     bcond = "bltz";
             }
-            snprintf(buffer, len, "%s $%s, %+d", bcond, register_names[ins.rs], sign_extend16_32(immediate) << 2);
+            snprintf(buffer, len, "$%s, %+d", register_names[ins.rs], sign_extend16_32(immediate) << 2);
+            return bcond;
         }
         else if ((primary & 0x3e) == 0x2)
         {
-            snprintf(buffer, len, "%s %#x", op, (ins.value & 0x3ffffff) << 2);
+            snprintf(buffer, len, "%#x", (ins.value & 0x3ffffff) << 2);
         }
         else if ((primary & 0x3e) == 0x4)
         {
-            snprintf(buffer, len, "%s $%s, $%s, %+d", op, register_names[ins.rs], register_names[ins.rt], sign_extend16_32(immediate) << 2);
+            snprintf(buffer, len, "$%s, $%s, %+d", register_names[ins.rs], register_names[ins.rt], sign_extend16_32(immediate) << 2);
         }
         else if ((primary & 0x3e) == 0x6)
         {
-            snprintf(buffer, len, "%s $%s, %+d", op, register_names[ins.rs], sign_extend16_32(immediate) << 2);
+            snprintf(buffer, len, "$%s, %+d", register_names[ins.rs], sign_extend16_32(immediate) << 2);
         }
         else if (primary == LUI)
         {
-            snprintf(buffer, len, "%s $%s, %#x", op, register_names[ins.rt], immediate);
+            snprintf(buffer, len, "$%s, %#x", register_names[ins.rt], immediate);
         }
         else if ((primary & 0x38) == 0x8)
         {
-            snprintf(buffer, len, "%s $%s, $%s, %#x", op, register_names[ins.rt], register_names[ins.rs], immediate);
+            snprintf(buffer, len, "$%s, $%s, %#x", register_names[ins.rt], register_names[ins.rs], immediate);
         }
         else if ((primary & 0x30) == 0x20)
         {
-            snprintf(buffer, len, "%s $%s, %+d($%s)", op, register_names[ins.rt], sign_extend16_32(immediate), register_names[ins.rs]);
+            snprintf(buffer, len, "$%s, %+d($%s)", register_names[ins.rt], sign_extend16_32(immediate), register_names[ins.rs]);
         }
         else
         {
@@ -204,31 +206,32 @@ void instr_to_string(instruction ins, char *buffer, u32 len)
         op = secondary_op_str_table[secondary];
         if ((secondary & (1 << 5)))
         {
-            snprintf(buffer, len, "%s $%s, $%s, $%s", op, register_names[ins.rd], register_names[ins.rs], register_names[ins.rt]);
+            snprintf(buffer, len, "$%s, $%s, $%s", register_names[ins.rd], register_names[ins.rs], register_names[ins.rt]);
         }
         else if ((secondary & (0xf << 2)) == 0x4)
         {
-            snprintf(buffer, len, "%s $%s, $%s, $%s", op, register_names[ins.rd], register_names[ins.rt], register_names[ins.rs]);
+            snprintf(buffer, len, "$%s, $%s, $%s", register_names[ins.rd], register_names[ins.rt], register_names[ins.rs]);
         }
         else if ((secondary & (0xf << 2)) == 0x0)
         {
-            snprintf(buffer, len, "%s $%s, $%s, %#x", op, register_names[ins.rd], register_names[ins.rt], ins.sa);
+            snprintf(buffer, len, "$%s, $%s, %#x", register_names[ins.rd], register_names[ins.rt], ins.sa);
         }
         else if (secondary == JR || (secondary & 0x3d) == 0x11)
         {
-            snprintf(buffer, len, "%s $%s", op, register_names[ins.rs]);
+            snprintf(buffer, len, "$%s", register_names[ins.rs]);
         }
         else if (secondary == JALR)
         {
-            snprintf(buffer, len, "%s $%s, $%s", op, register_names[ins.rd], register_names[ins.rs]);
+            snprintf(buffer, len, "$%s, $%s", register_names[ins.rd], register_names[ins.rs]);
         }
         else if ((secondary & 0x3e) == 0xc)
         {
-            snprintf(buffer, len, "%s", op);
+            snprintf(buffer, len, "");
         }
         else
         {
             snprintf(buffer, len, "unknown");
         }
     }
+    return op;
 }

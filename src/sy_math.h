@@ -106,6 +106,12 @@ inline vec2i v2ifromu32(u32 v)
     return result;
 }
 
+inline rect2 r2(s32 x1, s32 y1, s32 x2, s32 y2)
+{
+    rect2 result = {.left = x1, .top = y1, .right = x2, .bottom = y2};
+    return result;
+}
+
 inline int max3(int a, int b, int c)
 {
     int x = b > c ? b : c;

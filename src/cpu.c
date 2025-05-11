@@ -22,7 +22,6 @@ static inline reg_tuple set_register(u32 index, u32 value)
     return load;
 }
 
-u32 fetch_instruction(u32 pc); // TODO: temp
 static inline void handle_exception(enum exception_code cause)
 {
 #if 0
@@ -130,7 +129,13 @@ void cpu_init(void)
     g_cpu.cop0[15] = 0x2; // PRID
 }
 
-static u32 fetch_instruction(u32 pc)
+u32 peek_instruction(u32 pc)
+{
+    u32 addr = pc & 0x1fffffff;
+    return 0;
+}
+
+u32 fetch_instruction(u32 pc)
 {
     u32 addr = pc & 0x1fffffff;
     u8 region = pc >> 29;
@@ -159,7 +164,7 @@ static u32 fetch_instruction(u32 pc)
     }
     case 0x5: // KSEG1
     {
-        return *(u32 *)mem_read(addr);
+        return *(u32 *)mem_read(addr); // TODO:
     }
     INVALID_CASE;
     }
@@ -176,7 +181,7 @@ u64 execute_instruction(u64 min_cycles)
     while (g_cycles_elapsed < target_cycles)
     {
         ++g_cycles_elapsed;
-        //g_cycles_elapsed += 2;
+
         log_tty();
 
         if (g_cpu.pc & 0x3) // NOTE: this seems to fix amidog exception tests but im not sure its needed

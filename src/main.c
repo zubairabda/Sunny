@@ -65,6 +65,13 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_LBUTTONUP: debug_ui_mouseup(DEBUG_UI_MOUSE_LEFT); break;
     case WM_RBUTTONUP: debug_ui_mouseup(DEBUG_UI_MOUSE_RIGHT); break;
     case WM_MBUTTONUP: debug_ui_mouseup(DEBUG_UI_MOUSE_MIDDLE); break;
+    case WM_MOUSEWHEEL:
+    {
+        s32 amt = ((s32)wParam) >> 16;
+        amt /= WHEEL_DELTA;
+        debug_ui_mousewheel(amt);
+        break;
+    }
     default:
         result = DefWindowProcA(hwnd, msg, wParam, lParam);
         break;
@@ -186,6 +193,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     } state = SYSTEM_STATE_STOPPED;
 
     b8 show_voices = false;
+    b8 show_debug = false;
 
     if (bios.memory)
     {
@@ -210,14 +218,63 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         int window_h = client.bottom - client.top;
 
         debug_ui_begin(0.0f, window_w, window_h);
+        
+        if (debug_ui_begin_window("Menu", r2(100, 100, 300, 400), 0, NULL))
+        {
+            if (debug_ui_button("Pause"))
+            {
+                if (state == SYSTEM_STATE_PAUSED)
+                    state = SYSTEM_STATE_RUNNING;
+                else if (state == SYSTEM_STATE_RUNNING)
+                    state = SYSTEM_STATE_PAUSED;
+            }
 
-        debug_ui_push_layout(HORIZONTAL, 0, 0);
+            if (debug_ui_button("Debug")) { show_debug = true; }
 
-        if (debug_ui_button("Voice")) { show_voices = !show_voices; }
+            if (debug_ui_button("Voice")) { show_voices = !show_voices; }
+
+            if (debug_ui_button("Load"))
+            {
+                debug_ui_open_file_dialog("Image Select");
+            }
+
+            if (debug_ui_button("Reset"))
+            {
+                if (bios.memory)
+                {
+                    psx_reset();
+                    state = SYSTEM_STATE_RUNNING;
+                }
+            }
+
+            debug_ui_end_window();
+        }
+
+        if (debug_ui_begin_window("Debugger", r2(0, 0, 400, 200), 0, &show_debug))
+        {
+            if (debug_ui_button("Step"))
+            {
+                if (state == SYSTEM_STATE_PAUSED)
+                    psx_step();
+            }
+            char buf[256];
+            char param[64];
+            u32 addr = g_cpu.pc;
+            for (int i = 0; i < 16; ++i)
+            {
+                const char *op = instr_to_string(fetch_instruction(addr), param, sizeof(param));
+                snprintf(buf, sizeof(buf), "%08X    %s %s", addr, op, param);
+                //printf("%s\n", buf);
+                debug_ui_label(buf);
+                addr += 4;
+            }
+            
+            debug_ui_end_window();
+        }
 
         if (show_voices)
         {
-            debug_ui_push_layout(VERTICAL, 0, 20);
+            debug_ui_push_layout(DIR_VERTICAL, 0, 20);
             char buf[256];
             for (int i = 0; i < 24; ++i)
             {
@@ -228,19 +285,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
                 //debug_ui_layout_row();
             }
             debug_ui_pop_layout();
-        }
-
-        if (debug_ui_button("Pause")) 
-        {
-            if (state == SYSTEM_STATE_PAUSED)
-                state = SYSTEM_STATE_RUNNING;
-            else if (state == SYSTEM_STATE_RUNNING)
-                state = SYSTEM_STATE_PAUSED; 
-        }
-
-        if (debug_ui_button("Load"))
-        {
-            debug_ui_open_file_dialog("Image Select");
         }
 
         const char *file_ext[] = {".exe", ".bin", ".cue"};
@@ -259,17 +303,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
                 }
             }
         }
-
-        if (debug_ui_button("Reset"))
-        {
-            if (bios.memory)
-            {
-                psx_reset();
-                state = SYSTEM_STATE_RUNNING;
-            }
-        }
-
-        debug_ui_pop_layout();
 
         debug_ui_end();
 

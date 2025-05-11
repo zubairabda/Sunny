@@ -117,8 +117,7 @@ static void update_display(void)
                 for (int x = x1; x < x2; ++x)
                 {
                     u32 color = quad->color;
-                    u32 alpha = (color & 0xff000000) >> 24;
-
+                    //u32 alpha = (color & 0xff000000) >> 24;
                     pixels[x + (width * y)] = color;
                 }
             }
@@ -146,27 +145,50 @@ static void update_display(void)
                     pen.x += glyph.advance;
                     continue;
                 }
+
+                rect2 dest = {
+                    pen.x + glyph.left,
+                    pen.y - glyph.top,
+                    pen.x + glyph.left + glyph.w,
+                    pen.y + glyph.h - glyph.top,
+                };
+
+                rect2 src = {
+                    glyph.x,
+                    glyph.y,
+                    glyph.x + glyph.w,
+                    glyph.y + glyph.h
+                };
                 
-                int y1 = pen.y - glyph.top;
-                int y2 = pen.y + glyph.h - glyph.top;
+                int offset_x = 0;
+                int offset_y = 0;
+                
+                if (dest.left < clip_rect.left)
+                    offset_x = clip_rect.left - dest.left;
 
-                int x1 = pen.x + glyph.left;
-                int x2 = pen.x + glyph.left + glyph.w;
+                if (dest.top < clip_rect.top)
+                    offset_y = clip_rect.top - dest.top;
 
-                if (x1 < clip_rect.left)
-                    x1 = clip_rect.left;
-                if (y1 < clip_rect.top)
-                    y1 = clip_rect.top;
-                if (x2 > clip_rect.right)
-                    x2 = clip_rect.right;
-                if (y2 > clip_rect.bottom)
-                    y2 = clip_rect.bottom;
+                if (dest.right > clip_rect.right)
+                    dest.right = clip_rect.right;
 
-                for (int y = glyph.y, dst_y = y1; dst_y < y2; ++y, ++dst_y)
+                if (dest.bottom > clip_rect.bottom)
+                    dest.bottom = clip_rect.bottom;
+
+                int right = dest.right - dest.left;
+                int bottom = dest.bottom - dest.top;
+
+                for (int y = offset_y; y < bottom; ++y)
                 {
-                    for (int x = glyph.x, dst_x = x1; dst_x < x2; ++x, ++dst_x)
+                    for (int x = offset_x; x < right; ++x)
                     {
-                        u32 alpha = atlas[x + (ATLAS_WIDTH * y)];
+                        u32 src_x = src.left + x;
+                        u32 src_y = src.top + y;
+
+                        u32 alpha = atlas[src_x + (ATLAS_WIDTH * src_y)];
+
+                        u32 dst_x = dest.left + x;
+                        u32 dst_y = dest.top + y;
 
                         u32 dst = dst_x + (width * dst_y);
                         u32 c_dst = pixels[dst];

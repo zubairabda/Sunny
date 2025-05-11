@@ -23,7 +23,8 @@ enum debug_ui_command_type
 {
     DEBUG_UI_COMMAND_SET_CLIP,
     DEBUG_UI_COMMAND_QUAD,
-    DEBUG_UI_COMMAND_TEXT
+    DEBUG_UI_COMMAND_TEXT,
+    DEBUG_UI_COMMAND_JUMP
 };
 
 struct debug_ui_command_header
@@ -51,31 +52,22 @@ struct debug_ui_command_text
     vec2i pos;
 };
 
-typedef enum debug_ui_layout_type
+struct debug_ui_command_jump
 {
-    HORIZONTAL,
-    VERTICAL
-} debug_ui_layout_type;
-
-struct debug_ui_layout
-{
-    debug_ui_layout_type type;
-    int start_x;
-    int start_y;
-    int at_x;
-    int at_y;
-    int row_pad;
-    int column_pad;
-    int row_size;
+    struct debug_ui_command_header header;
+    u32 dst;
 };
+
+typedef enum
+{
+    DIR_HORIZONTAL,
+    DIR_VERTICAL
+} debug_ui_direction;
 
 void debug_ui_init(struct memory_arena *arena);
 
 void debug_ui_begin(f32 dt, u32 screen_w, u32 screen_h);
 void debug_ui_end(void);
-
-void debug_ui_push_layout(debug_ui_layout_type type, int x, int y);
-void debug_ui_pop_layout(void);
 
 void debug_ui_reset_command_ptr(void);
 struct debug_ui_command_header *debug_ui_next_command(void);
@@ -86,13 +78,24 @@ void debug_ui_mousemove(int x, int y);
 void debug_ui_mousedown(int button);
 void debug_ui_mouseup(int button);
 
-void debug_ui_quad(int x, int y, int w, int h);
+void debug_ui_mousewheel(int delta);
+
+void debug_ui_quad(u32 color, int x, int y, int w, int h);
 
 void debug_ui_push_clip_rect(rect2 r);
 void debug_ui_pop_clip_rect(void);
 
+void debug_ui_push_layout(debug_ui_direction dir, s32 x, s32 y);
+void debug_ui_pop_layout(void);
+
+void debug_ui_push_id(u32 id);
+void debug_ui_pop_id(void);
+
 b8 debug_ui_button(const char *text);
 void debug_ui_label(const char *label);
+
+b8 debug_ui_begin_window(const char *title, rect2 rect, u32 flags, b8 *p_open);
+void debug_ui_end_window(void);
 
 void debug_ui_open_file_dialog(const char *title);
 b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file_types, struct debug_ui_file_dialog_result *out_file);

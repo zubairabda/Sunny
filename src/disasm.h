@@ -3,6 +3,6 @@
 
 #include "cpu.h"
 
-void instr_to_string(instruction ins, char *buffer, u32 len);
+const char *instr_to_string(u32 op, char *buffer, u32 len);
 
 #endif /* DISASM_H */
