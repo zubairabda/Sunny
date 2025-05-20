@@ -15,7 +15,6 @@
 enum
 {
     PANEL_FLAG_FIRST_FRAME = 0x1,
-    PANEL_FLAG_IS_ENABLED = 0x2
 };
 
 struct debug_ui_panel
@@ -52,14 +51,12 @@ struct debug_ui_state
     u8 mouse_buttons; /* state of buttons bits: 0 - left, 1 - right, 2 - middle */
     u8 mouse_pressed; /* mouse button went down */
     u8 key_pressed;
-    b8 dialog_is_open; // is a dialog currently open; blocks other dialogs from opening
     f32 dt;
     vec2u screen_dim;
     u8 *commands;
     u32 commands_at;
     u32 next_command;
     u64 frame_counter;
-    char file_dialog_dir[MAX_UI_FILE_PATH];
     struct debug_ui_panel panels[MAX_UI_PANELS];
     struct debug_ui_panel *current;
     struct debug_ui_panel *sentinel;
@@ -125,13 +122,9 @@ static struct debug_ui_panel *update_panel_states(void)
             {
                 result = current;
             }
-#if 0
-            if (current->next == g_debug_ui.sentinel)
-                current->end_jmp->dst = g_debug_ui.commands_at;
-            else
-                current->end_jmp->dst = current->next->commands;
-#endif
-            current->end_jmp->dst = current->next->commands;
+
+            if (current->prev != g_debug_ui.sentinel) // TODO: remove
+                current->prev->end_jmp->dst = current->commands;
         }
 
         current = current->next;
@@ -141,7 +134,7 @@ static struct debug_ui_panel *update_panel_states(void)
 
 void debug_ui_init(struct memory_arena *arena)
 {
-    g_debug_ui.commands = push_arena(arena, KILOBYTES(256));
+    g_debug_ui.commands = push_arena(arena, KILOBYTES(512));
     SY_ASSERT(g_debug_ui.commands);
     g_debug_ui.sentinel = &g_debug_ui.panels[0];
     g_debug_ui.sentinel->next = g_debug_ui.sentinel->prev = g_debug_ui.sentinel;
@@ -281,7 +274,14 @@ void debug_ui_mousewheel(int delta)
     g_debug_ui.mouse_wheel_delta = delta;
 }
 
-static vec2i layout_next_pos(s32 widget_width, s32 widget_height)
+vec2i debug_ui_next_pos(void)
+{
+    struct debug_ui_layout *layout = &g_debug_ui.layout_stack[g_debug_ui.layout_stack_index - 1];
+    vec2i result = {.data = {layout->at_x, layout->at_y}};
+    return result;
+}
+
+static vec2i advance_layout(s32 width, s32 height)
 {
     struct debug_ui_layout *layout = &g_debug_ui.layout_stack[g_debug_ui.layout_stack_index - 1];
     vec2i result = {.data = {layout->at_x, layout->at_y}};
@@ -289,10 +289,10 @@ static vec2i layout_next_pos(s32 widget_width, s32 widget_height)
     switch (layout->dir)
     {
     case DIR_HORIZONTAL:
-        layout->at_x += widget_width;
+        layout->at_x += width;
         break;
     case DIR_VERTICAL:
-        layout->at_y += widget_height;
+        layout->at_y += height;
         break;
     }
 
@@ -382,6 +382,18 @@ static enum debug_ui_button_interaction_result debug_ui_button_interaction(u32 i
     return result;
 }
 
+enum
+{
+    BUTTON_FLAG_INACTIVE = 0x1,
+    BUTTON_FLAG_ACTIVATE_ON_PRESS = 0x2,
+    BUTTON_FLAG_USE_SIZE = 0x4
+};
+
+b8 debug_ui_button_ex(const char *text, u32 flags)
+{
+    return false;
+}
+
 b8 debug_ui_button(const char *text)
 {
     SY_ASSERT(g_debug_ui.current);
@@ -397,7 +409,7 @@ b8 debug_ui_button(const char *text)
     int button_w = text_width + padding.x * 2;
     int button_h = height + padding.y * 2;
 
-    vec2i pos = layout_next_pos(button_w, button_h);
+    vec2i pos = advance_layout(button_w, button_h);
 
     rect2 bounds = {pos.x, pos.y, pos.x + button_w, pos.y + button_h};
 
@@ -406,12 +418,21 @@ b8 debug_ui_button(const char *text)
     
     u32 id = debug_ui_get_id_from_string(text);
     enum debug_ui_button_interaction_result interaction = debug_ui_button_interaction(id, bounds);
-    result = (interaction == DEBUG_UI_BUTTON_RELEASED);
-    
-    if (interaction == DEBUG_UI_BUTTON_HOVERED)
+
+    switch (interaction)
+    {
+    case DEBUG_UI_BUTTON_HOVERED:
         color = 0x00646464;
-    else if (interaction == DEBUG_UI_BUTTON_PRESSED)
+        break;
+    case DEBUG_UI_BUTTON_PRESSED:
         color = 0x003f3f3f;
+        break;
+    case DEBUG_UI_BUTTON_RELEASED:
+        result = true;
+        break;
+    default:
+        break;
+    }
 
     struct debug_ui_command_quad *quad = push_command(DEBUG_UI_COMMAND_QUAD, sizeof(struct debug_ui_command_quad));
     quad->color = color;
@@ -431,7 +452,7 @@ void debug_ui_label(const char *label)
 {
     int len;
     int text_width = get_text_width(label, &len);
-    vec2i pos = layout_next_pos(text_width, 18);
+    vec2i pos = advance_layout(text_width, 18);
     struct debug_ui_command_text *txt = push_command(DEBUG_UI_COMMAND_TEXT, sizeof(struct debug_ui_command_text) + len + 1);
     //txt->pos = v2i(layout->at_x, layout->at_y + font_line_height);
     txt->pos.x = pos.x;
@@ -508,171 +529,6 @@ static struct debug_ui_panel *get_panel(u32 id)
     return result;
 }
 
-void debug_ui_open_file_dialog(const char *title)
-{
-    if (g_debug_ui.dialog_is_open)
-        return;
-    u32 id = fnv1a(title);
-    struct debug_ui_panel *panel = get_panel(id);
-    // TODO: reset scroll
-    panel->flags |= PANEL_FLAG_IS_ENABLED;
-    g_debug_ui.dialog_is_open = true;
-}
-
-b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file_types, struct debug_ui_file_dialog_result *out_file)
-{
-    u32 id = fnv1a(title);
-    struct debug_ui_panel *panel = get_panel(id);
-    if (g_debug_ui.key_pressed == 27)
-    {
-        panel->flags &= ~(PANEL_FLAG_IS_ENABLED);
-        g_debug_ui.dialog_is_open = false;
-    }
-
-    if (!(panel->flags & PANEL_FLAG_IS_ENABLED))
-        return false;
-
-    u32 window_w = g_debug_ui.screen_dim.x;
-    u32 window_h = g_debug_ui.screen_dim.y;
-
-    int panel_width = 0.65f * window_w;
-    int panel_height = 0.65f * window_h;
-    int panel_x = (window_w - panel_width) / 2;
-    int panel_y = (window_h - panel_height) / 2;
-    panel->pos.x = panel_x;
-    panel->pos.y = panel_y;
-    //struct debug_ui_layout layout = debug_ui_make_layout(panel_x, panel_y, 0, 5, 20);
-    
-    debug_ui_push_layout(DIR_VERTICAL, panel_x, panel_y);
-    rect2 dialog_rect = {panel_x, panel_y, panel_x + panel_width, panel_y + panel_height};
-    debug_ui_quad(0x343434, panel_x, panel_y, panel_width, panel_height);
-    debug_ui_label(title);
-    
-    debug_ui_push_layout(DIR_HORIZONTAL, panel_x + panel_width - 20, panel_y);
-    // TODO: ID collision resolver/combiner
-    if (debug_ui_button("X"))
-    {
-        panel->flags &= ~(PANEL_FLAG_IS_ENABLED);
-        g_debug_ui.dialog_is_open = false;
-    }
-    debug_ui_pop_layout();
-    //debug_ui_layout_row();
-
-    debug_ui_push_clip_rect(dialog_rect);
-
-    char *dir = g_debug_ui.file_dialog_dir;
-    u32 dir_len;
-    if (panel->flags & PANEL_FLAG_FIRST_FRAME)
-    {
-        u32 dir_len = GetCurrentDirectoryA(MAX_PATH, dir);
-        SY_ASSERT(dir_len <= (MAX_PATH - 3));
-        char *p = dir + dir_len;
-        *p++ = '\\';
-        *p++ = '*';
-        *p = '\0';
-    }
-    else
-    {
-        dir_len = (u32)strlen(dir) - 2;
-    }
-
-    if (debug_ui_button("../"))
-    {
-        u32 len = dir_len;
-        char *p = dir + len;
-        //--len;
-        SY_ASSERT(*p == '\\');
-        while (len--)
-        {
-            char *c = dir + len;
-            if (*c == '\\')
-            {
-                dir[len + 1] = '*';
-                dir[len + 2] = '\0';
-                dir_len = len;
-                break;
-            }
-        }
-        //printf("%s\n", dir);
-    }
-
-    b8 result = false;
-    
-    WIN32_FIND_DATAA data;
-    HANDLE find = FindFirstFileA(dir, &data);
-    SY_ASSERT(find != INVALID_HANDLE_VALUE);
-    do
-    {
-        char name[MAX_PATH];
-        b8 is_dir = false;
-        int file_type = -1;
-        const char *file;
-        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-        {
-            if ((strcmp(data.cFileName, ".") == 0) || (strcmp(data.cFileName, "..") == 0))
-                continue;
-            is_dir = true;
-            snprintf(name, ARRAYCOUNT(name), "%s/", data.cFileName);
-            file = &name[0];
-        }
-        else 
-        {
-            if (file_types)
-            {
-                for (u32 i = 0; i < num_file_types; ++i)
-                {
-                    if (string_ends_with_ignore_case(data.cFileName, file_types[i]))
-                    {
-                        file_type = i;
-                        break;
-                    }
-                }
-
-                if (file_type < 0)
-                    continue;
-            }
-            file = &data.cFileName[0];
-        }
-        
-        if (debug_ui_button(file))
-        {
-            if (is_dir)
-            {
-                // append folder to path
-                char *p = dir + dir_len + 1;
-                snprintf(p, MAX_UI_FILE_PATH - dir_len - 2, "%s\\*", data.cFileName);
-                dir_len = strlen(dir) - 2;
-            }
-            else
-            {
-                out_file->index = file_type;
-                
-                u32 path_len = dir_len + 1;
-                SY_ASSERT((path_len + strlen(data.cFileName)) < MAX_PATH);
-                memcpy(out_file->path, dir, path_len);
-                strcpy(out_file->path + path_len, data.cFileName);
-                result = true;
-                break;
-            }
-        }
-    } while (FindNextFileA(find, &data) != FALSE);
-    FindClose(find);
-
-    debug_ui_pop_clip_rect();
-
-    debug_ui_pop_layout();
-
-    if (result) 
-    {
-        panel->flags &= ~(PANEL_FLAG_IS_ENABLED);
-        g_debug_ui.dialog_is_open = false;
-    }
-
-    //g_debug_ui.current_panel = g_debug_ui.current_panel->prev;
-
-    return result;
-}
-
 static void bring_panel_to_front(struct debug_ui_panel *panel)
 {
     panel->next->prev = panel->prev;
@@ -706,7 +562,6 @@ b8 debug_ui_begin_window(const char *title, rect2 rect, u32 flags, b8 *p_open)
 
     if (window->flags & PANEL_FLAG_FIRST_FRAME)
     {
-        window->flags |= PANEL_FLAG_IS_ENABLED;
         window->pos.x = rect.left;
         window->pos.y = rect.top;
         window->size.x = rect.right;
@@ -746,7 +601,7 @@ b8 debug_ui_begin_window(const char *title, rect2 rect, u32 flags, b8 *p_open)
 
     if (p_open)
     {
-        debug_ui_push_layout(DIR_HORIZONTAL, window_rect.right - 13, title_bar_rect.top);
+        debug_ui_push_layout(DIR_HORIZONTAL, window_rect.right - 17, title_bar_rect.top);
         if (debug_ui_button("X"))
         {
             *p_open = false;
@@ -867,4 +722,10 @@ void debug_ui_end_window(void)
     debug_ui_pop_layout();
     debug_ui_pop_id();
     g_debug_ui.current = NULL;
+}
+
+vec2i debug_ui_get_window_size(void)
+{
+    SY_ASSERT(g_debug_ui.current);
+    return g_debug_ui.current->size;
 }

@@ -6,12 +6,6 @@
 
 // extern b8 g_update_ui; would be useful if we stored the UI as a seperate texture
 
-struct debug_ui_file_dialog_result
-{
-    int index;
-    char path[280];
-};
-
 enum debug_ui_mouse_button
 {
     DEBUG_UI_MOUSE_LEFT = 0x1,
@@ -88,6 +82,8 @@ void debug_ui_pop_clip_rect(void);
 void debug_ui_push_layout(debug_ui_direction dir, s32 x, s32 y);
 void debug_ui_pop_layout(void);
 
+vec2i debug_ui_next_pos(void);
+
 void debug_ui_push_id(u32 id);
 void debug_ui_pop_id(void);
 
@@ -97,7 +93,6 @@ void debug_ui_label(const char *label);
 b8 debug_ui_begin_window(const char *title, rect2 rect, u32 flags, b8 *p_open);
 void debug_ui_end_window(void);
 
-void debug_ui_open_file_dialog(const char *title);
-b8 debug_ui_file_dialog(const char *title, const char **file_types, u32 num_file_types, struct debug_ui_file_dialog_result *out_file);
+vec2i debug_ui_get_window_size(void);
 
 #endif /* DEBUG_UI_H */

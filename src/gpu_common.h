@@ -36,4 +36,12 @@ typedef union
     u32 vertex;
 } vertex_attrib;
 
+inline u16 color16from24(u32 color)
+{
+    u16 red = ((color >> 3) & 0x1f);
+    u16 green = ((color >> 11) & 0x1f);
+    u16 blue = ((color >> 19) & 0x1f);
+    return (blue << 10) | (green << 5) | red;
+}
+
 #endif /* GPU_COMMON_H */

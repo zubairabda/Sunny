@@ -132,9 +132,8 @@ static void process_dma(u32 channel)
                 }
             }
             addr += step;
-            //printf("sync data: %08x\n", word);
         }
-
+        port->madr = addr; // update address in syncmode=1
         break;
     }
     case 2: // linked-list
@@ -232,6 +231,7 @@ void dma_write(u32 offset, u32 value)
             // NOTE: Apparently, transfers dont happen to RAM when bit 23 is set, which makes sense, so we can
             // I guess do the transfer, then just skip words when the address has that bit set
             g_dma.ports[channel].madr = value & 0xffffff;
+            //debug_log("[DMA] set MADR for ch %d to %08x\n", channel, g_dma.ports[channel].madr);
             break;
         case 0x4:
             *(((u32 *)(g_dma.ports + channel)) + 1) = value;
@@ -248,9 +248,10 @@ void dma_write(u32 offset, u32 value)
 
             if (value & 0x1000000 && (g_dma.control & (0x8 << (4 * channel))))
             {
+                debug_log("[DMA] start transfer for ch %d\n", channel);
                 if (channel == CH_MDECOUT)
                 {
-                    g_dma.ports[channel].control &= ~(0x1000000);
+                    //g_dma.ports[channel].control &= ~(0x1000000);
                     mdec_on_dma();
                 }
                 else

@@ -36,7 +36,8 @@ static inline void fill_vram(u32 *commands)
         dst += VRAM_WIDTH;
     }
 }
-
+#include "stream.h" // TODO: temp
+static int s_copy_count = 0;
 static inline void copy_cpu_to_vram(void)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
@@ -44,6 +45,11 @@ static inline void copy_cpu_to_vram(void)
     u16 *at = g_gpu.copy_buffer;
     u16 *dst = (u16 *)renderer->vram + (g_gpu.load.x + (VRAM_WIDTH * g_gpu.load.y));
     u16 width = g_gpu.load.width;
+#if 0
+    char fname[64];
+    snprintf(fname, sizeof(fname), "mdec/copy#%d.bmp", s_copy_count++);
+    write_bmp(g_gpu.load.width, g_gpu.load.height, (u8 *)g_gpu.copy_buffer, fname);
+#endif
     // TODO: wrapping
     for (u32 i = 0; i < g_gpu.load.height; ++i)
     {

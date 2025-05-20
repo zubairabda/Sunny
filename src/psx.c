@@ -17,7 +17,7 @@ b8 psx_load_exe(platform_file *file)
     platform_read_file(file, 0, buffer, fsize);
 
     u8 *fp = buffer;
-    if (memcmp(fp, "PS-X EXE", 8))
+    if (memcmp(fp, "PS-X EXE", 8) != 0)
     {
         return false;
     }
@@ -100,6 +100,11 @@ void psx_reset(void)
     //psx_load_image();
 }
 
+b8 psx_can_boot(void)
+{
+    return (g_bios != NULL); // TODO: validate bios?
+}
+
 void psx_init(struct memory_arena *arena, void *bios)
 {
     cpu_init();
@@ -151,16 +156,15 @@ void psx_init(struct memory_arena *arena, void *bios)
 
 void psx_run(void)
 {
-    // TODO: cycles_ran does nothing
     u64 tick_count = get_tick_count();
 
-    u64 cycles_ran = execute_instruction(tick_count);
+    execute_instruction(tick_count);
 
-    tick_events(cycles_ran);
+    tick_events();
 }
 
 void psx_step(void)
 {
-    u64 cycles_ran = execute_instruction(1);
-    tick_events(cycles_ran);
+    execute_instruction(1);
+    tick_events();
 }

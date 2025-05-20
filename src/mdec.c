@@ -1,6 +1,11 @@
 #include "mdec.h"
 #include "dma.h"
 #include "memory.h"
+#include "gpu_common.h"
+
+#include <math.h>
+
+#define DATA_FIFO_SIZE 32768
 
 typedef struct
 {
@@ -21,13 +26,16 @@ static mdec_status stat;
 static u32 parameters_left;
 static u32 parameter_fifo[65536];
 static u32 parameter_fifo_count;
+static u32 halfwords;
+static u32 decode_index;
 static u32 command;
 
 static b8 transfer_pending;
 
-static u32 data_fifo[65536];
-static u32 data_fifo_size;
-static u32 data_fifo_index; // used for io reads
+static u32 data_fifo[DATA_FIFO_SIZE];
+static u32 data_fifo_tail;  // 
+static u32 data_fifo_head;  // measured in words
+static u32 data_fifo_count; // 
 
 static u8 iq_table[128]; // luminance + color
 static s16 scale_table[64];
@@ -40,7 +48,8 @@ void mdec_reset(u32 flags)
         stat.data_out_fifo_empty = 1;
         parameter_fifo_count = 0;
         parameters_left = 0;
-        data_fifo_index = data_fifo_size = 0;
+        data_fifo_head = data_fifo_tail = 0;
+        data_fifo_count = 0;
     }
 
     if (flags & MDEC_ENABLE_DATAOUT)
@@ -69,15 +78,15 @@ enum
     MDEC_DEPTH_15
 };
 
-static u32 decode_index;
+#define MDEC_DATA_END 0xFE00
 
-u16 sign_extend10_16(u16 value)
+s32 sign_extend10_32(u32 value)
 {
-    s16 temp = (s16)value;
-    return (temp << 6) >> 6;
+    s32 temp = (s32)(value << 22);
+    return (temp >> 22);
 }
 
-u16 rl_clamp11(s16 value)
+s32 rl_clamp11(s32 value)
 {
     if (value > 0x3ff)
         return 0x3ff;
@@ -110,6 +119,7 @@ static u8 zagzig[64] =
     53, 60, 61, 54, 47, 55, 62, 63
 };
 
+// used for fast idct
 static f32 scalefactor[8] =
 {
     1.000000000, 1.387039845, 1.306562965, 1.175875602,
@@ -150,7 +160,7 @@ static void idct_core(u16 *blk)
                 s32 sum = 0;
                 for (u8 z = 0; z < 8; ++z)
                 {
-                    sum += src[y + z * 8] * (scale_table[x + z * 8] / 8);
+                    sum += (s16)src[y + z * 8] * (s32)(scale_table[x + z * 8] / 8);
                 }
                 dst[x + y * 8] = (sum + 0xfff) / 0x2000;
             }
@@ -161,46 +171,48 @@ static void idct_core(u16 *blk)
     }
 }
 
-static void rl_decode_block(u16 *blk, u8 *iq) 
+static b8 rl_decode_block(u16 *blk, u8 *iq) 
 {
     u16 *data = (u16 *)parameter_fifo;
     memset(blk, 0, sizeof(u16) * 64);
 
-    for (;;)
+    do
     {
-        u16 dct = data[decode_index];
-        decode_index += 2;
-        if (dct == 0xfe00) // padding
+        u16 dct = data[decode_index++]; // the first value is the DC
+        if (dct == MDEC_DATA_END) // padding value
             continue;
         
         u8 q = (dct >> 10) & 0x3f;
         u16 dc = dct & 0x3ff;
-        u16 val = sign_extend10_16(dc) * iq[0];
+        s32 val = sign_extend10_32(dc) * iq[0];
         u8 k = 0;
         while (k < 64)
         {
             if (q == 0)
             {
-                val = sign_extend10_16(dc) * 2;
+                val = sign_extend10_32(dc) * 2;
             }
             val = rl_clamp11(val);
             if (q > 0)
                 blk[zagzig[k]] = val;
             else if (q == 0)
                 blk[k] = val;
-            u16 rle = data[decode_index];
-            decode_index += 2;
-            if (rle == 0xfe00) // end code
-                break;
-            k = k + ((rle >> 10) & 0x3f) + 1;
-            val = (sign_extend10_16(rle & 0x3ff) * iq[k] * q + 4) / 8;
+            u16 rle = data[decode_index++];
+            //if (rle == 0xfe00)
+            //    break;
+            u16 ac = rle & 0x3ff;
+            u16 len = (rle >> 10) & 0x3f;
+            k = k + len + 1;
+            val = (s32)(sign_extend10_32(ac) * iq[k] * q + 4) / 8;
         }
         idct_core(blk);
-        break;
-    }
+        return true;
+    } while (decode_index < halfwords);
+
+    return false;
 }
 
-static u8 clamp8(s16 value)
+static u8 clamp8(s32 value)
 {
     if (value > 127)
         return 127;
@@ -209,80 +221,117 @@ static u8 clamp8(s16 value)
     return value;
 }
 
-static void yuv_to_rgb15(u16 *dst, u16 *crblk, u16 *cbblk, u16 *yblk, u8 xx, u8 yy)
+static void yuv_to_rgb15(u16 *dst, u16 *crblk, u16 *cbblk, u16 *yblk, u8 xx, u8 yy, b8 signed_output)
 {
     for (u8 y = 0; y < 8; ++y)
     {
         for (u8 x = 0; x < 8; ++x)
         {
-            u16 r = *(crblk + ((x + xx) / 2) + ((y + yy) / 2) * 8);
-            u16 b = *(cbblk + ((x + xx) / 2) + ((y + yy) / 2) * 8);
-            u16 g = (-0.3437f * b) + (-0.7143f * r);
-            r = (f32)r * 1.402f;
-            b = (f32)b * 1.772f;
-            u16 Y = *(yblk + x + y * 8);
+            s16 cr = *(crblk + ((x + xx) / 2) + ((y + yy) / 2) * 8);
+            s16 cb = *(cbblk + ((x + xx) / 2) + ((y + yy) / 2) * 8);
+            u32 g = (-0.3437f * cb) + (-0.7143f * cr);
+            u32 r = cr * 1.402f;
+            u32 b = cb * 1.772f;
+            s16 Y = *(yblk + x + y * 8);
             r = clamp8(r + Y);
             g = clamp8(g + Y);
             b = clamp8(b + Y);
+            #if 0
             u16 red = (r >> 3) & 0x1f;
             u16 green = (g >> 3) & 0x1f;
             u16 blue = (b >> 3) & 0x1f;
             u16 result = r | (g << 5) | (b << 10);
-            dst[(x + xx) + (y + yy) * 16] = result;
+            #else
+            u32 result = r | (g << 8) | (b << 16);
+            result ^= (0x808080 * !signed_output);
+            #endif
+            dst[(x + xx) + (y + yy) * 16] = color16from24(result);
         }
     }
 }
 
-void mdec_on_dma(void)
+static void mdec_decode(void)
 {
-    if (stat.data_out_req)
-    {
-        if (!stat.data_out_fifo_empty)
-        {
-            // memcpy data to ram
-            u32 dst = g_dma.ports[CH_MDECOUT].madr;
-            // TODO: reorder blocks
-            memcpy(g_ram + dst, data_fifo, data_fifo_size);
-            stat.data_out_fifo_empty = 1;
-        }
-        else
-        {
-            transfer_pending = true; // TODO: assumes software won't write 0 to bit24
-        }
-    }
-}
-
-void mdec_decode(void)
-{
-    u32 bit_depth = (command >> 27) & 0x3;
+    u32 bit_depth = (command >> 27) & 0x3; // TODO: move
     b8 signed_output = (command >> 26) & 0x1;
     b8 set_bit15 = (command >> 25) & 0x1;
-    decode_index = 0;
-    data_fifo_size = 0;
+    u16 *data = (u16 *)parameter_fifo;
 
-    while (decode_index < parameter_fifo_count)
+    u32 end = ((data_fifo_head - 1) & (DATA_FIFO_SIZE - 1));
+    for (;;)
     {
+#if 0
+        u16 dct = data[decode_index++];
+        if (dct == MDEC_DATA_END)
+            continue;
+#endif
         if (bit_depth & 0x2)
         {
+            u32 block_size = (bit_depth == MDEC_DEPTH_24) ? 192 : 128;
+            if ((data_fifo_count + block_size) > DATA_FIFO_SIZE)
+                break;
+            if (decode_index == halfwords)
+                break;
             u8 *iq_uv = &iq_table[64];
-            u16 output[16 * 16];
+            //u16 output[16 * 16];
             u16 crblk[64];
             u16 cbblk[64];
-            u16 yblk[64][4];
-            rl_decode_block(crblk, iq_uv);
-            rl_decode_block(cbblk, iq_uv);
-            rl_decode_block(yblk[0], iq_table);
-            rl_decode_block(yblk[1], iq_table);
-            rl_decode_block(yblk[2], iq_table);
-            rl_decode_block(yblk[3], iq_table);
+            u16 yblk[4][64];
+            if (rl_decode_block(crblk, iq_uv))
+            {
+                rl_decode_block(cbblk, iq_uv);
+                rl_decode_block(yblk[0], iq_table);
+                rl_decode_block(yblk[1], iq_table);
+                rl_decode_block(yblk[2], iq_table);
+                rl_decode_block(yblk[3], iq_table);
+            }
+            else
+            {
+                break;
+            }
+#if 0
+            // reorder blocks into contiguous buffer
+            u16 lum[256];
+            for (int x = 0; x < 16; ++x)
+            {
+                for (int y = 0; y < 16; ++y)
+                {
+                    int b = y >= 8 ? 2 : 0;
+                    u16 Y = 0;
+                    int row = y & 0x7; // normalize coords
+                    int col = x & 0x7;
+                    if (x < 8)
+                    {
+                        Y = yblk[b][row * 8 + col];
+                    }
+                    else
+                    {
+                        Y = yblk[1 + b][row * 8 + col];
+                    }
+                    u8 grayscale = Y >> 8;
+                    u32 value = grayscale | (grayscale << 8) | (grayscale << 16);
+                    value ^= (0x808080 * !signed_output);
+                    lum[y * 16 + x] = color16from24(value);
+                }
+            }
+#endif
             if (bit_depth == MDEC_DEPTH_15)
             {
-                u16 *dst = (u16 *)data_fifo + data_fifo_size;
-                yuv_to_rgb15(dst, crblk, cbblk, yblk[0], 0, 0);
-                yuv_to_rgb15(dst, crblk, cbblk, yblk[1], 0, 8);
-                yuv_to_rgb15(dst, crblk, cbblk, yblk[2], 8, 0);
-                yuv_to_rgb15(dst, crblk, cbblk, yblk[3], 8, 8);
-                data_fifo_size += 256 * 2;
+                //u16 *dst = (u16 *)(data_fifo + data_fifo_tail); // NOTE: data_fifo_tail and data_fifo_head are measured in words
+                u32 dst[128];
+                u16 *result = (u16 *)dst;
+                yuv_to_rgb15(result, crblk, cbblk, yblk[0], 0, 0, signed_output);
+                yuv_to_rgb15(result, crblk, cbblk, yblk[1], 8, 0, signed_output);
+                yuv_to_rgb15(result, crblk, cbblk, yblk[2], 0, 8, signed_output);
+                yuv_to_rgb15(result, crblk, cbblk, yblk[3], 8, 8, signed_output);
+                u32 idx = data_fifo_tail;
+                for (u16 i = 0; i < 128; ++i)
+                {
+                    data_fifo[idx] = dst[i];
+                    idx = (idx + 1) & (DATA_FIFO_SIZE - 1);
+                }
+                data_fifo_tail = (data_fifo_tail + 128) & (DATA_FIFO_SIZE - 1);
+                data_fifo_count += 128;
             }
             else
             {
@@ -295,21 +344,10 @@ void mdec_decode(void)
         }
     }
 
-    b8 dma_enabled = g_dma.control & 0x80;
-    if (dma_enabled && stat.data_out_req && transfer_pending)
-    {
-        // memcpy the data
-        // TODO: handle reading from the io port, which apparently does not do reordering of blocks
-        transfer_pending = false;
-        u32 dst = g_dma.ports[CH_MDECOUT].madr;
-        // TODO: reorder blocks
-        memcpy(g_ram + dst, data_fifo, data_fifo_size);
-        dma_set_interrupt(CH_MDECOUT);
-    }
-    else
-    {
-        stat.data_out_fifo_empty = 0;
-    }
+    SY_ASSERT(data_fifo_count > 0);
+    SY_ASSERT(data_fifo_count <= DATA_FIFO_SIZE);
+
+    stat.data_out_fifo_empty = false;
 }
 
 void mdec_command(u32 word)
@@ -323,7 +361,6 @@ void mdec_command(u32 word)
         {
         case 0x1:
             parameters_left = word & 0xffff;
-            SY_ASSERT(parameters_left < 65536);
             break;
         case 0x2:
             parameters_left = word & 0x1 ? 32 : 16;
@@ -340,7 +377,7 @@ void mdec_command(u32 word)
     }
     else
     {
-        printf("[MDEC] Send parameter: %08x\n", word);
+        //printf("[MDEC] Send parameter: %08x\n", word);
         parameter_fifo[parameter_fifo_count++] = word;
 
         --parameters_left;
@@ -350,19 +387,20 @@ void mdec_command(u32 word)
             switch (cmd)
             {
             case 1:
+                halfwords = parameter_fifo_count << 1;
+                decode_index = 0;
                 mdec_decode();
-                stat.data_out_fifo_empty = 0;
                 break;
             case 2:
                 u8 src = 0;
-                u8 count = (command & 0x1) ? 64 : 128;
+                u8 count = (command & 0x1) ? 128 : 64;
                 for (u8 i = 0; i < count; i += 4)
                 {
-                    iq_table[i] = parameter_fifo[src] & 0xff;
-                    iq_table[i + 1] = (parameter_fifo[src] >> 8) & 0xff;
-                    iq_table[i + 2] = (parameter_fifo[src] >> 16) & 0xff;
-                    iq_table[i + 3] = (parameter_fifo[src] >> 24) & 0xff;
-                    ++src;
+                    u32 param = parameter_fifo[src++];
+                    iq_table[i] = param & 0xff;
+                    iq_table[i + 1] = (param >> 8) & 0xff;
+                    iq_table[i + 2] = (param >> 16) & 0xff;
+                    iq_table[i + 3] = (param >> 24) & 0xff;
                 }
                 break;
             case 3:
@@ -384,14 +422,37 @@ void mdec_command(u32 word)
 u32 mdec_read(void)
 {
     u32 result = 0;
-    if (!stat.data_out_fifo_empty)
+    return result;
+}
+
+void mdec_on_dma(void)
+{
+    if (stat.data_out_req)
     {
-        if (data_fifo_index < data_fifo_size)
+        if (!stat.data_out_fifo_empty)
         {
-            result = data_fifo[data_fifo_index++];
-            if (data_fifo_index == data_fifo_size)
+            struct dma_port *port = &g_dma.ports[CH_MDECOUT];
+            u32 size = port->b1 * port->b2;
+            u32 dst = port->madr;
+            //memcpy(g_ram + dst, &data_fifo[data_fifo_head], size * 4);
+            if (size > data_fifo_count)
+                mdec_decode();
+
+            u32 *at = (u32 *)(g_ram + dst);
+            u32 src = data_fifo_head;
+            for (u32 i = 0; i < size; ++i)
+            {
+                *at++ = data_fifo[src];
+                src = (src + 1) & (DATA_FIFO_SIZE - 1);
+            }
+            data_fifo_count -= size;
+            data_fifo_head = (data_fifo_head + size) & (DATA_FIFO_SIZE - 1);
+
+            port->control &= ~(0x1000000);
+            dma_set_interrupt(CH_MDECOUT);
+            //if (data_fifo_head == data_fifo_tail)
+            if (data_fifo_count == 0)
                 stat.data_out_fifo_empty = 1;
         }
     }
-    return result;
 }

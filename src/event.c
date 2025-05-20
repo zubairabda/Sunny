@@ -105,7 +105,7 @@ u64 reschedule_event(event_callback callback, s32 param, u64 event_id, s32 cycle
     return schedule_event(callback, param, cycles_until_event);
 }
 
-void tick_events(u64 tick_count)
+void tick_events(void)
 {
     struct tick_event *current = s_sentinel_event->next;
     while (current != s_sentinel_event)

@@ -710,8 +710,8 @@ void write_bmp(u32 width, u32 height, u8 *data, char *filename)
     typedef struct
     {
         u32 size;
-        u32 width;
-        u32 height;
+        s32 width;
+        s32 height;
         u16 planes;
         u16 bpp;
         u32 compression;
@@ -733,10 +733,10 @@ void write_bmp(u32 width, u32 height, u8 *data, char *filename)
     BmpInfo info = {0};
     info.size = 40;
     info.width = width;
-    info.height = height;
+    info.height = -height;
     info.planes = 1;
     info.bpp = 16;
-    // NOTE: set image size?
+    
     u64 size = width * height * (info.bpp >> 3);
     fwrite(&header, sizeof(BmpHeader), 1, file);
     fwrite(&info, sizeof(BmpInfo), 1, file);

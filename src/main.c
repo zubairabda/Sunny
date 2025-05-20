@@ -110,6 +110,228 @@ static inline const char *spu_voice_state_to_str(int voice)
     }
 }
 
+enum system_state
+{
+    SYSTEM_STATE_STOPPED,
+    SYSTEM_STATE_PAUSED,
+    SYSTEM_STATE_RUNNING
+} state = SYSTEM_STATE_STOPPED;
+
+static b8 show_menu = false;
+static b8 show_voices = false;
+static b8 show_debug = false;
+static b8 show_files = false;
+static char current_dir[MAX_PATH];
+
+void draw_debug_ui(u32 width, u32 height)
+{
+    debug_ui_begin(0.0f, width, height);
+    
+    if (debug_ui_begin_window("Menu", r2(100, 100, 300, 300), 0, &show_menu))
+    {
+        if (debug_ui_button("Pause"))
+        {
+            if (state == SYSTEM_STATE_PAUSED)
+                state = SYSTEM_STATE_RUNNING;
+            else if (state == SYSTEM_STATE_RUNNING)
+                state = SYSTEM_STATE_PAUSED;
+        }
+
+        if (debug_ui_button("Debug")) { show_debug = true; }
+
+        if (debug_ui_button("Voice")) { show_voices = true; }
+
+        if (debug_ui_button("Load")) { show_files = true; }
+
+        if (debug_ui_button("Reset"))
+        {
+            if (psx_can_boot())
+            {
+                psx_reset();
+                state = SYSTEM_STATE_RUNNING;
+            }
+        }
+
+        debug_ui_end_window();
+    }
+
+    if (debug_ui_begin_window("Debugger", r2(0, 0, 400, 200), 0, &show_debug))
+    {
+        vec2i size = debug_ui_get_window_size();
+        if (debug_ui_button("Step Into"))
+        {
+            if (state == SYSTEM_STATE_PAUSED)
+                psx_step();
+        }
+
+        char buf[256];
+        char param[64];
+        u32 base = g_cpu.pc & 0xfffffff0;
+        //f32 num_elements = (f32)size.y / 18;
+        //debug_ui_begin_list("Watch", -1, 18);
+        for (int i = 0; i < 32; ++i)
+        {
+            //u32 addr = (base + i) * 4;
+            u32 addr = base;
+            
+            if (addr == g_cpu.pc)
+            {
+                vec2i pos = debug_ui_next_pos();
+                debug_ui_quad(0xb0af5b, pos.x, pos.y, size.x, 18);
+            }
+                
+            const char *op = instr_to_string(fetch_instruction(addr), param, sizeof(param));
+            snprintf(buf, sizeof(buf), "%08X    %s %s", addr, op, param);
+            //printf("%s\n", buf);
+            debug_ui_label(buf);
+            //addr += 4;
+            base += 4;
+        }
+        //debug_ui_end_list();
+        
+        debug_ui_end_window();
+    }
+
+    if (debug_ui_begin_window("Voices", r2(100, 50, 500, 500), 0, &show_voices))
+    {
+        char buf[256];
+        for (int i = 0; i < 24; ++i)
+        {
+            snprintf(buf, sizeof(buf), "Voice #%d: %s | ADSR: %d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume, g_spu.cnt.endx & (1 << i) ? "true" : "false");
+            debug_ui_label(buf);
+            //snprintf(buf, sizeof(buf), "ADSR: %d", g_spu.voice.data[i].adsr_volume);
+            //debug_ui_label(buf);
+            //debug_ui_layout_row();
+        }
+        debug_ui_end_window();
+    }
+
+    int panel_w = 0.65f * width;
+    int panel_h = 0.65f * height;
+    int panel_x = (width - panel_w) / 2;
+    int panel_y = (height - panel_h) / 2;
+
+    if (debug_ui_begin_window("Image Select", r2(panel_x, panel_y, panel_w, panel_h), 0, &show_files))
+    {
+        char path[MAX_PATH];
+
+        char *dir = current_dir;
+        u32 dir_len = 0;
+        if (current_dir[0] == '\0')
+        {
+            u32 dir_len = GetCurrentDirectoryA(MAX_PATH, dir);
+            SY_ASSERT(dir_len <= (MAX_PATH - 3) && (dir_len != 0));
+            char *p = dir + dir_len;
+            *p++ = '\\';
+            *p++ = '*';
+            *p = '\0';
+        }
+        else
+        {
+            dir_len = (u32)strlen(dir) - 2;
+        }
+
+        if (debug_ui_button("../"))
+        {
+            u32 len = dir_len;
+            char *p = dir + len;
+            //--len;
+            SY_ASSERT(*p == '\\');
+            while (len--)
+            {
+                char *c = dir + len;
+                if (*c == '\\')
+                {
+                    dir[len + 1] = '*';
+                    dir[len + 2] = '\0';
+                    dir_len = len;
+                    break;
+                }
+            }
+            //printf("%s\n", dir);
+        }
+
+        b8 result = false;
+        
+        WIN32_FIND_DATAA data;
+        HANDLE find = FindFirstFileA(dir, &data);
+        SY_ASSERT(find != INVALID_HANDLE_VALUE);
+        do
+        {
+            char name[MAX_PATH];
+            b8 is_dir = false;
+            int file_type = -1;
+            const char *file;
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            {
+                if ((strcmp(data.cFileName, ".") == 0) || (strcmp(data.cFileName, "..") == 0))
+                    continue;
+                is_dir = true;
+                snprintf(name, ARRAYCOUNT(name), "%s/", data.cFileName);
+                file = &name[0];
+            }
+            else 
+            {
+                s32 file_type_index = -1;
+                const char *file_ext[] = {".exe", ".bin", ".cue"};
+                for (u32 i = 0; i < ARRAYCOUNT(file_ext); ++i)
+                {
+                    if (string_ends_with_ignore_case(data.cFileName, file_ext[i]))
+                    {
+                        file_type_index = i;
+                        break;
+                    }
+                }
+
+                if (file_type_index < 0)
+                    continue;
+                file = &data.cFileName[0];
+            }
+            
+            if (debug_ui_button(file))
+            {
+                if (is_dir)
+                {
+                    // append folder to path
+                    char *p = dir + dir_len + 1;
+                    snprintf(p, MAX_PATH - dir_len - 2, "%s\\*", data.cFileName);
+                    dir_len = strlen(dir) - 2;
+                }
+                else
+                {   
+                    u32 path_len = dir_len + 1;
+                    SY_ASSERT((path_len + strlen(data.cFileName)) < MAX_PATH);
+                    memcpy(path, dir, path_len);
+                    strcpy(path + path_len, data.cFileName);
+                    result = true;
+                    break;
+                }
+            }
+        } while (FindNextFileA(find, &data) != FALSE);
+        FindClose(find);
+
+        if (result)
+        {
+            show_files = false;
+            if (psx_can_boot())
+            {
+                if (psx_load_image(path))
+                {
+                    state = SYSTEM_STATE_RUNNING;
+                }
+                else
+                {
+                    printf("Error loading file: %s\n", path);
+                }
+            }
+        }
+
+        debug_ui_end_window();
+    }
+
+    debug_ui_end();
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
 {
 #if 1
@@ -131,6 +353,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     char *class_name = "SunnyWindowClass";
     WNDCLASSA wc = {0};
     wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = class_name;
@@ -143,7 +366,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     HWND hwnd = CreateWindowExA(0, class_name, "Sunny", dwStyle, CW_USEDEFAULT, CW_USEDEFAULT,
         desired_rect.right - desired_rect.left, desired_rect.bottom - desired_rect.top, NULL, NULL, hInstance, NULL);
-    if (!hwnd) {
+    if (!hwnd)
+    {
         debug_log("Could not create the window handle!\n");
         return -1;
     }
@@ -161,11 +385,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     platform_window window = {0};
     window.handle = hwnd;
 
-    if (g_config.software_rendering) {
+    if (g_config.software_rendering)
+    {
         g_gpu.software_rendering = true;
         g_renderer = (renderer_context *)platform_init_software_renderer(&window);
     }
-    else {
+    else 
+    {
         g_renderer = win32_load_renderer_from_dll(hwnd, hInstance, "vulkan_renderer.dll");
     }
 
@@ -184,24 +410,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     LARGE_INTEGER begin_counter, end_counter, frequency;
     QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&begin_counter);
-    
-    enum system_state
-    {
-        SYSTEM_STATE_STOPPED,
-        SYSTEM_STATE_PAUSED,
-        SYSTEM_STATE_RUNNING
-    } state = SYSTEM_STATE_STOPPED;
 
-    b8 show_voices = false;
-    b8 show_debug = false;
-
-    if (bios.memory)
+    if (psx_can_boot())
     {
-        if (psx_load_image(g_config.boot_file))
-        {
-            state = SYSTEM_STATE_RUNNING;
-        }
+        psx_load_image(g_config.boot_file);
+        state = SYSTEM_STATE_RUNNING;
     }
+
+    b8 key_was_down = false;
 
     while (g_running)
     {
@@ -217,94 +433,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         int window_w = client.right - client.left;
         int window_h = client.bottom - client.top;
 
-        debug_ui_begin(0.0f, window_w, window_h);
-        
-        if (debug_ui_begin_window("Menu", r2(100, 100, 300, 400), 0, NULL))
+        if (GetKeyState('M') & 0x8000)
         {
-            if (debug_ui_button("Pause"))
-            {
-                if (state == SYSTEM_STATE_PAUSED)
-                    state = SYSTEM_STATE_RUNNING;
-                else if (state == SYSTEM_STATE_RUNNING)
-                    state = SYSTEM_STATE_PAUSED;
-            }
-
-            if (debug_ui_button("Debug")) { show_debug = true; }
-
-            if (debug_ui_button("Voice")) { show_voices = !show_voices; }
-
-            if (debug_ui_button("Load"))
-            {
-                debug_ui_open_file_dialog("Image Select");
-            }
-
-            if (debug_ui_button("Reset"))
-            {
-                if (bios.memory)
-                {
-                    psx_reset();
-                    state = SYSTEM_STATE_RUNNING;
-                }
-            }
-
-            debug_ui_end_window();
+            if (!key_was_down)
+                show_menu = !show_menu;
+            key_was_down = true;
+        }
+        else
+        {
+            key_was_down = false;
         }
 
-        if (debug_ui_begin_window("Debugger", r2(0, 0, 400, 200), 0, &show_debug))
-        {
-            if (debug_ui_button("Step"))
-            {
-                if (state == SYSTEM_STATE_PAUSED)
-                    psx_step();
-            }
-            char buf[256];
-            char param[64];
-            u32 addr = g_cpu.pc;
-            for (int i = 0; i < 16; ++i)
-            {
-                const char *op = instr_to_string(fetch_instruction(addr), param, sizeof(param));
-                snprintf(buf, sizeof(buf), "%08X    %s %s", addr, op, param);
-                //printf("%s\n", buf);
-                debug_ui_label(buf);
-                addr += 4;
-            }
-            
-            debug_ui_end_window();
-        }
-
-        if (show_voices)
-        {
-            debug_ui_push_layout(DIR_VERTICAL, 0, 20);
-            char buf[256];
-            for (int i = 0; i < 24; ++i)
-            {
-                snprintf(buf, sizeof(buf), "Voice #%d: %s | ADSR: %d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume, g_spu.cnt.endx & (1 << i) ? "true" : "false");
-                debug_ui_label(buf);
-                //snprintf(buf, sizeof(buf), "ADSR: %d", g_spu.voice.data[i].adsr_volume);
-                //debug_ui_label(buf);
-                //debug_ui_layout_row();
-            }
-            debug_ui_pop_layout();
-        }
-
-        const char *file_ext[] = {".exe", ".bin", ".cue"};
-        struct debug_ui_file_dialog_result file;
-        if (debug_ui_file_dialog("Image Select", file_ext, ARRAYCOUNT(file_ext), &file))
-        {
-            if (bios.memory)
-            {
-                if (psx_load_image(file.path))
-                {
-                    state = SYSTEM_STATE_RUNNING;
-                }
-                else
-                {
-                    printf("Error loading file: %s\n", file.path);
-                }
-            }
-        }
-
-        debug_ui_end();
+        draw_debug_ui(window_w, window_h);
 
         if (state == SYSTEM_STATE_RUNNING)
         {

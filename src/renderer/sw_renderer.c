@@ -355,18 +355,9 @@ static inline vec2i vertex_position(s32 v)
     return result;
 }
 
-static inline u16 color16from24(u32 color)
-{
-    u16 red = ((color >> 3) & 0x1f);
-    u16 green = ((color >> 11) & 0x1f);
-    u16 blue = ((color >> 19) & 0x1f);
-    return (blue << 10) | (green << 5) | red;
-}
-
 static inline s32 edge(vec2i a, vec2i b, vec2i p)
 {
-    // (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x)
-    return ((p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x));//v1.x * v2.y - v1.y * v2.x;
+    return ((p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x));
 }
 
 void draw_triangle(vec2i v1, vec2i v2, vec2i v3, u16 color, rect2 scissor)

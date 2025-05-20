@@ -112,7 +112,12 @@ static u8 io_read8(u32 addr)
     switch (addr)
     {
     default:
-        if (addr >= 0x1f801800 && addr < 0x1f801804)
+        if (addr >= 0x1f801080 && addr < 0x1f8010f8)
+        {
+            u32 shift = (addr & 0x3) * 8;
+            return (dma_read(addr & 0x7f) >> shift);
+        }
+        else if (addr >= 0x1f801800 && addr < 0x1f801804)
         {
             return cdrom_read(addr & 0x3);
         }
@@ -149,13 +154,21 @@ static void io_write32(u32 addr, u32 value)
         break;
     default:
         if (addr >= 0x1f801000 && addr < 0x1f801024)
+        {
             debug_log("Unhandled 32-bit store to Memory Control 1\n");
+        }
         else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
+        {
             dma_write(addr & 0x7f, value);
+        }
         else if (addr >= 0x1f801100 && addr < 0x1f801130)
+        {
             counters_store(addr & 0x3f, value);
+        }
         else if (addr >= 0x1f801c00 && addr < 0x1f801e00)
+        {
             spu_write(addr & 0x3ff, value);
+        }
         else
         {
             debug_log("Unknown 32-bit store address: %08x\n", addr);
@@ -176,13 +189,21 @@ static void io_write16(u32 addr, u32 value)
         break;
     default:
         if (addr >= 0x1f801100 && addr < 0x1f801130)
+        {
             counters_store(addr & 0x3f, value);
+        }
         else if (addr >= 0x1f801c00 && addr < 0x1f801e00)
+        {
             spu_write(addr & 0x3ff, value);
+        }
         else if (addr >= 0x1f801040 && addr < 0x1f801050)
+        {
             sio_store(addr & 0x1f, value);
+        }
         else
+        {
             debug_log("Unknown 16-bit store address: %08x\n", addr);
+        }
         break;
     }
 }
@@ -192,12 +213,23 @@ static void io_write8(u32 addr, u32 value)
     switch (addr)
     {
     default:
-        if (addr >= 0x1f801800 && addr < 0x1f801804)
+        if (addr >= 0x1f801080 && addr < 0x1f8010f8)
+        {
+            u32 shift = (addr & 0x3) * 8;
+            dma_write(addr & 0x7f, ((value & 0xff) << shift));
+        }
+        else if (addr >= 0x1f801800 && addr < 0x1f801804)
+        {
             cdrom_store(addr & 0x3, value);
+        }
         else if (addr >= 0x1f801040 && addr < 0x1f801050)
+        {
             sio_store(addr & 0x1f, value);
+        }
         else
+        {
             debug_log("Unknown 8-bit store address: %08x\n", addr);
+        }
         break;
     }
 }

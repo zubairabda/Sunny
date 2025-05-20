@@ -132,7 +132,11 @@ void cpu_init(void)
 u32 peek_instruction(u32 pc)
 {
     u32 addr = pc & 0x1fffffff;
-    return 0;
+    void *data = mem_read(addr);
+    if (data)
+        return U32FromPtr(data);
+    else
+        return 0;
 }
 
 u32 fetch_instruction(u32 pc)
@@ -164,14 +168,15 @@ u32 fetch_instruction(u32 pc)
     }
     case 0x5: // KSEG1
     {
-        return *(u32 *)mem_read(addr); // TODO:
+        //g_cycles_elapsed += get_read_delay(addr); // TODO: uncached
+        return *(u32 *)mem_read(addr);
     }
     INVALID_CASE;
     }
     return 0;
 }
 
-u64 execute_instruction(u64 min_cycles)
+void execute_instruction(u64 min_cycles)
 {
     b8 branched = false;
     reg_tuple new_load = {0};
@@ -825,5 +830,4 @@ u64 execute_instruction(u64 min_cycles)
         //g_cycles_elapsed += 1;//psx->pending_cycles;
         handle_interrupts();
     }
-    return 0;//i;
 }
