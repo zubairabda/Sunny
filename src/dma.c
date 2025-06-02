@@ -113,7 +113,7 @@ static void process_dma(u32 channel)
                 switch (channel)
                 {
                 case CH_MDECIN:
-                    mdec_command(word);
+                    mdec_command(word); // TODO: can set interrupt again?
                     break;
                 case CH_GPU:
                     SY_ASSERT(port->b1 <= 0x10);
@@ -190,6 +190,11 @@ void dma_init(void)
 {
     g_dma.control = 0x07654321; // inital value of control register
 }
+#include "event.h"
+void mdec_event_handler(u32 param, s32 cycles_late)
+{
+    mdec_on_dma();
+}
 
 void dma_write(u32 offset, u32 value)
 {
@@ -248,7 +253,6 @@ void dma_write(u32 offset, u32 value)
 
             if (value & 0x1000000 && (g_dma.control & (0x8 << (4 * channel))))
             {
-                debug_log("[DMA] start transfer for ch %d\n", channel);
                 if (channel == CH_MDECOUT)
                 {
                     //g_dma.ports[channel].control &= ~(0x1000000);

@@ -53,7 +53,7 @@ static void update_display(void)
     {
         vram_texture[i] = swizzle_16_32(vram[i]);
     }
-    
+
 #if 0
     int src_x = g_gpu.vram_display_x;
     int src_y = g_gpu.vram_display_y;
@@ -135,7 +135,7 @@ static void update_display(void)
                     c = '?';
                 }
                 else if (c == ' ') {
-                    pen.x += 6; // TODO: font metrics
+                    pen.x += font_space_width;
                     continue;
                 }
 
@@ -776,11 +776,11 @@ void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor)
             u16 t1 = commands[2 + stride * 1];
             u16 t2 = commands[2 + stride * 2];
 
-            vec2i v0 = v2iadd(vertex_position(commands[1]), draw_offset);
+            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
 
-            vec2i v1 = v2iadd(vertex_position(commands[1 + stride]), draw_offset);
+            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
 
-            vec2i v2 = v2iadd(vertex_position(commands[1 + stride * 2]), draw_offset);
+            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
 
             draw_shaded_textured_triangle(c0, v2i(t0 & 0xff, (t0 >> 8) & 0xff), v0, c1, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, c2, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2, 
                 mode, texture_page, clut_base, scissor);
@@ -789,7 +789,7 @@ void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor)
             {
                 u32 c3 = commands[stride * 3];
                 u16 t3 = commands[2 + stride * 3];
-                vec2i v3 = v2iadd(vertex_position(commands[1 + stride * 3]), draw_offset);
+                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
                 draw_shaded_textured_triangle(c1, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, c2, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2, c3, v2i(t3 & 0xff, (t3 >> 8) & 0xff), v3, 
                     mode, texture_page, clut_base, scissor);
             }
@@ -803,11 +803,11 @@ void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor)
             u16 t1 = commands[2 + stride * 1];
             u16 t2 = commands[2 + stride * 2];
 
-            vec2i v0 = v2iadd(vertex_position(commands[1]), draw_offset);
+            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
 
-            vec2i v1 = v2iadd(vertex_position(commands[1 + stride]), draw_offset);
+            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
 
-            vec2i v2 = v2iadd(vertex_position(commands[1 + stride * 2]), draw_offset);
+            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
 
             draw_textured_triangle(color, v2i(t0 & 0xff, (t0 >> 8) & 0xff), v0, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2,
                 mode, texture_page, clut_base, scissor);
@@ -815,7 +815,7 @@ void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor)
             if (flags & POLYGON_FLAG_IS_QUAD)
             {
                 u16 t3 = commands[2 + stride * 3];
-                vec2i v3 = v2iadd(vertex_position(commands[1 + stride * 3]), draw_offset);
+                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
                 draw_textured_triangle(color, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2, v2i(t3 & 0xff, (t3 >> 8) & 0xff), v3,
                     mode, texture_page, clut_base, scissor);
             }
@@ -832,18 +832,18 @@ void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor)
             u16 c1 = color16from24(commands[stride * 1]);
             u16 c2 = color16from24(commands[stride * 2]);
 
-            vec2i v0 = v2iadd(vertex_position(commands[1]), draw_offset);
+            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
 
-            vec2i v1 = v2iadd(vertex_position(commands[1 + stride]), draw_offset);
+            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
 
-            vec2i v2 = v2iadd(vertex_position(commands[1 + stride * 2]), draw_offset);
+            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
 
             draw_shaded_triangle(c0, v0, c1, v1, c2, v2, scissor);
 
             if (flags & POLYGON_FLAG_IS_QUAD)
             {
                 u16 c3 = color16from24(commands[stride * 3]);
-                vec2i v3 = v2iadd(vertex_position(commands[1 + stride * 3]), draw_offset);
+                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
                 draw_shaded_triangle(c1, v1, c2, v2, c3, v3, scissor);
             }
         }
@@ -852,17 +852,17 @@ void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor)
             // flat color polygon
             u16 c = color16from24(commands[0]);
 
-            vec2i v0 = v2iadd(vertex_position(commands[1]), draw_offset);
+            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
 
-            vec2i v1 = v2iadd(vertex_position(commands[1 + stride]), draw_offset);
+            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
 
-            vec2i v2 = v2iadd(vertex_position(commands[1 + stride * 2]), draw_offset);
+            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
 
             draw_triangle(v0, v1, v2, c, scissor);
 
             if (flags & POLYGON_FLAG_IS_QUAD)
             {
-                vec2i v3 = v2iadd(vertex_position(commands[1 + stride * 3]), draw_offset);
+                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
                 draw_triangle(v1, v2, v3, c, scissor);
             }
         }

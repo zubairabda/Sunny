@@ -656,8 +656,9 @@ void spu_tick(u32 param, s32 cycles_late)
     //if (buffer_index > g_spu.audio_buffer_len)
     if (g_spu.enable_output)
     {
-        g_spu.audio_buffer[buffer_index] = clamp16(final_vol_left);
-        g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right);
+        f32 volume = 0.5f; // half volume for final output
+        g_spu.audio_buffer[buffer_index] = clamp16(final_vol_left) * volume;
+        g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right) * volume;
     }
 
     ++g_spu.num_buffered_frames;

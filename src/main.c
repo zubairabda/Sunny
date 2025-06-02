@@ -2,7 +2,6 @@
 #define NOMINMAX
 #include <Windows.h>
 #include <shellapi.h>
-#include <math.h>
 
 #include "platform/platform.h"
 #include "config.h"
@@ -110,13 +109,6 @@ static inline const char *spu_voice_state_to_str(int voice)
     }
 }
 
-enum system_state
-{
-    SYSTEM_STATE_STOPPED,
-    SYSTEM_STATE_PAUSED,
-    SYSTEM_STATE_RUNNING
-} state = SYSTEM_STATE_STOPPED;
-
 static b8 show_menu = false;
 static b8 show_voices = false;
 static b8 show_debug = false;
@@ -131,10 +123,10 @@ void draw_debug_ui(u32 width, u32 height)
     {
         if (debug_ui_button("Pause"))
         {
-            if (state == SYSTEM_STATE_PAUSED)
-                state = SYSTEM_STATE_RUNNING;
-            else if (state == SYSTEM_STATE_RUNNING)
-                state = SYSTEM_STATE_PAUSED;
+            if (g_state == SYSTEM_STATE_PAUSED)
+                g_state = SYSTEM_STATE_RUNNING;
+            else if (g_state == SYSTEM_STATE_RUNNING)
+                g_state = SYSTEM_STATE_PAUSED;
         }
 
         if (debug_ui_button("Debug")) { show_debug = true; }
@@ -148,61 +140,118 @@ void draw_debug_ui(u32 width, u32 height)
             if (psx_can_boot())
             {
                 psx_reset();
-                state = SYSTEM_STATE_RUNNING;
+                g_state = SYSTEM_STATE_RUNNING;
             }
+        }
+
+        if (debug_ui_button("Mute"))
+        {
+            g_spu.enable_output = !g_spu.enable_output;
         }
 
         debug_ui_end_window();
     }
 
-    if (debug_ui_begin_window("Debugger", r2(0, 0, 400, 200), 0, &show_debug))
+    if (debug_ui_begin_window("Debugger", r2(0, 0, 600, 400), 0, &show_debug))
     {
-        vec2i size = debug_ui_get_window_size();
+        static b8 follow_pc = true;
+        b8 scroll_to_pc = false;
+
         if (debug_ui_button("Step Into"))
         {
-            if (state == SYSTEM_STATE_PAUSED)
+            if (g_state == SYSTEM_STATE_PAUSED)
+            {
                 psx_step();
+                if (follow_pc)
+                    scroll_to_pc = true;
+            }
         }
 
+        if (debug_ui_button("Show PC"))
+            scroll_to_pc = true;
+        
+        debug_ui_checkbox(&follow_pc, "Follow PC");
+        if (follow_pc && g_state == SYSTEM_STATE_RUNNING)
+            scroll_to_pc = true;
+
+        debug_ui_layout_row();
+
         char buf[256];
-        char param[64];
-        u32 base = g_cpu.pc & 0xfffffff0;
-        //f32 num_elements = (f32)size.y / 18;
-        //debug_ui_begin_list("Watch", -1, 18);
-        for (int i = 0; i < 32; ++i)
+        for (u8 r = 0; r < 4; ++r)
         {
-            //u32 addr = (base + i) * 4;
-            u32 addr = base;
-            
-            if (addr == g_cpu.pc)
+            for (u8 i = 0; i < 8; ++i)
             {
-                vec2i pos = debug_ui_next_pos();
+                u8 index = i + (r * 8);
+                debug_ui_labelf("r%-2d %08X", index, g_cpu.registers[index]);
+            }
+            debug_ui_layout_row();
+        }
+        
+        char param[64];
+        //f32 num_elements = (f32)size.y / 18;
+        debug_ui_begin_group("Disassembly");
+
+        vec2i size = debug_ui_get_window_size();
+
+        u32 pc = g_cpu.pc & 0x1fffffff;
+
+        const int RAM_SIZE = MEGABYTES(2);
+
+        struct debug_ui_list_clipper clipper = debug_ui_begin_list_clipper(18, RAM_SIZE);
+        for (u32 i = clipper.start_index; i < clipper.end_index; ++i)
+        {
+            u32 addr = i * 4;
+            
+            vec2i pos = debug_ui_next_pos();
+            if (addr == pc)
+            {
                 debug_ui_quad(0xb0af5b, pos.x, pos.y, size.x, 18);
             }
-                
+            else if (addr & 0x4)
+            {
+                debug_ui_quad(0x3f3f3f, pos.x, pos.y, size.x, 18);
+            }
+            
+            u32 press = debug_ui_button_behavior(addr, r2(pos.x, pos.y, size.x, 18));
+            if (press & DEBUG_UI_INTERACTION_PRESSED)
+            {
+                // add breakpoint
+                if (breakpoint_get(addr))
+                    breakpoint_remove(addr);
+                else
+                    breakpoint_set(addr);
+            }
+
+            if (breakpoint_get(addr))
+            {
+                debug_ui_quad(0xff0000, pos.x, pos.y, size.x, 18);
+            }
+
             const char *op = instr_to_string(fetch_instruction(addr), param, sizeof(param));
             snprintf(buf, sizeof(buf), "%08X    %s %s", addr, op, param);
-            //printf("%s\n", buf);
             debug_ui_label(buf);
-            //addr += 4;
-            base += 4;
         }
-        //debug_ui_end_list();
+        debug_ui_end_list_clipper(&clipper);
+
+        if (scroll_to_pc)
+            debug_ui_set_scroll((pc >> 2) * 18);
+
+        debug_ui_end_group();
         
         debug_ui_end_window();
     }
 
     if (debug_ui_begin_window("Voices", r2(100, 50, 500, 500), 0, &show_voices))
     {
+        vec2i pos = debug_ui_next_pos();
+        debug_ui_push_layout(DIR_VERTICAL, pos.x, pos.y);
         char buf[256];
         for (int i = 0; i < 24; ++i)
         {
-            snprintf(buf, sizeof(buf), "Voice #%d: %s | ADSR: %d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume, g_spu.cnt.endx & (1 << i) ? "true" : "false");
+            snprintf(buf, sizeof(buf), "Voice #%-4d: %-10s | ADSR: %-8d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume, g_spu.cnt.endx & (1 << i) ? "true" : "false");
             debug_ui_label(buf);
-            //snprintf(buf, sizeof(buf), "ADSR: %d", g_spu.voice.data[i].adsr_volume);
-            //debug_ui_label(buf);
-            //debug_ui_layout_row();
         }
+        debug_ui_pop_layout();
         debug_ui_end_window();
     }
 
@@ -231,6 +280,8 @@ void draw_debug_ui(u32 width, u32 height)
             dir_len = (u32)strlen(dir) - 2;
         }
 
+        debug_ui_begin_group("Files");
+
         if (debug_ui_button("../"))
         {
             u32 len = dir_len;
@@ -248,11 +299,10 @@ void draw_debug_ui(u32 width, u32 height)
                     break;
                 }
             }
-            //printf("%s\n", dir);
         }
 
         b8 result = false;
-        
+
         WIN32_FIND_DATAA data;
         HANDLE find = FindFirstFileA(dir, &data);
         SY_ASSERT(find != INVALID_HANDLE_VALUE);
@@ -310,6 +360,8 @@ void draw_debug_ui(u32 width, u32 height)
         } while (FindNextFileA(find, &data) != FALSE);
         FindClose(find);
 
+        debug_ui_end_group();
+
         if (result)
         {
             show_files = false;
@@ -317,7 +369,7 @@ void draw_debug_ui(u32 width, u32 height)
             {
                 if (psx_load_image(path))
                 {
-                    state = SYSTEM_STATE_RUNNING;
+                    g_state = SYSTEM_STATE_RUNNING;
                 }
                 else
                 {
@@ -414,8 +466,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     if (psx_can_boot())
     {
         psx_load_image(g_config.boot_file);
-        state = SYSTEM_STATE_RUNNING;
+        g_state = SYSTEM_STATE_RUNNING;
     }
+
+    //g_debug.breakpoints_enabled = true; // TODO: temp
+    g_spu.enable_output = false;
+    g_debug.log_level = LOG_ERROR;
 
     b8 key_was_down = false;
 
@@ -446,7 +502,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
         draw_debug_ui(window_w, window_h);
 
-        if (state == SYSTEM_STATE_RUNNING)
+        if (g_state == SYSTEM_STATE_RUNNING)
         {
             emulate_from_audio(audio);
         }

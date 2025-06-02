@@ -4,6 +4,7 @@
 #include "memory.h"
 #include "debug.h"
 #include "disasm.h"
+#include "psx.h"
 
 #define COP0_SR 12
 #define COP0_CAUSE 13
@@ -182,9 +183,24 @@ void execute_instruction(u64 min_cycles)
     reg_tuple new_load = {0};
     reg_tuple write = {0};
     u64 target_cycles = g_cycles_elapsed + min_cycles;
+    static b8 breakpoint_hit = 0;
 
     while (g_cycles_elapsed < target_cycles)
     {
+#if 1
+        // handle frontend breakpoints
+        if (g_debug.breakpoint_count && !breakpoint_hit)
+        {
+            u32 pc = g_cpu.pc & 0x1fffffff;
+            if (breakpoint_get(pc))
+            {
+                g_state = SYSTEM_STATE_PAUSED;
+                breakpoint_hit = 1;
+                return;
+            }
+        }
+        breakpoint_hit = 0;
+#endif
         ++g_cycles_elapsed;
 
         log_tty();

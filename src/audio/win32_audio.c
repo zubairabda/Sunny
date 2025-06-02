@@ -28,104 +28,7 @@ struct audio_player
     HANDLE event;
 };
 
-struct audio_source
-{
-    void *data;
-    u64 size;
-};
-
-void load_audio_source(audio_player *audio, u8 *src, u32 src_len_bytes)
-{
-    audio->src_cursor = src;
-    audio->src_len = src_len_bytes;
-}
-
-void play_sound_test(audio_player *audio)
-{
-    u32 pad = 0;
-    HRESULT hr;
-    BYTE *pdata = NULL;
-
-    //IAudioClient_Start(audio->client);
-
-    hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-    SY_ASSERT(hr == S_OK);
-    u32 available_frames = audio->buffer_size - pad;
-    //Sleep(0);
-    hr = IAudioRenderClient_GetBuffer(audio->render_client, available_frames, &pdata);
-    if (hr != S_OK) {
-        return;
-    }
-
-    u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
-    memcpy(pdata, audio->src_cursor, buffer_size);
-    #if 1
-    for (u32 i = 0; i < available_frames * 2; ++i)
-    {
-        s32 sample = ((s16 *)pdata)[i];
-        #if 1
-        if (sample > 32767)
-            sample = 32767;
-        else if (sample < -32768)
-            sample = -32768;
-        #endif
-        ((s16 *)pdata)[i] = sample / 4;
-    }
-    #endif
-    audio->src_cursor += buffer_size;
-    hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, available_frames, 0);
-    SY_ASSERT(hr == S_OK);
-
-    //IAudioClient_Stop(audio->client);
-}
-
-void debug_play_sound(audio_player *audio, u8 *source_data)
-{
-    u32 pad = 0;
-    HRESULT hr;
-    BYTE *pdata = NULL;
-
-    u8 *current = source_data;
-
-    hr = IAudioClient_Start(audio->client);
-    if (hr != S_OK) {
-        return;
-    }
-    SY_ASSERT(hr == S_OK);
-
-    while (1)
-    {
-        hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-        SY_ASSERT(hr == S_OK);
-        u32 available_frames = audio->buffer_size - pad;
-        //Sleep(0);
-        hr = IAudioRenderClient_GetBuffer(audio->render_client, available_frames, &pdata);
-        SY_ASSERT(hr == S_OK);
-
-        u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
-        memcpy(pdata, current, buffer_size);
-        #if 0
-        for (u32 i = 0; i < available_frames * 2; ++i)
-        {
-            s32 sample = ((s16 *)pdata)[i];
-            #if 1
-            if (sample > 32767)
-                sample = 32767;
-            else if (sample < -32768)
-                sample = -32768;
-            #endif
-            ((s16 *)pdata)[i] = sample;
-        }
-        #endif
-        current += buffer_size;
-        hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, available_frames, 0);
-        SY_ASSERT(hr == S_OK);
-    }
-
-    IAudioClient_Stop(audio->client);
-}
-
-static inline char *hr_to_str(HRESULT hr)
+static inline const char *hr_to_str(HRESULT hr)
 {
     switch (hr)
     {
@@ -149,7 +52,7 @@ static inline char *hr_to_str(HRESULT hr)
         return "";
     }
 }
-#if 1
+
 void emulate_from_audio(audio_player *audio)
 {
     u32 pad = 0;
@@ -157,60 +60,36 @@ void emulate_from_audio(audio_player *audio)
     BYTE *pdata = NULL;
 
     u32 available_frames;
-    //hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-    //available_frames = audio->buffer_size - pad;
-    #if 1
-#if 0
-    do
-    {
-        DWORD res = WaitForSingleObject(audio->event, INFINITE);
-        if (res != WAIT_OBJECT_0)
-        {
-            DebugBreak();
-        }
-        hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-        available_frames = audio->buffer_size - pad;
-    } while (!available_frames);
-#else
+
     DWORD res = WaitForSingleObject(audio->event, INFINITE);
     if (res != WAIT_OBJECT_0)
     {
-        SY_ASSERT(0);
+        debug_error("Failed to retrieve the audio event handle");
     }
     hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
     available_frames = audio->buffer_size - pad;
-#endif
-    #endif
-#if 0
-    if (!available_frames)
-        DebugBreak();
-#endif
+
     hr = IAudioRenderClient_GetBuffer(audio->render_client, available_frames, &pdata);
     if (hr != S_OK)
     {
-        debug_log("%s\n", hr_to_str(hr));
+        debug_error("GetBuffer failed with error: %s\n", hr_to_str(hr));
     }
 
     u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
 
     g_spu.audio_buffer = (s16 *)pdata;
 
-    while (g_spu.num_buffered_frames < available_frames)
+    while (g_spu.num_buffered_frames < available_frames && g_state == SYSTEM_STATE_RUNNING)
     {
         psx_run();
     }
     g_spu.num_buffered_frames = 0;
-    // half volume
-    for (u32 i = 0; i < available_frames * 2; ++i)
-    {
-        ((s16 *)pdata)[i] /= 2;
-    }
 
-    hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, available_frames, 0);
+    hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, available_frames, g_spu.enable_output ? 0 : AUDCLNT_BUFFERFLAGS_SILENT);
 }
-#endif
-#if 1
-static inline void play_sound(audio_player *audio, s16 *data, u32 num_buffered_frames)
+
+
+void play_sound(audio_player *audio, s16 *data, u32 num_frames)
 {
     u32 pad = 0;
     HRESULT hr;
@@ -218,39 +97,16 @@ static inline void play_sound(audio_player *audio, s16 *data, u32 num_buffered_f
 
     //IAudioClient_Start(audio->client);
 
-    s32 remaining_frames = (s32)num_buffered_frames;
+    s32 remaining_frames = (s32)num_frames;
 
     while (remaining_frames)
     {
         u32 available_frames;
-    #if 0
-        do
-        {
-            DWORD res = WaitForSingleObject(audio->event, 2000);
-            if (res != WAIT_OBJECT_0)
-            {
-                DebugBreak();
-            }
-            hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-            available_frames = audio->buffer_size - pad;
-        } while (!available_frames);
-    #elif 0
-        DWORD res = WaitForSingleObject(audio->event, 2000);
-        if (res != WAIT_OBJECT_0)
-        {
-            DebugBreak();
-        }
-        hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-        available_frames = audio->buffer_size - pad;
-    #else
         hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
         available_frames = audio->buffer_size - pad;  
-    #endif
+
         u32 frames_written = (s32)(remaining_frames - available_frames) < 0 ? remaining_frames : available_frames;
-    #if 0
-        if (!available_frames)
-            DebugBreak();
-    #endif
+
         hr = IAudioRenderClient_GetBuffer(audio->render_client, frames_written, &pdata);
         if (hr != S_OK)
         {
@@ -260,7 +116,6 @@ static inline void play_sound(audio_player *audio, s16 *data, u32 num_buffered_f
         u32 buffer_size = frames_written * 4; // multiply by nBlockAlign
 
         memcpy(pdata, data, buffer_size);
-        // damn this is loud lol
         for (u32 i = 0; i < frames_written * 2; ++i)
         {
             ((s16 *)pdata)[i] /= 2;
@@ -271,12 +126,15 @@ static inline void play_sound(audio_player *audio, s16 *data, u32 num_buffered_f
     }
     //IAudioClient_Stop(audio->client);
 }
-#endif
+
 audio_player *audio_init(void)
 {
     audio_player *audio = VirtualAlloc(NULL, sizeof(audio_player), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!audio)
+    {
+        debug_error("Failed to allocate the audio player\n");
         return NULL;
+    }
 
     typedef HRESULT (*fp_CoInitializeEx)(LPVOID pvReserved, DWORD dwCoInit);
     typedef HRESULT (*fp_CoCreateInstance)(REFCLSID rclsid, LPUNKNOWN pUnkOuter, DWORD dwClsContext, REFIID riid, LPVOID *ppv);
@@ -292,10 +150,12 @@ audio_player *audio_init(void)
     IAudioRenderClient *render_client = NULL;
     WAVEFORMATEXTENSIBLE *wave_fmt;
 
-    hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
-    hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &IID_IMMDeviceEnumerator, (void **)&enumerator);
-    // TODO: unload dll here?
+    CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &IID_IMMDeviceEnumerator, (void **)&enumerator);
+    
+    FreeLibrary(lib);
+
     hr = IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, eRender, eConsole, &device);
 
     hr = IMMDevice_Activate(device, &IID_IAudioClient, CLSCTX_ALL, NULL, (void **)&audio_client);
@@ -314,8 +174,10 @@ audio_player *audio_init(void)
                                  AUDCLNT_STREAMFLAGS_RATEADJUST |
                                  AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 
                                  0, 0, &format, NULL);
-    if (hr != S_OK) {
-        debug_log("Failed to initialize the audio client\n");
+    if (hr != S_OK)
+    {
+        debug_error("Failed to initialize the audio client\n");
+        return NULL;
     }
 
     audio->event = CreateEvent(NULL, FALSE, FALSE, NULL);
@@ -349,8 +211,7 @@ audio_player *audio_init(void)
     return audio; 
 }
 
-static void audio_shutdown(audio_player* audio)
+void audio_shutdown(audio_player* audio)
 {
-    // wait until audio thread finishes
     VirtualFree(audio, 0, MEM_RELEASE);
 }

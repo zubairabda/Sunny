@@ -3,6 +3,8 @@
 
 #include "platform/platform.h"
 
+#define CDROM_SECTOR_SIZE 2352
+
 struct file_dat
 {
     void *memory;

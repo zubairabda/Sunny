@@ -3,8 +3,6 @@
 #include "memory.h"
 #include "gpu_common.h"
 
-#include <math.h>
-
 #define DATA_FIFO_SIZE 32768
 
 typedef struct
@@ -265,12 +263,13 @@ static void mdec_decode(void)
         if (dct == MDEC_DATA_END)
             continue;
 #endif
+        if (decode_index == halfwords)
+            break;
+
         if (bit_depth & 0x2)
         {
             u32 block_size = (bit_depth == MDEC_DEPTH_24) ? 192 : 128;
             if ((data_fifo_count + block_size) > DATA_FIFO_SIZE)
-                break;
-            if (decode_index == halfwords)
                 break;
             u8 *iq_uv = &iq_table[64];
             //u16 output[16 * 16];
@@ -317,7 +316,6 @@ static void mdec_decode(void)
 #endif
             if (bit_depth == MDEC_DEPTH_15)
             {
-                //u16 *dst = (u16 *)(data_fifo + data_fifo_tail); // NOTE: data_fifo_tail and data_fifo_head are measured in words
                 u32 dst[128];
                 u16 *result = (u16 *)dst;
                 yuv_to_rgb15(result, crblk, cbblk, yblk[0], 0, 0, signed_output);
@@ -348,6 +346,12 @@ static void mdec_decode(void)
     SY_ASSERT(data_fifo_count <= DATA_FIFO_SIZE);
 
     stat.data_out_fifo_empty = false;
+    #if 1
+    if (transfer_pending)
+    {
+        mdec_on_dma();
+    }
+    #endif
 }
 
 void mdec_command(u32 word)
@@ -427,10 +431,12 @@ u32 mdec_read(void)
 
 void mdec_on_dma(void)
 {
+    transfer_pending = true;
     if (stat.data_out_req)
     {
         if (!stat.data_out_fifo_empty)
         {
+            transfer_pending = false;
             struct dma_port *port = &g_dma.ports[CH_MDECOUT];
             u32 size = port->b1 * port->b2;
             u32 dst = port->madr;
@@ -450,7 +456,7 @@ void mdec_on_dma(void)
 
             port->control &= ~(0x1000000);
             dma_set_interrupt(CH_MDECOUT);
-            //if (data_fifo_head == data_fifo_tail)
+
             if (data_fifo_count == 0)
                 stat.data_out_fifo_empty = 1;
         }

@@ -1,6 +1,8 @@
 #ifndef SY_MATH_H
 #define SY_MATH_H
 
+#include <math.h>
+
 typedef struct rect2
 {
     s32 left;
@@ -46,19 +48,19 @@ typedef union vec4u
     u32 data[4];
 } vec4u;
 
-inline vec2 v2sub(vec2 a, vec2 b)
+inline vec2 v2_sub(vec2 a, vec2 b)
 {
     vec2 result = {.x = a.x - b.x, .y = a.y - b.y};
     return result;
 }
 
-inline vec2 v2add(vec2 a, vec2 b)
+inline vec2 v2_add(vec2 a, vec2 b)
 {
     vec2 result = {.x = a.x + b.x, .y = a.y + b.y};
     return result;
 }
 
-inline vec2i v2iadd(vec2i a, vec2i b)
+inline vec2i v2i_add(vec2i a, vec2i b)
 {
     vec2i result = {.x = a.x + b.x, .y = a.y + b.y};
     return result;
@@ -100,15 +102,20 @@ inline vec2i v2i(s32 x, s32 y)
     return result;
 }
 
+inline b8 v2i_equal(vec2i a, vec2i b)
+{
+    return (a.x == b.x && a.y == b.y);
+}
+
 inline vec2i v2ifromu32(u32 v)
 {
     vec2i result = {.x = (s16)(v & 0xffff), .y = (s16)(v >> 16)};
     return result;
 }
 
-inline rect2 r2(s32 x1, s32 y1, s32 x2, s32 y2)
+inline rect2 r2(s32 x, s32 y, s32 w, s32 h)
 {
-    rect2 result = {.left = x1, .top = y1, .right = x2, .bottom = y2};
+    rect2 result = {.left = x, .top = y, .right = x + w, .bottom = y + h};
     return result;
 }
 

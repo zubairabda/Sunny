@@ -18,7 +18,7 @@ static u8 dec_to_bcd_table[] =
     0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99,
 };
 
-#define CDROM_SECTOR_SIZE 2352
+#define DISK_SECTOR_SIZE 2352
 
 enum cdrstat_flags
 {
@@ -842,7 +842,7 @@ u8 cdrom_read(u32 offset)
             g_cdrom.status.RSLRRDY = false;
             //g_cdrom.response_fifo_count = 0;
             //g_cdrom.response_fifo_current = 0;
-            debug_log("[CDROM] read last response byte\n");
+            //debug_log("[CDROM] read last response byte\n");
         }
         else if (g_cdrom.response_fifo_current > g_cdrom.response_fifo_count)
         {
@@ -911,7 +911,7 @@ void cdrom_store(u32 offset, u8 value)
             g_cdrom.status.PRMWRDY = false;
         }
         g_cdrom.status.PRMEMPT = false;
-        debug_log("[CDROM] send parameter: <- 0x%02x\n", value);
+        //debug_log("[CDROM] send parameter: <- 0x%02x\n", value);
         break;
     case 3: // request reg
         // NOTE: we only consider mode bit 5 when it is requested, not during transfers

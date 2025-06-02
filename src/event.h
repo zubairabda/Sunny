@@ -3,7 +3,7 @@
 
 #include "allocator.h"
 
-typedef void (*event_callback)(u32 param, s32 cycles_late);
+typedef void (*event_callback)(u32 param, s32 cycles_late); // TODO: remove param
 
 extern u64 g_cycles_elapsed;
 

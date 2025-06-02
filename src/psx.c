@@ -9,6 +9,8 @@
 #include "spu.h"
 #include "memory.h"
 
+enum system_state g_state;
+
 b8 psx_load_exe(platform_file *file)
 {
     u64 fsize = platform_get_file_size(file);

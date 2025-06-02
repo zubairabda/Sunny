@@ -13,6 +13,7 @@
 
 #if defined(SY_PLATFORM_WIN32)
     #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
     #include <windows.h>
     typedef HANDLE platform_file_handle;
     typedef HANDLE platform_event_handle;

@@ -14,9 +14,8 @@ static inline void fill_vram(u32 *commands)
     u16 xsize = ((commands[2] & 0x3ff) + 0xf) & 0xff0;
     u16 ysize = (commands[2] >> 16) & 0x1ff;
 
-    if ((xsize | ysize) == 0) {
+    if ((xsize | ysize) == 0)
         return;
-    }
 
     u16 xpos = commands[1] & 0x3f0;
     u16 ypos = (commands[1] >> 16) & 0x1ff;
@@ -30,14 +29,13 @@ static inline void fill_vram(u32 *commands)
     // TODO: wrapping
     while (ysize--) 
     {
-        for (u32 i = 0; i < xsize; ++i) {
+        for (u32 i = 0; i < xsize; ++i)
             dst[i] = color;
-        }
+
         dst += VRAM_WIDTH;
     }
 }
-#include "stream.h" // TODO: temp
-static int s_copy_count = 0;
+
 static inline void copy_cpu_to_vram(void)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
@@ -46,6 +44,7 @@ static inline void copy_cpu_to_vram(void)
     u16 *dst = (u16 *)renderer->vram + (g_gpu.load.x + (VRAM_WIDTH * g_gpu.load.y));
     u16 width = g_gpu.load.width;
 #if 0
+    static int s_copy_count = 0;
     char fname[64];
     snprintf(fname, sizeof(fname), "mdec/copy#%d.bmp", s_copy_count++);
     write_bmp(g_gpu.load.width, g_gpu.load.height, (u8 *)g_gpu.copy_buffer, fname);
@@ -220,6 +219,25 @@ void execute_gp1_command(u32 command)
         g_gpu.allow_texture_disable = (command & 0x1);
         break;
     }
+    case 0x10:
+    {
+        u32 register_index = (command & 0x00ffffff);
+        switch (register_index)
+        {
+        case 0x3:
+            g_gpu.read = (g_gpu.drawing_area.left & 0x3ff) | (g_gpu.drawing_area.top << 10);
+            break;
+        case 0x4:
+            g_gpu.read = (g_gpu.drawing_area.right & 0x3ff) | (g_gpu.drawing_area.bottom << 10);
+            break;
+        case 0x5:
+            g_gpu.read = (g_gpu.draw_offset_x & 0x7ff) | ((g_gpu.draw_offset_y & 0x7ff) << 11);
+            break;
+        default:
+            SY_ASSERT(0);
+        }
+        break;
+    }
     default:
     {
         debug_log("Unknown gp1 command: %x\n", op);
@@ -230,10 +248,10 @@ void execute_gp1_command(u32 command)
     debug_log("GP1 command: %02xh\n", op);
 #endif
 }
-#include <time.h>
+
 void execute_gp0_command(u32 word)
 {
-    if (!g_gpu.pending_words) // get number of remaining words in cmd (includes command itself)
+    if (!g_gpu.pending_words)
     {
         u8 op = word >> 24;
         g_gpu.command_type = (enum gpu_command_type)(word >> 29);
@@ -258,7 +276,6 @@ void execute_gp0_command(u32 word)
             break;
         case COMMAND_TYPE_DRAW_POLYGON:
         {
-            // render polygon
             g_gpu.render_flags = op;
             u32 vertex_count;
             if (op & POLYGON_FLAG_IS_QUAD)
@@ -285,7 +302,7 @@ void execute_gp0_command(u32 word)
         case COMMAND_TYPE_DRAW_LINE:
         {
             g_gpu.render_flags = op;
-            /* at minimum, we need 2 vertices */
+            // at minimum, we need 2 vertices
             if (op & LINE_FLAG_GOURAUD_SHADED) 
             {
                 g_gpu.pending_words = 4;
@@ -298,7 +315,6 @@ void execute_gp0_command(u32 word)
         }
         case COMMAND_TYPE_DRAW_RECT:
         {
-            // render rectangle
             g_gpu.render_flags = op;
             g_gpu.pending_words = 2;
             if (op & RECT_FLAG_TEXTURED)
@@ -313,25 +329,21 @@ void execute_gp0_command(u32 word)
         break;
         case COMMAND_TYPE_VRAM_TO_VRAM:
         {
-            // vram -> vram
             g_gpu.pending_words = 4;
         }
         break;
         case COMMAND_TYPE_CPU_TO_VRAM:
         {
-            // cpu -> vram
             g_gpu.pending_words = 3;
         }
         break;
         case COMMAND_TYPE_VRAM_TO_CPU:
         {
-            // vram -> cpu
             g_gpu.pending_words = 3;
         }
         break;
         case COMMAND_TYPE_ENV:
         {
-            // environment
             g_gpu.pending_words = 1;
         }
         break;
@@ -568,6 +580,7 @@ void execute_gp0_command(u32 word)
                     g_gpu.texture_window_offset_y = (commands[0] >> 15) & 0x1f;
                     break;
                 case 0xe3:
+                    // NOTE: v2 gpu has 10 bits for top
                     g_gpu.drawing_area.left = (commands[0] & 0x3ff);
                     g_gpu.drawing_area.top = ((commands[0] >> 10) & 0x3ff);
                     g_gpu.draw_area_changed = true;
