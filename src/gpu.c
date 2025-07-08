@@ -325,7 +325,7 @@ void execute_gp0_command(u32 word)
             {
                 ++g_gpu.pending_words;
             }
-            if (!((op >> 3) & 0x3)) // TODO: change branch cond
+            if (!((op >> 3) & 0x3))
             {
                 ++g_gpu.pending_words;
             }
@@ -343,7 +343,7 @@ void execute_gp0_command(u32 word)
         case COMMAND_TYPE_ENV:
             g_gpu.pending_words = 1;
             break;
-        default: // TODO: remove
+        default:
             debug_log("[GPU] Unimplemented gp0 command: %x\n", op);
             break;
         }
@@ -528,7 +528,7 @@ void execute_gp0_command(u32 word)
 
                 u32 size = width * height;
                 //size += (size & 0x1);
-                SY_ASSERT((width & 0x1) == 0); // TODO: remove
+                SY_ASSERT((width & 0x1) == 0);
                 g_gpu.readback_buffer_len = 0;
                 // NOTE: since we return the data right away we flush the commands, but maybe we can rely on bit 27 of GPUSTAT?
                 if (g_gpu.software_rendering) {

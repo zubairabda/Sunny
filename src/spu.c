@@ -72,18 +72,6 @@ static s16 gauss_table[] =
     0x5997, 0x599E, 0x59A4, 0x59A9, 0x59AD, 0x59B0, 0x59B2, 0x59B3
 };
 
-#if SY_DEBUG
-static char *debug_spu_str_table[] = {
-                                        "Main volume left", "Main volume right", "Reverb volume left", "Reverb volume right", "Voice Key On", "Voice Key On", 
-                                        "Voice Key Off", "Voice Key Off", "Pitch Modulation", "Pitch Modulation", "Noise Mode Enable", "Noise Mode Enable", "Echo On", 
-                                        "Echo On", "Voice key status", "Voice key status", "garbage", "Reverb work start address", "IRQ address", "Data transfer address", 
-                                        "Data transfer FIFO", "SPUCNT", "Transfer control", "SPUSTAT", "CD volume left", "CD volume right", "External input volume left",
-                                        "External input volume right", "Current main volume left", "Current main volume right"
-                                     };
-
-static char *debug_spu_reg_table[] = {"Volume left", "Volume right", "Sample rate", "Start address", "ADSR lo", "ADSR hi", "ADSR volume", "Repeat address"};
-#endif
-
 struct spu_state g_spu;
 
 void spu_reset(void)
@@ -100,102 +88,11 @@ u16 spu_read(u32 offset)
     u16 result = 0;
     if (offset < 0x180)
     {
-        //u8 voice = (offset >> 4) & 0x1f;
-        //debug_log("SPU voice %u\t%-15.15s -> %u\n", voice, debug_spu_reg_table[(offset & 0xf) >> 1], result);
         result = g_spu.voice.regs[(offset & 0x1ff) >> 1];
     }
     else if (offset < 0x1c0)
     {
-#if 0
-        switch (offset & 0x3f)
-        {
-        case 0x0:
-            result = g_spu.cnt.main_volume_left;
-            break;
-        case 0x2:
-            result = g_spu.cnt.main_volume_right;
-            break;
-        case 0x4:
-            result = g_spu.cnt.reverb_volume_left;
-            break;
-        case 0x6:
-            result = g_spu.cnt.reverb_volume_right;
-            break;
-        case 0x8:
-        case 0xA:
-            // BIOS reads this?
-            result = 0;
-            break;
-        case 0xC:
-        case 0xE:
-            result = 0;
-            break;
-        case 0x10:
-        case 0x12:
-            // PMON
-            break;
-        case 0x14:
-        case 0x16:
-            // NON
-            break;
-        case 0x18:
-        case 0x1A:
-            // EON
-            break;
-        case 0x1C:
-        case 0x1E:
-            // ENDX
-            result = g_spu.cnt.endx << ((offset & 0x2) << 3);
-            break;
-        case 0x20:
-            // garbage?
-            break;
-        case 0x22:
-            result = g_spu.cnt.reverb_work_start_addr;
-            break;
-        case 0x24:
-            result = g_spu.cnt.irq_addr;
-            break;
-        case 0x26:
-            result = g_spu.cnt.data_transfer_addr;
-            break;
-        case 0x28:
-            result = g_spu.transfer_fifo[0];
-            debug_log("[WARN]: Unexpected read from SPU transfer fifo\n");
-            break;
-        case 0x2A:
-            result = g_spu.cnt.spucnt;
-            break;
-        case 0x2C:
-            result = g_spu.cnt.transfer_control;
-            break;
-        case 0x2E:
-            result = g_spu.cnt.spustat;
-            break;
-        case 0x30:
-            result = g_spu.cnt.cd_volume_left;
-            break;
-        case 0x32:
-            result = g_spu.cnt.cd_volume_right;
-            break;
-        case 0x34:
-            // external audio input vol left
-            break;
-        case 0x36:
-            // external audio input vol right
-            break;
-        case 0x38:
-            // current main vol left
-            break;
-        case 0x3a:
-            // current main vol right
-            break;
-        INVALID_CASE;
-        }
-        //debug_log("SPU CTRL\t%-20.20s -> %u\n", debug_spu_str_table[(offset & 0x3f) >> 1], result);
-#else
         result = U16FromPtr(((u8 *)&g_spu.cnt) + (offset & 0x3f));
-#endif
     }
     else if (offset < 0x200)
     {
@@ -319,7 +216,7 @@ void spu_write(u32 offset, u32 value)
         case 0x28:
             // TODO: were not implementing SPUSTAT.10, wonder how far that'll get us
             SY_ASSERT(g_spu.transfer_fifo_len < ARRAYCOUNT(g_spu.transfer_fifo));
-            g_spu.transfer_fifo[g_spu.transfer_fifo_len++] = value; // NOTE: read behavior?
+            g_spu.transfer_fifo[g_spu.transfer_fifo_len++] = value; // read behavior?
             break;
         case 0x2a:
             g_spu.cnt.spucnt = value;
@@ -663,33 +560,4 @@ void spu_tick(u32 param)
         g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right) * volume;
         ++g_spu.frames_buffered;
     }
-
-    //schedule_event(spu_tick, 0, 768 - cycles_late);
-#if 0
-    static b8 was_down = false;
-    b8 is_down = false;
-    struct keyboard_pad *kbd = (struct keyboard_pad *)g_sio.devices[0];
-    static u8 counter = 0;
-    if (kbd->keystates['P']) {
-        is_down = true;
-        if (!was_down)
-        {
-            ++counter;
-        }
-    }
-    b8 has_space = ((g_debug.sound_buffer_len + 2) * 2) < MEGABYTES(16);
-    if (has_space && (counter == 1))
-    {
-        g_debug.sound_buffer[g_debug.sound_buffer_len++] = clamp16(final_vol_left);
-        g_debug.sound_buffer[g_debug.sound_buffer_len++] = clamp16(final_vol_right);
-    }
-    else if (!has_space || counter == 2)
-    {
-        static b8 lock = false;
-        if (!lock)
-            write_wav_file(g_debug.sound_buffer, g_debug.sound_buffer_len * 2, "output.wav");
-        lock = true;
-    }
-    was_down = is_down;
-#endif
 }

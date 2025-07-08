@@ -10,8 +10,6 @@
 #include "sio.h"
 #include "mdec.h"
 
-//#define DELAY_CYCLES(cycles) g_cycles_elapsed += (cycles)
-
 u8 *g_bios;
 u8 *g_ram;
 u8 *g_scratch;

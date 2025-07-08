@@ -143,7 +143,7 @@ b32 psx_run(void)
 
 void psx_step(void)
 {
-    b8 value = g_debug.breakpoints_enabled; // NOTE: as a hack to prevent stopping on breakpoints, we disable them :(
+    b8 value = g_debug.breakpoints_enabled; // currently disabling breakpoints to prevent pausing on them while stepping
     g_debug.breakpoints_enabled = false;
     g_target_cycles = g_cycles_elapsed + 1;
     execute_instructions();

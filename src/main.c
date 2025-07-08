@@ -86,20 +86,6 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     return result;
 }
 
-DWORD WINAPI present_thread_func(LPVOID lpParameter)
-{
-    // TODO: resizing
-    for (;;)
-    {
-        if (platform_wait_event(&g_present_ready))
-        {
-            g_renderer->present();
-            // NOTE: main thread can set event again before we reset it here
-            platform_reset_event(&g_present_ready);
-        }
-    }
-}
-
 static inline const char *spu_voice_state_to_str(int voice)
 {
     switch (g_spu.voice.internal[voice].state)
@@ -544,7 +530,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     }
     else 
     {
-        g_renderer = win32_load_renderer_from_dll(hwnd, hInstance, "vulkan_renderer.dll");
+        MessageBoxA(hwnd, "Hardware rendering support is currently not implemented.\n", "Renderer error", MB_ICONERROR | MB_OK);
+        //g_renderer = win32_load_renderer_from_dll(hwnd, hInstance, "vulkan_renderer.dll");
     }
 
     g_sio.devices[0] = push_arena(&arena, sizeof(struct keyboard_pad));
@@ -553,12 +540,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     audio_init();
     audio_set_volume(0.5f);
-
-    if (!g_gpu.software_rendering)
-    {
-        platform_create_event(&g_present_ready, false);
-        HANDLE present_thread_handle = CreateThread(NULL, 0, present_thread_func, NULL, 0, NULL);
-    }
 
     debug_ui_init(&arena);
     debug_ui_set_window_rect("Menu", r2(0, 0, 315, 200));
