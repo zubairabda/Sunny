@@ -219,11 +219,11 @@ static u32 get_timer_ticks_until_interrupt(u32 timer_index)
     return 0;
 }
 
-static void timer_interrupt(u32 timer_index, s32 cycles_late)
+static void timer_interrupt(u32 timer_index)
 {
     // TODO: currently timer interrupts break the shell
     g_cpu.i_stat |= ((u32)INTERRUPT_TIMER0) << timer_index;
-    g_counters[timer_index].interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
+    g_counters[timer_index].interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
 }
 
 void counters_store(u32 offset, u32 value)
@@ -263,7 +263,7 @@ void counters_store(u32 offset, u32 value)
         //counter->clock_delay = 1;
         counter->value = 0;
         counter->prev_cycle_count = g_cycles_elapsed;
-        counter->sync = 0;
+        counter->sync = false;
         counter->pause_ticks = 0;
         counter->timestamp = g_cycles_elapsed; // TODO: remove?
         counter->remainder = 0;
@@ -271,7 +271,7 @@ void counters_store(u32 offset, u32 value)
         if (counter->mode.value & (0x3 << 4) && timer_index == 2) 
         {
             remove_event(counter->interrupt_event_id);
-            counter->interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
+            counter->interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
         }
 
         break;

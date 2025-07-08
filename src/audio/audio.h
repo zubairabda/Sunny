@@ -3,11 +3,16 @@
 
 #include "common.h"
 
-typedef struct audio_player audio_player;
+b8 audio_init(void);
+void audio_shutdown(void);
 
-audio_player *audio_init(void);
-void audio_shutdown(audio_player *audio);
-void emulate_from_audio(audio_player *audio);
-void play_sound(audio_player *audio, s16 *data, u32 num_frames);
+b32 emulate_from_audio(void);
+void play_sound(s16 *data, u32 num_frames);
+
+void audio_set_volume(f32 volume);
+f32 audio_get_volume(void);
+
+void audio_set_mute(b8 muted);
+b8 audio_is_muted(void);
 
 #endif /* AUDIO_H */

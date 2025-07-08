@@ -136,7 +136,6 @@ union reverb_regs
 struct spu_state
 {
     u32 sector_sample_index;
-    u8 enable_output;
     union reverb_regs reverb;
 
     struct spu_voice
@@ -158,10 +157,8 @@ struct spu_state
     u8 transfer_fifo_len;
     u16 transfer_fifo[32];
     u32 current_transfer_addr;
-    u32 num_buffered_frames;
-    u32 audio_buffer_len;
+    u32 frames_buffered;
     s16 *audio_buffer;
-    s16 *buffered_samples;
     u8 *dram;
 };
 
@@ -171,6 +168,6 @@ void spu_reset(void);
 
 u16 spu_read(u32 offset);
 void spu_write(u32 offset, u32 value);
-void spu_tick(u32 param, s32 cycles_late);
+void spu_tick(u32 param);
 
 #endif /* SPU_H */

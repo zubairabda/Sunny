@@ -6,7 +6,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define MAX_BREAKPOINTS 64
+#define MAX_BREAKPOINTS 32
 
 struct debug_breakpoint
 {
@@ -14,12 +14,6 @@ struct debug_breakpoint
     u8 active;
     u8 hash_psl;
     u16 hit_count;
-};
-
-struct debug_gpu_command
-{
-    s32 type;
-    u32 params[16];
 };
 
 struct debug_state
@@ -30,13 +24,14 @@ struct debug_state
     u32 log_mask;
     u16 *sound_buffer;
     u32 sound_buffer_len;
-    u32 gpu_commands_len;
-    struct debug_gpu_command *gpu_commands;
-    b8 log_gpu_commands;
     b8 breakpoints_enabled;
+    b8 breakpoint_was_hit;
     u8 breakpoint_count;
     u8 max_psl;
     struct debug_breakpoint bp[MAX_BREAKPOINTS];
+    u64 timestamp;
+    u64 cpu_ticks;
+    b8 pause;
 };
 
 extern struct debug_state g_debug;

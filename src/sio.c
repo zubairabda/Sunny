@@ -41,7 +41,7 @@ u16 sio_read(u32 offset)
 #define JOYMODE_WRITE_MASK 0x13f
 #define JOY_WRITE_DELAY 1088
 
-static void pad_ack_callback(u32 param, s32 cycles_late)
+static void pad_ack_callback(u32 param)
 {
     g_sio.stat.ack_is_low = param;
     // might not be accurate to check here
@@ -95,7 +95,7 @@ static void sio_cmd(u8 cmd)
                 g_sio.stat.ack_is_low = 1;
                 g_sio.state = SIO_STATE_READ_CONTROLLER;
                 g_sio.sequence_index = 0;
-                schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY);
+                schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY, false);
             }
             else
             {
@@ -175,7 +175,7 @@ static void sio_cmd(u8 cmd)
         {
             g_sio.stat.ack_is_low = 1;
             // /ACK signal width is about 2usec?
-            schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY);
+            schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY, false);
         }
     } break;
     INVALID_CASE;

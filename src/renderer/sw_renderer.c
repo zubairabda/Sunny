@@ -3,8 +3,6 @@
 #include "debug/debug_ui.h"
 #include "debug/atlas.h"
 
-b8 g_display_updated;
-
 static void renderer_stub_function(void) {}
 
 static inline u32 swizzle_16_32(u16 pixel)
@@ -38,22 +36,27 @@ static void handle_resize(u32 width, u32 height)
 #endif
 }
 
-static void update_display(void)
+void update_vram(void)
 {
 #if defined(SY_PLATFORM_WIN32)
     win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
-
     u16 *vram = renderer->sw.vram;
     u32 *vram_texture = renderer->vram_data;
-#if 1
-    int width = renderer->window_width;
-    int height = renderer->window_height;
 
     for (int i = 0; i < (VRAM_SIZE >> 1); ++i)
     {
         vram_texture[i] = swizzle_16_32(vram[i]);
     }
+#endif
+}
 
+static void update_display(void)
+{
+#if defined(SY_PLATFORM_WIN32)
+    win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
+#if 1
+    int width = renderer->window_width;
+    int height = renderer->window_height;
 #if 0
     int src_x = g_gpu.vram_display_x;
     int src_y = g_gpu.vram_display_y;
@@ -72,27 +75,16 @@ static void update_display(void)
     u32 *pixels = renderer->fullscreen_data;
 
     rect2 clip_rect = {0, 0, width, height};
-    //int count = 0;
-    struct debug_ui_command_header *cmd = NULL;
-    while ((cmd = debug_ui_next_command()) != NULL)
+
+    struct debug_ui_command_header *cmd;
+    while (debug_ui_next_command(&cmd))
     {
-        //++count;
         switch (cmd->type)
         {
         case DEBUG_UI_COMMAND_SET_CLIP:
         {
             struct debug_ui_command_set_clip *clip = (struct debug_ui_command_set_clip *)cmd;
             clip_rect = clip->r;
-#if 0
-            vec2i p0 = {.x = clip_rect.left, .y = clip_rect.top};
-            vec2i p1 = {.x = clip_rect.left, .y = clip_rect.bottom-1};
-            vec2i p2 = {.x = clip_rect.right-1, .y = clip_rect.top};
-            vec2i p3 = {.x = clip_rect.right-1, .y = clip_rect.bottom-1};
-            pixels[p0.x + (width * p0.y)] = 0x00ff0000;
-            pixels[p1.x + (width * p1.y)] = 0x00ff0000;
-            pixels[p2.x + (width * p2.y)] = 0x00ff0000;
-            pixels[p3.x + (width * p3.y)] = 0x00ff0000;
-#endif
             break;
         }
         case DEBUG_UI_COMMAND_QUAD:
@@ -178,6 +170,11 @@ static void update_display(void)
                 int right = dest.right - dest.left;
                 int bottom = dest.bottom - dest.top;
 
+                u32 color = text->color;
+                u32 r = color & 0xff;
+                u32 g = (color >> 8) & 0xff;
+                u32 b = (color >> 16) & 0xff;
+
                 for (int y = offset_y; y < bottom; ++y)
                 {
                     for (int x = offset_x; x < right; ++x)
@@ -186,6 +183,9 @@ static void update_display(void)
                         u32 src_y = src.top + y;
 
                         u32 alpha = atlas[src_x + (ATLAS_WIDTH * src_y)];
+                        u32 tr = (alpha * r) / 0xff;
+                        u32 tg = (alpha * g) / 0xff;
+                        u32 tb = (alpha * b) / 0xff;
 
                         u32 dst_x = dest.left + x;
                         u32 dst_y = dest.top + y;
@@ -198,9 +198,9 @@ static void update_display(void)
                         u8 dst_r = (c_dst >> 16) & 0xff;
 
                         f32 factor = 1.0f - (alpha / 255.0f);
-                        u32 c_b = alpha + dst_b * factor;
-                        u32 c_g = alpha + dst_g * factor;
-                        u32 c_r = alpha + dst_r * factor;
+                        u32 c_b = tb + dst_b * factor;
+                        u32 c_g = tg + dst_g * factor;
+                        u32 c_r = tr + dst_r * factor;
 
                         pixels[dst] = c_b | (c_g << 8) | (c_r << 16);
                     }
@@ -250,7 +250,6 @@ static void update_display(void)
     }
 
     // blit the ui texture
-    u32 *pixels = (u32 *)renderer->fullscreen_data;
     for (int y = 0; y < height; ++y)
     {
         int dst_row = width * y;
@@ -271,8 +270,6 @@ static void update_display(void)
     BitBlt(window_dc, 0, 0, width, height, renderer->fullscreen_dc, 0, 0, SRCCOPY);
 
     ReleaseDC(renderer->window, window_dc);
-
-    g_display_updated = true;
 #else
     InvalidateRect(renderer->window, NULL, FALSE);
     UpdateWindow(renderer->window);
@@ -299,12 +296,14 @@ software_renderer *platform_init_software_renderer(platform_window *window)
     bitmap_info.bmiHeader.biBitCount = 32;
     bitmap_info.bmiHeader.biCompression = BI_RGB;
 #endif
+    // actual vram data which draw commands write to
     void *vram = malloc(VRAM_SIZE);
     if (!vram) {
         free(result);
         return NULL;
     }
 
+    // vram texture that is blitted to screen, copied from the original vram
     result->vram_bitmap = CreateDIBSection(NULL, &bitmap_info, DIB_RGB_COLORS, (void **)&result->vram_data, 0, 0);
 
     SelectObject(result->vram_dc, result->vram_bitmap);
@@ -342,6 +341,7 @@ software_renderer *platform_init_software_renderer(platform_window *window)
     result->sw.base.present = renderer_stub_function;
     result->sw.base.handle_resize = handle_resize;
     result->sw.base.update_display = update_display;
+    result->sw.base.shutdown = renderer_stub_function;
 
     return (software_renderer *)result;
 #endif

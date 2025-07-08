@@ -19,7 +19,7 @@ void psx_reset(void);
 b8 psx_can_boot(void);
 
 void psx_init(struct memory_arena *arena, void *bios);
-void psx_run(void);
+b32 psx_run(void);
 void psx_step(void);
 
 #endif /* PSX_H */

@@ -3,9 +3,6 @@
 
 #include "renderer.h"
 
-// TODO: temp
-extern b8 g_display_updated;
-
 #if defined(SY_PLATFORM_WIN32)
 typedef struct win32_software_renderer {
     software_renderer sw;
@@ -26,6 +23,7 @@ software_renderer *platform_init_software_renderer(platform_window *window);
 
 void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor);
 void draw_rectangle(u32 *commands, u32 flags, u32 texpage, vec2i draw_offset, rect2 scissor);
+void update_vram(void);
 
 //void draw_triangle(vec2i v1, vec2i v2, vec2i v3, u16 color);
 //void draw_shaded_triangle(u16 c1, vec2i v1, u16 c2, vec2i v2, u16 c3, vec2i v3);

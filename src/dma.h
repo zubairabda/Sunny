@@ -25,6 +25,25 @@ typedef union
     u32 value;
 } DHCR;
 
+enum dma_channel
+{
+    CH_MDECIN,
+    CH_MDECOUT,
+    CH_GPU,
+    CH_CDROM,
+    CH_SPU,
+    CH_PIO,
+    CH_OTC,
+    CH_COUNT
+};
+
+enum dma_mode
+{
+    DMA_MODE_BURST = 0,
+    DMA_MODE_SLICE = 1,
+    DMA_MODE_LINKEDLIST = 2
+};
+
 struct dma_port
 {
     u32 madr;
@@ -34,22 +53,31 @@ struct dma_port
     u32 pad;
 };
 
-struct dma_state
+struct dma_transfer
 {
-    struct dma_port ports[7];
-    u32 control;
-    u32 interrupt;
+    u32 current_addr;
+    u32 words_left;
+    u32 priority;
+    s8 step;
+    u8 transfer_mode;
+    //u8 dma_window;
+    //u8 cpu_window;
+    //u16 blocks_left;
+    b8 is_from_ram;
+    b8 in_progress;
+    u32 pending_words;
+    b8 pending;
+    u8 pad[3];
 };
 
-enum dma_channel
+struct dma_state
 {
-    CH_MDECIN,
-    CH_MDECOUT,
-    CH_GPU,
-    CH_CDROM,
-    CH_SPU,
-    CH_PIO,
-    CH_OTC
+    struct dma_port ports[CH_COUNT];
+    u32 control;
+    u32 interrupt;
+    struct dma_transfer transfers[CH_COUNT];
+    s32 active_channel;
+    u64 event_id;
 };
 
 extern struct dma_state g_dma;
@@ -57,6 +85,5 @@ extern struct dma_state g_dma;
 void dma_init(void);
 u32 dma_read(u32 offset);
 void dma_write(u32 offset, u32 value);
-void dma_set_interrupt(u32 channel);
 
 #endif /* DMA_H */

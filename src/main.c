@@ -14,12 +14,16 @@
 #include "allocator.h"
 #include "disasm.h"
 #include "gpu.h"
+#include "dma.h"
 #include "spu.h"
+#include "memory.h"
 #include "audio/audio.h"
 #include "renderer/sw_renderer.h"
 #include "renderer/win32_renderer.h"
 
 static volatile b32 g_running = true;
+
+static b8 show_menu = false;
 
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -39,8 +43,12 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_CLOSE:
         g_running = false;
         break;
-    case WM_KEYDOWN:
+    case WM_CHAR:
         debug_ui_keydown(wParam);
+        break;
+    case WM_KEYDOWN:
+        if (wParam == 'M')
+            show_menu = !show_menu;
     case WM_KEYUP:
         if (wParam < 128)
         {
@@ -80,7 +88,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
 DWORD WINAPI present_thread_func(LPVOID lpParameter)
 {
-    // TODO: resizing?
+    // TODO: resizing
     for (;;)
     {
         if (platform_wait_event(&g_present_ready))
@@ -109,31 +117,40 @@ static inline const char *spu_voice_state_to_str(int voice)
     }
 }
 
-static b8 show_menu = false;
 static b8 show_voices = false;
 static b8 show_debug = false;
 static b8 show_files = false;
+static b8 show_dma = false;
 static char current_dir[MAX_PATH];
+static char textbuf[16];
+
+static void pause_button(void)
+{
+    if (debug_ui_button("Pause"))
+    {
+        if (g_state == SYSTEM_STATE_PAUSED)
+            g_state = SYSTEM_STATE_RUNNING;
+        else if (g_state == SYSTEM_STATE_RUNNING)
+            g_state = SYSTEM_STATE_PAUSED;
+    }
+}
 
 void draw_debug_ui(u32 width, u32 height)
 {
-    debug_ui_begin(0.0f, width, height);
-    
-    if (debug_ui_begin_window("Menu", r2(100, 100, 300, 300), 0, &show_menu))
+    debug_ui_begin(width, height);
+
+    if (debug_ui_begin_window("Menu", 0, &show_menu))
     {
-        if (debug_ui_button("Pause"))
-        {
-            if (g_state == SYSTEM_STATE_PAUSED)
-                g_state = SYSTEM_STATE_RUNNING;
-            else if (g_state == SYSTEM_STATE_RUNNING)
-                g_state = SYSTEM_STATE_PAUSED;
-        }
+        pause_button();
 
-        if (debug_ui_button("Debug")) { show_debug = true; }
+        if (debug_ui_button("Debug"))
+            show_debug = true;
 
-        if (debug_ui_button("Voice")) { show_voices = true; }
+        if (debug_ui_button("Voice"))
+            show_voices = true;
 
-        if (debug_ui_button("Load")) { show_files = true; }
+        if (debug_ui_button("Load"))
+            show_files = true;
 
         if (debug_ui_button("Reset"))
         {
@@ -146,21 +163,33 @@ void draw_debug_ui(u32 width, u32 height)
 
         if (debug_ui_button("Mute"))
         {
-            g_spu.enable_output = !g_spu.enable_output;
+            b8 muted = audio_is_muted();
+            audio_set_mute(!muted);
         }
+
+        if (debug_ui_button("DMA"))
+            show_dma = true;
 
         debug_ui_end_window();
     }
 
-    if (debug_ui_begin_window("Debugger", r2(0, 0, 600, 400), 0, &show_debug))
+    if (debug_ui_begin_window("Debugger", 0, &show_debug))
     {
         static b8 follow_pc = true;
         b8 scroll_to_pc = false;
+        b8 scroll_to_addr = false;
+        u32 address;
 
+        debug_ui_push_layout(DIR_HORIZONTAL);
+
+        pause_button();
+
+        static u32 last_reg_values[32];
         if (debug_ui_button("Step Into"))
         {
             if (g_state == SYSTEM_STATE_PAUSED)
             {
+                memcpy(&last_reg_values[0], &g_cpu.registers[0], sizeof(u32) * 32);
                 psx_step();
                 if (follow_pc)
                     scroll_to_pc = true;
@@ -171,31 +200,47 @@ void draw_debug_ui(u32 width, u32 height)
             scroll_to_pc = true;
         
         debug_ui_checkbox(&follow_pc, "Follow PC");
-        if (follow_pc && g_state == SYSTEM_STATE_RUNNING)
-            scroll_to_pc = true;
+
+        if (debug_ui_textbox(textbuf, sizeof(textbuf), TEXTBOX_FLAG_RESET_ON_EDIT))
+        {
+            if (str_to_hex(textbuf, &address))
+            {
+                scroll_to_addr = true;
+                debug_ui_set_scroll(((address & 0x1fffffff) >> 2) * 18);
+            }
+        }
+
+        debug_ui_labelf("pc %08X", g_cpu.pc);
 
         debug_ui_layout_row();
 
-        char buf[256];
-        for (u8 r = 0; r < 4; ++r)
+        u8 row_count = 0;
+        for (u8 i = 0; i < 32; ++i)
         {
-            for (u8 i = 0; i < 8; ++i)
+            u32 reg = g_cpu.registers[i];
+            if (g_state == SYSTEM_STATE_PAUSED)
+                debug_ui_color_labelf(last_reg_values[i] != reg ? 0x7575fa : 0xffffff, "%s %08X", register_names[i], reg);
+            else
+                debug_ui_labelf("%s %08X", register_names[i], g_cpu.registers[i]);
+
+            if (row_count++ == 7)
             {
-                u8 index = i + (r * 8);
-                debug_ui_labelf("r%-2d %08X", index, g_cpu.registers[index]);
+                debug_ui_layout_row();
+                row_count = 0;
             }
-            debug_ui_layout_row();
         }
-        
-        char param[64];
-        //f32 num_elements = (f32)size.y / 18;
+        debug_ui_layout_row();
+
+        debug_ui_pop_layout();
+
         debug_ui_begin_group("Disassembly");
 
-        vec2i size = debug_ui_get_window_size();
+        rect2 rect = debug_ui_get_panel_rect();
+        s32 width = rect.right - rect.left;
 
+        char params[64];
         u32 pc = g_cpu.pc & 0x1fffffff;
-
-        const int RAM_SIZE = MEGABYTES(2);
+        b8 pc_is_visible = false;
 
         struct debug_ui_list_clipper clipper = debug_ui_begin_list_clipper(18, RAM_SIZE);
         for (u32 i = clipper.start_index; i < clipper.end_index; ++i)
@@ -203,16 +248,18 @@ void draw_debug_ui(u32 width, u32 height)
             u32 addr = i * 4;
             
             vec2i pos = debug_ui_next_pos();
+            rect2 item_rect = r2(pos.x, pos.y, width, 18);
             if (addr == pc)
             {
-                debug_ui_quad(0xb0af5b, pos.x, pos.y, size.x, 18);
+                pc_is_visible = true;
+                debug_ui_quad(0xb0af5b, item_rect);
             }
             else if (addr & 0x4)
             {
-                debug_ui_quad(0x3f3f3f, pos.x, pos.y, size.x, 18);
+                debug_ui_quad(0x3f3f3f, item_rect);
             }
             
-            u32 press = debug_ui_button_behavior(addr, r2(pos.x, pos.y, size.x, 18));
+            u32 press = debug_ui_button_behavior(addr, item_rect);
             if (press & DEBUG_UI_INTERACTION_PRESSED)
             {
                 // add breakpoint
@@ -224,34 +271,35 @@ void draw_debug_ui(u32 width, u32 height)
 
             if (breakpoint_get(addr))
             {
-                debug_ui_quad(0xff0000, pos.x, pos.y, size.x, 18);
+                debug_ui_quad(0xff0000, item_rect);
             }
 
-            const char *op = instr_to_string(fetch_instruction(addr), param, sizeof(param));
-            snprintf(buf, sizeof(buf), "%08X    %s %s", addr, op, param);
-            debug_ui_label(buf);
+            u32 instruction = fetch_instruction(addr);
+            const char *op = instr_to_string(instruction, params, sizeof(params));
+            debug_ui_labelf("%08X    %08X    %s %s", addr, instruction, op, params);
         }
         debug_ui_end_list_clipper(&clipper);
 
-        if (scroll_to_pc)
+#if 1
+        if (scroll_to_pc && !pc_is_visible)
             debug_ui_set_scroll((pc >> 2) * 18);
-
+        else if (scroll_to_addr)
+            debug_ui_set_scroll(((address & 0x1fffffff) >> 2) * 18);
+#endif
         debug_ui_end_group();
         
         debug_ui_end_window();
     }
 
-    if (debug_ui_begin_window("Voices", r2(100, 50, 500, 500), 0, &show_voices))
+    if (debug_ui_begin_window("Voices", 0, &show_voices))
     {
         vec2i pos = debug_ui_next_pos();
-        debug_ui_push_layout(DIR_VERTICAL, pos.x, pos.y);
         char buf[256];
         for (int i = 0; i < 24; ++i)
         {
             snprintf(buf, sizeof(buf), "Voice #%-4d: %-10s | ADSR: %-8d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume, g_spu.cnt.endx & (1 << i) ? "true" : "false");
             debug_ui_label(buf);
         }
-        debug_ui_pop_layout();
         debug_ui_end_window();
     }
 
@@ -260,7 +308,8 @@ void draw_debug_ui(u32 width, u32 height)
     int panel_x = (width - panel_w) / 2;
     int panel_y = (height - panel_h) / 2;
 
-    if (debug_ui_begin_window("Image Select", r2(panel_x, panel_y, panel_w, panel_h), 0, &show_files))
+    debug_ui_set_window_rect("Image Select", r2(panel_x, panel_y, panel_w, panel_h));
+    if (debug_ui_begin_window("Image Select", 0, &show_files))
     {
         char path[MAX_PATH];
 
@@ -268,7 +317,7 @@ void draw_debug_ui(u32 width, u32 height)
         u32 dir_len = 0;
         if (current_dir[0] == '\0')
         {
-            u32 dir_len = GetCurrentDirectoryA(MAX_PATH, dir);
+            dir_len = GetCurrentDirectoryA(MAX_PATH, dir);
             SY_ASSERT(dir_len <= (MAX_PATH - 3) && (dir_len != 0));
             char *p = dir + dir_len;
             *p++ = '\\';
@@ -381,6 +430,58 @@ void draw_debug_ui(u32 width, u32 height)
         debug_ui_end_window();
     }
 
+    if (debug_ui_begin_window("DMA", 0, &show_dma))
+    {
+        if (g_dma.active_channel >= 0)
+        {
+            struct dma_transfer *transfer = &g_dma.transfers[g_dma.active_channel];
+            const char *modes[3] = {"burst", "slice", "linked-list"};
+            const char *channels[7] = {"MDEC in", "MDEC out", "GPU", "CDROM", "SPU", "PIO", "OTC"};
+
+            u32 addr = g_dma.ports[g_dma.active_channel].madr;
+
+            debug_ui_labelf("Active channel: %s", channels[g_dma.active_channel]);
+            debug_ui_labelf("Mode: %s", modes[transfer->transfer_mode]);
+            debug_ui_labelf("Transfer address: %08X", addr);
+            debug_ui_labelf("Current address: %08X", transfer->current_addr);
+            if (transfer->transfer_mode != DMA_MODE_LINKEDLIST)
+            {
+                debug_ui_labelf("Remaining words: %u", transfer->words_left);
+            }
+            else
+            {
+                debug_ui_begin_group("transfer");
+                u32 next_entry = addr;
+                u32 timeout = 4096;
+                for (; timeout; --timeout)
+                {
+                    u32 current = next_entry;
+                    u32 entry = U32FromPtr(g_ram + next_entry);
+                    u32 transfer_size = entry >> 24;
+                    next_entry = entry & 0xffffff;
+                    debug_ui_labelf("Address: %08X, Count: %u, Next: %08X", current, transfer_size, next_entry);
+                    if (next_entry & 0x800000)
+                        break;
+                }
+                static enum system_state last_state;
+                
+                if (addr == 0xeb8d4 && last_state == SYSTEM_STATE_RUNNING) {
+                    printf("paused.\n");
+                    g_state = SYSTEM_STATE_PAUSED;
+                }
+
+                last_state = g_state;
+
+                debug_ui_end_group();
+            }
+        }
+        else
+        {
+            debug_ui_label("No active channel.");
+        }
+        debug_ui_end_window();
+    }
+
     debug_ui_end();
 }
 
@@ -400,7 +501,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     current_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(conout, current_mode);
 #endif
-    g_debug.sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    //g_debug.sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
     char *class_name = "SunnyWindowClass";
     WNDCLASSA wc = {0};
@@ -425,7 +526,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     }
 
     struct memory_arena arena = allocate_arena(MEGABYTES(16));
-    memset(arena.base, 0, arena.size);
 
     load_config();
 
@@ -451,13 +551,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     g_sio.devices[0]->type = INPUT_DEVICE_DIGITAL_PAD;
     g_sio.devices[0]->input_get_data = keyboard_get_digital_pad_input;
 
-    audio_player *audio = audio_init();
+    audio_init();
+    audio_set_volume(0.5f);
 
-    platform_create_event(&g_present_ready, false);
-
-    HANDLE present_thread_handle = CreateThread(NULL, 0, present_thread_func, NULL, 0, NULL);
+    if (!g_gpu.software_rendering)
+    {
+        platform_create_event(&g_present_ready, false);
+        HANDLE present_thread_handle = CreateThread(NULL, 0, present_thread_func, NULL, 0, NULL);
+    }
 
     debug_ui_init(&arena);
+    debug_ui_set_window_rect("Menu", r2(0, 0, 315, 200));
+    debug_ui_set_window_rect("Voices", r2(100, 50, 500, 500));
+    debug_ui_set_window_rect("Debugger", r2(0, 0, 600, 400));
 
     LARGE_INTEGER begin_counter, end_counter, frequency;
     QueryPerformanceFrequency(&frequency);
@@ -469,11 +575,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         g_state = SYSTEM_STATE_RUNNING;
     }
 
-    //g_debug.breakpoints_enabled = true; // TODO: temp
-    g_spu.enable_output = false;
+    g_debug.breakpoints_enabled = true; // TODO: temp
     g_debug.log_level = LOG_ERROR;
-
-    b8 key_was_down = false;
 
     while (g_running)
     {
@@ -489,29 +592,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         int window_w = client.right - client.left;
         int window_h = client.bottom - client.top;
 
-        if (GetKeyState('M') & 0x8000)
-        {
-            if (!key_was_down)
-                show_menu = !show_menu;
-            key_was_down = true;
-        }
-        else
-        {
-            key_was_down = false;
-        }
-
         draw_debug_ui(window_w, window_h);
 
         if (g_state == SYSTEM_STATE_RUNNING)
         {
-            emulate_from_audio(audio);
+            emulate_from_audio();
         }
-#if 1
-        if (!g_display_updated) {
-            g_renderer->update_display();
+        else
+        {
+            Sleep(5);
         }
-        g_display_updated = false;
-#endif
+
+        g_renderer->update_display();
+        
         QueryPerformanceCounter(&end_counter);
 
         u64 ticks_elapsed = (end_counter.QuadPart - begin_counter.QuadPart);

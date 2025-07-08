@@ -3,8 +3,6 @@
 #include "event.h"
 #include "memory.h"
 #include "debug.h"
-#include "disasm.h"
-#include "psx.h"
 
 #define COP0_SR 12
 #define COP0_CAUSE 13
@@ -12,9 +10,9 @@
 
 struct cpu_state g_cpu;
 
-void set_interrupt(u32 param, s32 cycles_late)
+void set_interrupt(u32 irq)
 {
-    g_cpu.i_stat |= param;
+    g_cpu.i_stat |= irq;
 }
 
 static inline reg_tuple set_register(u32 index, u32 value)
@@ -23,7 +21,7 @@ static inline reg_tuple set_register(u32 index, u32 value)
     return load;
 }
 
-static inline void handle_exception(enum exception_code cause)
+static void handle_exception(enum exception_code cause)
 {
 #if 0
     g_cpu.cop0[13] &= ~(0x7c);
@@ -130,16 +128,6 @@ void cpu_init(void)
     g_cpu.cop0[15] = 0x2; // PRID
 }
 
-u32 peek_instruction(u32 pc)
-{
-    u32 addr = pc & 0x1fffffff;
-    void *data = mem_read(addr);
-    if (data)
-        return U32FromPtr(data);
-    else
-        return 0;
-}
-
 u32 fetch_instruction(u32 pc)
 {
     u32 addr = pc & 0x1fffffff;
@@ -177,32 +165,32 @@ u32 fetch_instruction(u32 pc)
     return 0;
 }
 
-void execute_instruction(u64 min_cycles)
+b32 execute_instructions(void)
 {
     b8 branched = false;
     reg_tuple new_load = {0};
     reg_tuple write = {0};
-    u64 target_cycles = g_cycles_elapsed + min_cycles;
-    static b8 breakpoint_hit = 0;
 
-    while (g_cycles_elapsed < target_cycles)
+    while (g_cycles_elapsed < g_target_cycles)
     {
 #if 1
         // handle frontend breakpoints
-        if (g_debug.breakpoint_count && !breakpoint_hit)
+        if (g_debug.breakpoints_enabled && g_debug.breakpoint_count)
         {
             u32 pc = g_cpu.pc & 0x1fffffff;
-            if (breakpoint_get(pc))
+            if (!g_debug.breakpoint_was_hit && breakpoint_get(pc))
             {
-                g_state = SYSTEM_STATE_PAUSED;
-                breakpoint_hit = 1;
-                return;
+                g_debug.breakpoint_was_hit = true;
+                return false;
             }
+            g_debug.breakpoint_was_hit = false;
         }
-        breakpoint_hit = 0;
+        if (g_debug.pause)
+        {
+            g_debug.pause = false;
+            return false;
+        }
 #endif
-        ++g_cycles_elapsed;
-
         log_tty();
 
         if (g_cpu.pc & 0x3) // NOTE: this seems to fix amidog exception tests but im not sure its needed
@@ -210,6 +198,8 @@ void execute_instruction(u64 min_cycles)
             g_cpu.cop0[8] = g_cpu.pc;
             handle_exception(EXCEPTION_CODE_ADEL);
         }
+
+        //print_function_hooks(g_cpu.pc & 0x1fffffff);
 
         instruction ins = {.value = fetch_instruction(g_cpu.pc)};
         
@@ -378,7 +368,7 @@ void execute_instruction(u64 min_cycles)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled load to data cache\n");
+                debug_warn("Unhandled load to data cache\n");
                 break;
             }
             new_load.index = ins.rt;
@@ -390,7 +380,7 @@ void execute_instruction(u64 min_cycles)
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled load to data cache\n");
+                debug_warn("Unhandled load to data cache\n");
                 break;
             }
             new_load.index = ins.rt;
@@ -419,7 +409,7 @@ void execute_instruction(u64 min_cycles)
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled store to data cache\n");
+                debug_warn("Unhandled store to data cache\n");
                 break;
             }
             store8(vaddr, g_cpu.registers[ins.rt]);
@@ -436,7 +426,7 @@ void execute_instruction(u64 min_cycles)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled store to data cache\n");
+                debug_warn("Unhandled store to data cache\n");
                 break;
             }
             store16(vaddr, g_cpu.registers[ins.rt]);
@@ -505,7 +495,7 @@ void execute_instruction(u64 min_cycles)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled store to data cache\n");
+                debug_warn("Unhandled store to data cache\n");
                 break;
             }
             store32(vaddr, g_cpu.registers[ins.rt]);
@@ -585,7 +575,7 @@ void execute_instruction(u64 min_cycles)
                 break;
             }
             default:
-                debug_log("WARNING: Unknown coprocessor op: %x\n", ins.rs); // NOTE: RI exception
+                debug_warn("WARNING: Unknown coprocessor op: %x\n", ins.rs); // NOTE: RI exception
                 break;
             }
             break;
@@ -612,7 +602,7 @@ void execute_instruction(u64 min_cycles)
                 gte_write(32 + ins.rd, g_cpu.registers[ins.rt]);
                 break;
             default:
-                debug_log("Unhandled COP2 operation: %02x\n", ins.rs);
+                debug_warn("Unhandled COP2 operation: %02x\n", ins.rs);
                 break;
             }
             break;
@@ -814,13 +804,13 @@ void execute_instruction(u64 min_cycles)
                 break;
             }
             default:
-                debug_log("WARNING: Unknown secondary: %x\n", ins.secondary);
+                debug_warn("WARNING: Unknown secondary: %x\n", ins.secondary);
                 //handle_exception(EXCEPTION_CODE_RESERVED_INSTRUCTION);
                 break;
             }
             break;
         default:
-            debug_log("WARNING: Unknown opcode: %x\n", ins.op);
+            debug_warn("WARNING: Unknown opcode: %x\n", ins.op);
             //handle_exception(EXCEPTION_CODE_RESERVED_INSTRUCTION);
             break;
         }
@@ -843,7 +833,10 @@ void execute_instruction(u64 min_cycles)
 
         g_cpu.registers[0] = 0;
 
-        //g_cycles_elapsed += 1;//psx->pending_cycles;
         handle_interrupts();
+
+        ++g_cycles_elapsed;
+        //++g_debug.cpu_ticks;
     }
+    return true;
 }

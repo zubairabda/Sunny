@@ -18,17 +18,19 @@ DEFINE_GUID(IID_IMMDeviceEnumerator, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xD
 
 DEFINE_GUID(CLSID_MMDeviceEnumerator, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
 
-struct audio_player
+typedef struct
 {
     IAudioClient *client;
     IAudioRenderClient *render_client;
     u32 buffer_size;
-    u32 src_len;
-    u8 *src_cursor;
+    f32 volume;
+    b8 mute;
     HANDLE event;
-};
+} win32_audio_impl;
 
-static inline const char *hr_to_str(HRESULT hr)
+static win32_audio_impl *g_audio;
+
+static const char *hr_to_str(HRESULT hr)
 {
     switch (hr)
     {
@@ -53,43 +55,73 @@ static inline const char *hr_to_str(HRESULT hr)
     }
 }
 
-void emulate_from_audio(audio_player *audio)
+void audio_set_volume(f32 volume)
+{
+    g_audio->volume = volume;
+}
+
+f32 audio_get_volume(void)
+{
+    return g_audio->volume;
+}
+
+b8 audio_is_muted(void)
+{
+    return g_audio->mute;
+}
+
+void audio_set_mute(b8 muted)
+{
+    g_audio->mute = muted;
+}
+
+b32 emulate_from_audio(void)
 {
     u32 pad = 0;
     HRESULT hr;
     BYTE *pdata = NULL;
 
-    u32 available_frames;
-
-    DWORD res = WaitForSingleObject(audio->event, INFINITE);
+    DWORD res = WaitForSingleObject(g_audio->event, INFINITE);
     if (res != WAIT_OBJECT_0)
     {
         debug_error("Failed to retrieve the audio event handle");
+        return false;
     }
-    hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-    available_frames = audio->buffer_size - pad;
 
-    hr = IAudioRenderClient_GetBuffer(audio->render_client, available_frames, &pdata);
+    hr = IAudioClient_GetCurrentPadding(g_audio->client, &pad);
+    u32 available_frames = g_audio->buffer_size - pad;
+
+    hr = IAudioRenderClient_GetBuffer(g_audio->render_client, available_frames, &pdata);
     if (hr != S_OK)
     {
         debug_error("GetBuffer failed with error: %s\n", hr_to_str(hr));
+        return false;
     }
 
     u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
 
-    g_spu.audio_buffer = (s16 *)pdata;
+    s16 *data = (s16 *)pdata;
+    g_spu.audio_buffer = data;
 
-    while (g_spu.num_buffered_frames < available_frames && g_state == SYSTEM_STATE_RUNNING)
+    // still deciding if breakpoints will be removed at some point/kept in a debug only scenario
+    while (g_spu.frames_buffered < available_frames)
     {
-        psx_run();
+        if (!psx_run())
+        {
+            g_state = SYSTEM_STATE_PAUSED;
+            break;
+        }
     }
-    g_spu.num_buffered_frames = 0;
+    DWORD frames_written = MIN(g_spu.frames_buffered, available_frames);
+    g_spu.frames_buffered = 0;
 
-    hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, available_frames, g_spu.enable_output ? 0 : AUDCLNT_BUFFERFLAGS_SILENT);
+    IAudioRenderClient_ReleaseBuffer(g_audio->render_client, frames_written, g_audio->mute ? AUDCLNT_BUFFERFLAGS_SILENT : 0);
+
+    return true;
 }
 
 
-void play_sound(audio_player *audio, s16 *data, u32 num_frames)
+void play_sound(s16 *data, u32 num_frames)
 {
     u32 pad = 0;
     HRESULT hr;
@@ -102,12 +134,12 @@ void play_sound(audio_player *audio, s16 *data, u32 num_frames)
     while (remaining_frames)
     {
         u32 available_frames;
-        hr = IAudioClient_GetCurrentPadding(audio->client, &pad);
-        available_frames = audio->buffer_size - pad;  
+        hr = IAudioClient_GetCurrentPadding(g_audio->client, &pad);
+        available_frames = g_audio->buffer_size - pad;  
 
         u32 frames_written = (s32)(remaining_frames - available_frames) < 0 ? remaining_frames : available_frames;
 
-        hr = IAudioRenderClient_GetBuffer(audio->render_client, frames_written, &pdata);
+        hr = IAudioRenderClient_GetBuffer(g_audio->render_client, frames_written, &pdata);
         if (hr != S_OK)
         {
             debug_log("%s\n", hr_to_str(hr));
@@ -121,19 +153,19 @@ void play_sound(audio_player *audio, s16 *data, u32 num_frames)
             ((s16 *)pdata)[i] /= 2;
         }
 
-        hr = IAudioRenderClient_ReleaseBuffer(audio->render_client, frames_written, 0);
+        hr = IAudioRenderClient_ReleaseBuffer(g_audio->render_client, frames_written, 0);
         remaining_frames -= frames_written;
     }
     //IAudioClient_Stop(audio->client);
 }
 
-audio_player *audio_init(void)
+b8 audio_init(void)
 {
-    audio_player *audio = VirtualAlloc(NULL, sizeof(audio_player), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    if (!audio)
+    g_audio = VirtualAlloc(NULL, sizeof(win32_audio_impl), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (!g_audio)
     {
         debug_error("Failed to allocate the audio player\n");
-        return NULL;
+        return false;
     }
 
     typedef HRESULT (*fp_CoInitializeEx)(LPVOID pvReserved, DWORD dwCoInit);
@@ -177,12 +209,13 @@ audio_player *audio_init(void)
     if (hr != S_OK)
     {
         debug_error("Failed to initialize the audio client\n");
-        return NULL;
+        VirtualFree(g_audio, 0, MEM_RELEASE);
+        return false;
     }
 
-    audio->event = CreateEvent(NULL, FALSE, FALSE, NULL);
+    g_audio->event = CreateEvent(NULL, FALSE, FALSE, NULL);
 
-    IAudioClient_SetEventHandle(audio_client, audio->event);
+    IAudioClient_SetEventHandle(audio_client, g_audio->event);
 #if 0
     //hr = audio_client->SetEventHandle(win32audio->event);
 
@@ -198,20 +231,22 @@ audio_player *audio_init(void)
     
     IAudioClient_GetDevicePeriod(audio_client, &default_period, NULL);
 #endif
-    IAudioClient_GetBufferSize(audio_client, &audio->buffer_size);
+    IAudioClient_GetBufferSize(audio_client, &g_audio->buffer_size);
 
     hr = IAudioClient_Start(audio_client);
 
-    audio->client = audio_client;
+    g_audio->client = audio_client;
 
-    hr = IAudioClient_GetService(audio->client, &IID_IAudioRenderClient, (void **)&render_client);
+    hr = IAudioClient_GetService(g_audio->client, &IID_IAudioRenderClient, (void **)&render_client);
 
-    audio->render_client = render_client;
+    g_audio->render_client = render_client;
     //audio->thread = CreateThread(NULL, 0, begin_playing_sounds, audio, 0, NULL);
-    return audio; 
+    return true;
 }
 
-void audio_shutdown(audio_player* audio)
+void audio_shutdown(void)
 {
-    VirtualFree(audio, 0, MEM_RELEASE);
+    IAudioClient_Stop(g_audio->client);
+    IAudioClient_Release(g_audio->client);
+    VirtualFree(g_audio, 0, MEM_RELEASE);
 }

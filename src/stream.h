@@ -73,6 +73,37 @@ inline b8 is_digit(char c)
     return (c >= '0' && c <= '9');
 }
 
+inline b8 str_to_hex(const char *string, u32 *value)
+{
+    u32 result = 0;
+    s32 len = strlen(string);
+    s32 place = 0;
+    while (len--)
+    {
+        char c = string[len];
+        s32 digit = 0;
+
+        if (is_digit(c))
+        {
+            digit = c - 48;
+        }
+        else if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))
+        {
+            if (c <= 'F')
+                c |= 0x20;
+            digit = c - 87;
+        }
+        else
+        {
+            return false;
+        }
+        result |= (digit << place);
+        place += 4;
+    }
+    *value = result;
+    return true;
+}
+
 b8 allocate_and_read_file(const char *path, u32 flags, struct file_dat *out_file);
 b8 write_file(struct file_dat *file, char *out);
 

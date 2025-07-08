@@ -1,20 +1,11 @@
 #include "debug.h"
+#include "allocator.h"
 
 struct debug_state g_debug;
 
-static u32 murmur3_32(u32 value)
-{
-    value ^= value >> 16;
-    value *= 0x85ebca6b;
-    value ^= value >> 13;
-    value *= 0xc2b2ae35;
-    value ^= value >> 16;
-    return value;
-}
-
 static inline u32 breakpoint_get_index(u32 addr)
 {
-    u32 hash = murmur3_32(addr);
+    u32 hash = murmur3_mix32(addr);
     u32 index = hash & (MAX_BREAKPOINTS - 1);
     return index;
 }

@@ -67,7 +67,6 @@ struct gpu_state
 {
     //renderer_interface *renderer;
     b8 software_rendering;
-    b8 enable_output;
     gpu_command_type command_type;
     u8 render_flags;
 
@@ -144,7 +143,7 @@ void gpu_reset(void);
 u32 gpuread(void);
 void execute_gp1_command(u32 command);
 void execute_gp0_command(u32 word);
-void gpu_scanline_complete(u32 param, s32 cycles_late);
+void gpu_scanline_complete(u32 param);
 void gpu_hsync(void);
 
 #endif /* GPU_H */

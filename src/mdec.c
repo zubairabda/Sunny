@@ -2,22 +2,28 @@
 #include "dma.h"
 #include "memory.h"
 #include "gpu_common.h"
+#include "event.h"
+#include "debug.h"
 
 #define DATA_FIFO_SIZE 32768
 
-typedef struct
+typedef union
 {
-    u32 parameters_left : 16;
-    u32 current_block : 3;
-    u32 : 4;
-    u32 depth_only : 1;
-    u32 signed_output : 1;
-    u32 output_depth : 2;
-    u32 data_out_req : 1;
-    u32 data_in_req : 1;
-    u32 busy : 1;
-    u32 data_in_fifo_full : 1;
-    u32 data_out_fifo_empty : 1;
+    struct
+    {
+        u32 parameters_left : 16;
+        u32 current_block : 3;
+        u32 : 4;
+        u32 depth_only : 1;
+        u32 signed_output : 1;
+        u32 output_depth : 2;
+        u32 data_out_req : 1;
+        u32 data_in_req : 1;
+        u32 busy : 1;
+        u32 data_in_fifo_full : 1;
+        u32 data_out_fifo_empty : 1;
+    };
+    u32 value;
 } mdec_status;
 
 static mdec_status stat;
@@ -28,12 +34,13 @@ static u32 halfwords;
 static u32 decode_index;
 static u32 command;
 
-static b8 transfer_pending;
-
 static u32 data_fifo[DATA_FIFO_SIZE];
 static u32 data_fifo_tail;  // 
 static u32 data_fifo_head;  // measured in words
 static u32 data_fifo_count; // 
+
+static b8 dma_in_enabled;
+static b8 dma_out_enabled;
 
 static u8 iq_table[128]; // luminance + color
 static s16 scale_table[64];
@@ -43,28 +50,39 @@ void mdec_reset(u32 flags)
     if (flags & MDEC_RESET)
     {
         stat.busy = 0;
-        stat.data_out_fifo_empty = 1;
+        //stat.data_out_fifo_empty = 1;
         parameter_fifo_count = 0;
         parameters_left = 0;
         data_fifo_head = data_fifo_tail = 0;
         data_fifo_count = 0;
     }
 
-    if (flags & MDEC_ENABLE_DATAOUT)
-    {
-        stat.data_out_req = 1; // NOTE: should only be set when data is available?
-    }
-
-    if (flags & MDEC_ENABLE_DATAIN)
-    {
-        stat.data_in_req = 1;
-    }
+    dma_out_enabled = (flags & MDEC_ENABLE_DATAOUT) ? true : false;
+    dma_in_enabled = (flags & MDEC_ENABLE_DATAIN) ? true : false;
 }
+
+enum
+{
+    MDEC_STAT_DATA_OUT_REQ   = (1 << 27),
+    MDEC_STAT_DATA_IN_REQ    = (1 << 28),
+    MDEC_STAT_BUSY           = (1 << 29),
+    MDEC_STAT_IN_FIFO_FULL   = (1 << 30),
+    MDEC_STAT_OUT_FIFO_EMPTY = (1 << 31)
+};
 
 u32 mdec_getstat(void)
 {
-    u32 result;
+    u32 result = stat.value;
+#if 0
     memcpy(&result, &stat, sizeof(u32));
+#else
+    result |= (parameters_left - 1) & 0xffff;
+    if (dma_out_enabled && data_fifo_count)
+        result |= MDEC_STAT_DATA_OUT_REQ; // NOTE: docs mention that this flag is unset once the first few words are read
+    // TODO: data-in fifo, depth/signed/set bits
+    if (!data_fifo_count)
+        result |= MDEC_STAT_OUT_FIFO_EMPTY;
+#endif
     return result;
 }
 
@@ -342,16 +360,17 @@ static void mdec_decode(void)
         }
     }
 
-    SY_ASSERT(data_fifo_count > 0);
+    //SY_ASSERT(data_fifo_count > 0);
     SY_ASSERT(data_fifo_count <= DATA_FIFO_SIZE);
-
+#if 0
     stat.data_out_fifo_empty = false;
-    #if 1
-    if (transfer_pending)
+    if (g_dma.transfers[CH_MDECOUT].transfer_pending)
     {
-        mdec_on_dma();
+        g_dma.transfers[CH_MDECOUT].transfer_pending = false;
+        mdecout_on_dma();
+        //schedule_event(dma_transfer_event, CH_MDECOUT, g_dma.transfers[CH_MDECOUT].words_left); // TODO: timing
     }
-    #endif
+#endif
 }
 
 void mdec_command(u32 word)
@@ -377,7 +396,6 @@ void mdec_command(u32 word)
         }
         stat.busy = 1;
         parameter_fifo_count = 0;
-        stat.parameters_left = parameters_left;
     }
     else
     {
@@ -394,6 +412,9 @@ void mdec_command(u32 word)
                 halfwords = parameter_fifo_count << 1;
                 decode_index = 0;
                 mdec_decode();
+                struct dma_transfer *transfer = &g_dma.transfers[CH_MDECOUT];
+                if (transfer->pending && (data_fifo_count >= transfer->pending_words))
+                    transfer->pending = false;
                 break;
             case 2:
                 u8 src = 0;
@@ -429,36 +450,36 @@ u32 mdec_read(void)
     return result;
 }
 
-void mdec_on_dma(void)
+b8 mdecout_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
 {
-    transfer_pending = true;
-    if (stat.data_out_req)
+    if (dma_out_enabled)
     {
-        if (!stat.data_out_fifo_empty)
+        SY_ASSERT(size < DATA_FIFO_SIZE);
+        if (size > data_fifo_count)
+            mdec_decode();
+        
+        if (size > data_fifo_count)
+            return false;
+
+        //u32 *at = (u32 *)(g_ram + dst);
+        u32 addr = *paddr;
+        u32 src = data_fifo_head;
+        u32 left = size;
+        while (left--)
         {
-            transfer_pending = false;
-            struct dma_port *port = &g_dma.ports[CH_MDECOUT];
-            u32 size = port->b1 * port->b2;
-            u32 dst = port->madr;
-            //memcpy(g_ram + dst, &data_fifo[data_fifo_head], size * 4);
-            if (size > data_fifo_count)
-                mdec_decode();
-
-            u32 *at = (u32 *)(g_ram + dst);
-            u32 src = data_fifo_head;
-            for (u32 i = 0; i < size; ++i)
-            {
-                *at++ = data_fifo[src];
-                src = (src + 1) & (DATA_FIFO_SIZE - 1);
-            }
-            data_fifo_count -= size;
-            data_fifo_head = (data_fifo_head + size) & (DATA_FIFO_SIZE - 1);
-
-            port->control &= ~(0x1000000);
-            dma_set_interrupt(CH_MDECOUT);
-
-            if (data_fifo_count == 0)
-                stat.data_out_fifo_empty = 1;
+            u32 *dst = (u32 *)(g_ram + addr);
+            *dst = data_fifo[src];
+            src = (src + 1) & (DATA_FIFO_SIZE - 1);
+            addr += step;
         }
+        *paddr = addr;
+        data_fifo_count -= size;
+        data_fifo_head = (data_fifo_head + size) & (DATA_FIFO_SIZE - 1);
+        debug_log("[MDEC] transferring block of %u bytes, %u left in queue..\n", size, data_fifo_count);
+
+        //if (data_fifo_count == 0)
+        //    stat.data_out_fifo_empty = 1;
+        return true;
     }
+    return false;
 }

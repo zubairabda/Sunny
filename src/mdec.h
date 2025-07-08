@@ -3,7 +3,7 @@
 
 #include "common.h"
 
-enum mdec_reset_flags
+enum
 {
     MDEC_ENABLE_DATAOUT = (1 << 29),
     MDEC_ENABLE_DATAIN  = (1 << 30),
@@ -12,7 +12,7 @@ enum mdec_reset_flags
 
 void mdec_reset(u32 flags);
 void mdec_command(u32 word);
-void mdec_on_dma(void);
+b8 mdecout_on_dma(b8 dir_from_ram, s8 step, u32 size, u32 *paddr);
 u32 mdec_getstat(void);
 u32 mdec_read(void);
 

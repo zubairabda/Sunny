@@ -25,14 +25,15 @@ static inline void fill_vram(u32 *commands)
 
     software_renderer *renderer = (software_renderer *)g_renderer;
 
-    u16 *dst = (u16 *)renderer->vram + (xpos + (VRAM_WIDTH * ypos));
-    // TODO: wrapping
-    while (ysize--) 
+    u16 *dst = (u16 *)renderer->vram;
+    for (u32 y = ypos; y < (ypos + ysize); ++y)
     {
-        for (u32 i = 0; i < xsize; ++i)
-            dst[i] = color;
-
-        dst += VRAM_WIDTH;
+        for (u32 x = xpos; x < (xpos + xsize); ++x)
+        {
+            u32 dst_x = x & (VRAM_WIDTH - 1);
+            u32 dst_y = y & (VRAM_HEIGHT - 1);
+            dst[dst_x + (dst_y * VRAM_WIDTH)] = color;
+        }
     }
 }
 
@@ -40,23 +41,29 @@ static inline void copy_cpu_to_vram(void)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
 
-    u16 *at = g_gpu.copy_buffer;
-    u16 *dst = (u16 *)renderer->vram + (g_gpu.load.x + (VRAM_WIDTH * g_gpu.load.y));
+    u16 *src = g_gpu.copy_buffer;
+    u16 *dst = (u16 *)renderer->vram;
     u16 width = g_gpu.load.width;
+    u16 height = g_gpu.load.height;
+    u16 dst_x;
+    u16 dst_y = g_gpu.load.y;
 #if 0
     static int s_copy_count = 0;
     char fname[64];
     snprintf(fname, sizeof(fname), "mdec/copy#%d.bmp", s_copy_count++);
     write_bmp(g_gpu.load.width, g_gpu.load.height, (u8 *)g_gpu.copy_buffer, fname);
 #endif
-    // TODO: wrapping
-    for (u32 i = 0; i < g_gpu.load.height; ++i)
+    while (height--)
     {
-        memcpy(dst, at, width * 2);
-        dst += VRAM_WIDTH;
-        at += width;
+        dst_x = g_gpu.load.x;
+        for (u32 x = 0; x < width; ++x)
+        {
+            u32 i = dst_x + (dst_y * VRAM_WIDTH);
+            dst[i] = *src++;
+            dst_x = (dst_x + 1) & (VRAM_WIDTH - 1);
+        }
+        dst_y = (dst_y + 1) & (VRAM_HEIGHT - 1);
     }
-
     g_gpu.copy_buffer_len = 0;
 }
 
@@ -66,8 +73,6 @@ static inline void reset_gpu_draw_state(void)
     g_gpu.draw_area_changed = true;
 }
 
-// NOTE: not sure how this works, it says if certain gp1 commands are issued, then they are immediately read from GPUREAD,
-// does this mean they interrupt VRAM->CPU transfers and place themselves ahead of the data to be read?
 u32 gpuread(void)
 {
     if (g_gpu.pending_store)
@@ -234,19 +239,18 @@ void execute_gp1_command(u32 command)
             g_gpu.read = (g_gpu.draw_offset_x & 0x7ff) | ((g_gpu.draw_offset_y & 0x7ff) << 11);
             break;
         default:
-            SY_ASSERT(0);
+            debug_error("[GPU] Unhandled GP1 misc command\n");
+            break;
         }
         break;
     }
     default:
     {
-        debug_log("Unknown gp1 command: %x\n", op);
+        debug_error("[GPU] Unknown gp1 command: %x\n", op);
         break;
     }
     }
-#if LOG_GP1_COMMANDS
-    debug_log("GP1 command: %02xh\n", op);
-#endif
+    debug_log("[GPU] GP1 command: %02xh\n", op);
 }
 
 void execute_gp0_command(u32 word)
@@ -270,7 +274,7 @@ void execute_gp0_command(u32 word)
                 g_gpu.pending_words = 3;
                 break;
             default:
-                debug_log("Unhandled GP0 MISC: %02xh\n", op);
+                debug_warn("[GPU] Unhandled GP0 MISC: %02xh\n", op);
                 break;
             }
             break;
@@ -297,8 +301,8 @@ void execute_gp0_command(u32 word)
                 g_gpu.pending_words += (vertex_count - 1); // command includes first color
             }
             ++g_gpu.pending_words;
+            break;
         } 
-        break;
         case COMMAND_TYPE_DRAW_LINE:
         {
             g_gpu.render_flags = op;
@@ -325,35 +329,24 @@ void execute_gp0_command(u32 word)
             {
                 ++g_gpu.pending_words;
             }
-        }
-        break;
-        case COMMAND_TYPE_VRAM_TO_VRAM:
-        {
-            g_gpu.pending_words = 4;
-        }
-        break;
-        case COMMAND_TYPE_CPU_TO_VRAM:
-        {
-            g_gpu.pending_words = 3;
-        }
-        break;
-        case COMMAND_TYPE_VRAM_TO_CPU:
-        {
-            g_gpu.pending_words = 3;
-        }
-        break;
-        case COMMAND_TYPE_ENV:
-        {
-            g_gpu.pending_words = 1;
-        }
-        break;
-        default: // TODO: remove
-            debug_log("Unimplemented gp0 command: %x\n", op);
             break;
         }
-        #if LOG_GP0_COMMANDS
-        debug_log("gp0: %02x\n", op);
-        #endif
+        case COMMAND_TYPE_VRAM_TO_VRAM:
+            g_gpu.pending_words = 4;
+            break;
+        case COMMAND_TYPE_CPU_TO_VRAM:
+            g_gpu.pending_words = 3;
+            break;
+        case COMMAND_TYPE_VRAM_TO_CPU:
+            g_gpu.pending_words = 3;
+            break;
+        case COMMAND_TYPE_ENV:
+            g_gpu.pending_words = 1;
+            break;
+        default: // TODO: remove
+            debug_log("[GPU] Unimplemented gp0 command: %x\n", op);
+            break;
+        }
         g_gpu.fifo_len = 0;
     }
 
@@ -380,13 +373,6 @@ void execute_gp0_command(u32 word)
         g_gpu.fifo[g_gpu.fifo_len++] = word;
         if (!g_gpu.pending_words)
         {
-            if (g_debug.log_gpu_commands)
-            {
-                struct debug_gpu_command *cmd = &g_debug.gpu_commands[g_debug.gpu_commands_len++];
-                cmd->type = g_gpu.command_type;
-                memcpy(cmd->params, g_gpu.fifo, 64);
-            }
-
             u32 *commands = g_gpu.fifo;
             switch (g_gpu.command_type)
             {
@@ -415,8 +401,8 @@ void execute_gp0_command(u32 word)
                     break;
                 INVALID_CASE;
                 }
+                break;
             }
-            break;
             case COMMAND_TYPE_DRAW_POLYGON:
             {
                 // NOTE: textured polygons can change bits in gpustat, not sure if it only changes when the command begins execution.. but we pass the tests for now :p
@@ -443,8 +429,8 @@ void execute_gp0_command(u32 word)
                     }
                     push_polygon(commands, g_gpu.render_flags, v2f(g_gpu.draw_offset_x, g_gpu.draw_offset_y));
                 }
+                break;
             }
-            break;
             case COMMAND_TYPE_DRAW_LINE:
             {
                 if (g_gpu.render_flags & LINE_FLAG_POLYLINE)
@@ -462,7 +448,6 @@ void execute_gp0_command(u32 word)
                         g_gpu.pending_words = 3;
                     }
                 }
-
                 break;
             }
             case COMMAND_TYPE_DRAW_RECT:
@@ -481,8 +466,8 @@ void execute_gp0_command(u32 word)
                     //push_draw_area(g_gpu.renderer, g_gpu.drawing_area);
                     push_rect(commands, g_gpu.render_flags, (g_gpu.stat.value & 0x7ff), v2f(g_gpu.draw_offset_x, g_gpu.draw_offset_y));
                 }
+                break;
             }
-            break;
             case COMMAND_TYPE_VRAM_TO_VRAM:
             {
                 u16 src_x = (u16)commands[1];
@@ -499,8 +484,8 @@ void execute_gp0_command(u32 word)
                 else {
                     push_vram_copy(src_x, src_y, dst_x, dst_y, width, height);
                 }
+                break;
             }
-            break;
             case COMMAND_TYPE_CPU_TO_VRAM:
             {
                 u16 dst_x = (u16)commands[1];
@@ -525,9 +510,9 @@ void execute_gp0_command(u32 word)
                 g_gpu.load.height = height;
                 g_gpu.load.pending_halfwords = size;
                 g_gpu.load.left = dst_x;
-                //debug_log("[CPU->VRAM] dst x: %d, y: %d | w: %d, h: %d\n", dst_x, dst_y, width, height);
+                //printf("[CPU->VRAM] dst x: %d, y: %d | w: %d, h: %d\n", dst_x, dst_y, width, height);
+                break;
             }
-            break;
             case COMMAND_TYPE_VRAM_TO_CPU:
             {
                 u16 src_x = (u16)commands[1];
@@ -553,15 +538,16 @@ void execute_gp0_command(u32 word)
                     push_vram_to_cpu_copy((void **)&g_gpu.readback_buffer, src_x, src_y, width, height);
                     hardware_renderer *renderer = (hardware_renderer *)g_renderer;
                     renderer->flush_commands();
+                    reset_gpu_draw_state();
                 }
-                reset_gpu_draw_state();
+                
                 g_gpu.pending_store = 1;
                 struct load_params store = {.x = src_x, .y = src_y, .width = width, .height = height, .pending_halfwords = size, .left = src_x};
                 g_gpu.store = store;
                 g_gpu.stat.ready_to_send_vram = 1;
                 //debug_log("[VRAM->CPU] src x: %d, y: %d | w: %d, h: %d\n", src_x, src_y, width, height);
+                break;
             }
-            break;
             case COMMAND_TYPE_ENV:
             {
                 SY_ASSERT(g_gpu.fifo_len == 1);
@@ -611,15 +597,15 @@ void execute_gp0_command(u32 word)
                     break;
                 INVALID_CASE;
                 }
+                break;
             }
-            break;
             INVALID_CASE;
             }
         }
     }
 }
 
-void gpu_scanline_complete(u32 param, s32 cycles_late)
+void gpu_scanline_complete(u32 param)
 {
     ++g_gpu.scanline;
     if (g_gpu.scanline == 263) 
@@ -690,30 +676,30 @@ void gpu_scanline_complete(u32 param, s32 cycles_late)
                 counter1->prev_cycle_count = g_cycles_elapsed;
                 break;
             }
-            counter1->sync = 1;
+            counter1->sync = true;
         }
 
-        // TODO: debug gpu log
-
-        if (!g_gpu.software_rendering) {
+        if (!g_gpu.software_rendering)
+        {
             hardware_renderer *renderer = (hardware_renderer *)g_renderer;
             renderer->flush_commands();
+            reset_gpu_draw_state();
         }
-
-        if (g_gpu.enable_output)
-            g_renderer->update_display();
-            
-        reset_gpu_draw_state();
-
+        else
+        {
+            update_vram();
+        }
+        
         ++g_vblank_counter;
         g_cpu.i_stat |= INTERRUPT_VBLANK;
         platform_set_event(&g_present_ready);
     }
-    s32 cycles_until_event = (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE) - cycles_late;
-    schedule_event(gpu_scanline_complete, 0, cycles_until_event);
+    //s32 cycles_until_event = (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE) - cycles_late;
+    //schedule_event(gpu_scanline_complete, 0, cycles_until_event);
 }
 
-void gpu_hsync(void) /* advance gpu cycle count to determine horizontal timings */
+/* advance gpu cycle count to determine horizontal timings */
+void gpu_hsync(void)
 {
     struct root_counter *counter0 = &g_counters[0];
     

@@ -1,140 +1,30 @@
 #include "disasm.h"
 
-static const char *register_names[] = 
-{
-    "zero",
-    "at",
-    "v0",
-    "v1",
-    "a0",
-    "a1",
-    "a2",
-    "a3",
-    "t0",
-    "t1",
-    "t2",
-    "t3",
-    "t4",
-    "t5",
-    "t6",
-    "t7",
-    "s0",
-    "s1",
-    "s2",
-    "s3",
-    "s4",
-    "s5",
-    "s6",
-    "s7",
-    "t8",
-    "t9",
-    "k0",
-    "k1",
-    "gp",
-    "sp",
-    "fp",
-    "ra"
-};
-
 static const char* primary_op_str_table[] = 
 {
-    "special", 
-    "bcond", 
-    "j", 
-    "jal", 
-    "beq", 
-    "bne", 
-    "blez", 
-    "bgtz", 
-    "addi", 
-    "addiu", 
-    "slti", 
-    "sltiu",
-    "andi", 
-    "ori", 
-    "xori", 
-    "lui", 
-    "cop0", 
-    "cop1", 
-    "cop2", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "unknown", 
-    "lb", 
-    "lh", 
-    "lwl", 
-    "lw", 
-    "lbu", 
-    "lhu", 
-    "lwr", 
-    "unknown", 
-    "sb", 
-    "sh",
-    "swl", 
-    "sw", 
-    "unknown", 
-    "unknown", 
-    "swr"
+    "special", "bcond", "j"   , "jal"  , "beq" , "bne", "blez", "bgtz", 
+    "addi"   , "addiu", "slti", "sltiu", "andi", "ori", "xori", "lui" , 
+    "cop0"   , "cop1" , "cop2", 0      , 0     , 0    , 0     , 0     , 
+    0        , 0      , 0     , 0      , 0     , 0    , 0     , 0     , 
+    "lb"     , "lh"   , "lwl" , "lw"   , "lbu" , "lhu", "lwr" , 0     ,
+    "sb"     , "sh"   , "swl" , "sw"   , 0     , 0    , "swr" , 0     ,
+    0        , 0      , "lwc2", 0      , 0     , 0    , 0     , 0     ,
+    0        , 0      , "swc2", 0      , 0     , 0    , 0     , 0
 };
 
 static const char* secondary_op_str_table[] = 
 {
-    "sll",
-    "unknown",
-    "srl",
-    "sra",
-    "sllv",
-    "unknown",
-    "srlv",
-    "srav",
-    "jr",
-    "jalr",
-    "unknown",
-    "unknown",
-    "syscall",
-    "break",
-    "unknown",
-    "unknown",
-    "mfhi",
-    "mthi",
-    "mflo",
-    "mtlo",
-    "unknown",
-    "unknown",
-    "unknown",
-    "unknown",
-    "mult",
-    "multu",
-    "div",
-    "divu",
-    "unknown",
-    "unknown",
-    "unknown",
-    "unknown",
-    "add",
-    "addu",
-    "sub",
-    "subu",
-    "and",
-    "or",
-    "xor",
-    "nor",
-    "unknown",
-    "unknown",
-    "slt",
-    "sltu"
+    "sll" , 0      , "srl" , "sra" , "sllv"   , 0      , "srlv", "srav",
+    "jr"  , "jalr" , 0     , 0     , "syscall", "break", 0     , 0     ,
+    "mfhi", "mthi" , "mflo", "mtlo", 0        , 0      , 0     , 0     ,
+    "mult", "multu", "div" , "divu", 0        , 0      , 0     , 0     ,
+    "add" , "addu" , "sub" , "subu", "and"    , "or"   , "xor" , "nor" ,
+    0     , 0      , "slt" , "sltu", 0        , 0      , 0     , 0     ,
+    0     , 0      , 0     , 0     , 0        , 0      , 0     , 0     ,
+    0     , 0      , 0     , 0     , 0        , 0      , 0     , 0
 };
 
+// TODO: this is still incorrect...
 const char *instr_to_string(u32 i, char *buffer, u32 len)
 {
     instruction ins = {.value = i};
@@ -142,12 +32,17 @@ const char *instr_to_string(u32 i, char *buffer, u32 len)
     u8 primary = ins.op;
     if (ins.value == 0)
     {
-        snprintf(buffer, len, "");
+        buffer[0] = '\0';
         return "nop";
     }
     if (ins.op) 
     {
         op = primary_op_str_table[primary];
+        if (!op)
+        {
+            buffer[0] = '\0';
+            return "unknown";
+        }
         u32 immediate = ins.value & 0xffff;
         if (primary == 1)
         {
@@ -204,6 +99,11 @@ const char *instr_to_string(u32 i, char *buffer, u32 len)
     {
         u8 secondary = ins.secondary;
         op = secondary_op_str_table[secondary];
+        if (!op)
+        {
+            buffer[0] = '\0';
+            return "unknown";
+        }
         if ((secondary & (1 << 5)))
         {
             snprintf(buffer, len, "$%s, $%s, $%s", register_names[ins.rd], register_names[ins.rs], register_names[ins.rt]);

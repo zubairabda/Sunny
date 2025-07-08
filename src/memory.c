@@ -17,22 +17,6 @@ u8 *g_ram;
 u8 *g_scratch;
 u8 *g_peripheral;
 
-enum address_mapping
-{
-    RAM_START = 0x0,
-    BIOS_START = 0x1fc00000,
-    JOYPAD_START = 0x1f801040,
-    IRQ_START = 0x1f801070,
-    DMA_CHANNEL_START = 0x1f801080,
-    DMA_REGISTER_START = 0x1f8010f0,
-    TIMERS_START = 0x1f801100,
-    GPU_START = 0x1f801810,
-    SPU_REGS_START = 0x1f801c00,
-    SPU_CONTROL_START = 0x1f801d80,
-    SPU_REVERB_START = 0x1f801dc0,
-    CDROM_START = 0x1f801800
-};
-
 #define RAM_READ_DELAY 4
 #define SPU_READ_DELAY 18
 #define COUNTERS_READ_DELAY 2
@@ -76,7 +60,7 @@ static u32 io_read32(u32 addr)
         {
             return counters_read(addr & 0x3f);
         }
-        debug_log("Unknown 32-bit read address: %08x\n", addr);
+        debug_warn("Unknown 32-bit read address: %08x\n", addr);
         return 0;
     }
 }
@@ -102,7 +86,7 @@ static u16 io_read16(u32 addr)
         {
             return sio_read(addr & 0x1f);
         }
-        debug_log("Unknown 16-bit read address: %08x\n", addr);
+        debug_warn("Unknown 16-bit read address: %08x\n", addr);
         return 0;
     }
 }
@@ -125,7 +109,7 @@ static u8 io_read8(u32 addr)
         {
             return sio_read(addr & 0x1f);
         }
-        debug_log("Unknown 8-bit read address: %08x\n", addr);
+        debug_warn("Unknown 8-bit read address: %08x\n", addr);
         return 0;
     }
 }
@@ -155,7 +139,7 @@ static void io_write32(u32 addr, u32 value)
     default:
         if (addr >= 0x1f801000 && addr < 0x1f801024)
         {
-            debug_log("Unhandled 32-bit store to Memory Control 1\n");
+            debug_warn("Unhandled 32-bit store to Memory Control 1\n");
         }
         else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
         {
@@ -171,7 +155,7 @@ static void io_write32(u32 addr, u32 value)
         }
         else
         {
-            debug_log("Unknown 32-bit store address: %08x\n", addr);
+            debug_warn("Unknown 32-bit store address: %08x\n", addr);
         }
         break;
     }
@@ -202,7 +186,7 @@ static void io_write16(u32 addr, u32 value)
         }
         else
         {
-            debug_log("Unknown 16-bit store address: %08x\n", addr);
+            debug_warn("Unknown 16-bit store address: %08x\n", addr);
         }
         break;
     }
@@ -228,7 +212,7 @@ static void io_write8(u32 addr, u32 value)
         }
         else
         {
-            debug_log("Unknown 8-bit store address: %08x\n", addr);
+            debug_warn("Unknown 8-bit store address: %08x\n", addr);
         }
         break;
     }
@@ -243,7 +227,7 @@ void *mem_read(u32 addr)
     }
     else if (addr >= 0x1f000000 && addr < 0x1f800000)
     {
-        debug_log("Unhandled read from EXP 1\n");
+        debug_warn("Unhandled read from EXP 1\n");
     }
     else if (addr >= 0x1f800000 && addr < 0x1f800400)
     {
@@ -265,7 +249,7 @@ void *mem_write(u32 addr)
     }
     else if (addr >= 0x1f000000 && addr < 0x1f800000)
     {
-        debug_log("Unhandled read from EXP 1\n");
+        debug_warn("Unhandled read from EXP 1\n");
     }
     else if (addr >= 0x1f800000 && addr < 0x1f800400)
     {

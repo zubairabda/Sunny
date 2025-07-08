@@ -1,4 +1,5 @@
 #include "spu.h"
+#include "audio/audio.h"
 #include "cdrom.h"
 #include "event.h"
 #include "debug.h"
@@ -87,7 +88,10 @@ struct spu_state g_spu;
 
 void spu_reset(void)
 {
-    memset(&g_spu.voice, 0, sizeof(struct spu_voice));
+    //memset(&g_spu.voice, 0, sizeof(struct spu_voice));
+    u8 *dram = g_spu.dram;
+    memset(&g_spu, 0, sizeof(struct spu_state));
+    g_spu.dram = dram;
     g_spu.cnt.endx = 0x00ffffff;
 }
 
@@ -368,7 +372,7 @@ void spu_write(u32 offset, u32 value)
     //debug_log("SPU write to: %08x <- %u\n", offset + 0x1f801c00, value);
 }
 
-void spu_tick(u32 param, s32 cycles_late)
+void spu_tick(u32 param)
 {
     // not sure if we need to emulate this, but spustat applies its changes delayed, im assuming to the next tick
     g_spu.cnt.spustat &= ~(0x5f);
@@ -382,8 +386,7 @@ void spu_tick(u32 param, s32 cycles_late)
         g_spu.current_transfer_addr += size;
         g_spu.transfer_fifo_len = 0;
     }
-    // each buffered sample has 2 channels
-    u32 buffer_index = g_spu.num_buffered_frames * 2;
+
     s32 final_vol_left = 0;
     s32 final_vol_right = 0;
 
@@ -391,10 +394,7 @@ void spu_tick(u32 param, s32 cycles_late)
     {
         struct voice_internal *internal = &g_spu.voice.internal[i];
         struct voice_regs *regs = &g_spu.voice.data[i];
-#if 0
-        if (internal->state == ADSR_RELEASE)
-            continue;
-#endif
+
         if (!internal->has_samples)
         {
             // save last samples from last block
@@ -653,17 +653,18 @@ void spu_tick(u32 param, s32 cycles_late)
         final_vol_right += cd_vol_right;
         g_spu.sector_sample_index += 2;
     }
-    //if (buffer_index > g_spu.audio_buffer_len)
-    if (g_spu.enable_output)
+    
+    if (g_spu.audio_buffer)
     {
-        f32 volume = 0.5f; // half volume for final output
+        f32 volume = audio_get_volume();
+        // each frame has a sample for both the left and right channel
+        u32 buffer_index = g_spu.frames_buffered * 2;
         g_spu.audio_buffer[buffer_index] = clamp16(final_vol_left) * volume;
         g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right) * volume;
+        ++g_spu.frames_buffered;
     }
 
-    ++g_spu.num_buffered_frames;
-
-    schedule_event(spu_tick, 0, 768 - cycles_late);
+    //schedule_event(spu_tick, 0, 768 - cycles_late);
 #if 0
     static b8 was_down = false;
     b8 is_down = false;

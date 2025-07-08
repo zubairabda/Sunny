@@ -3,6 +3,8 @@
 
 #include "common.h"
 
+#define RAM_SIZE MEGABYTES(2)
+
 extern u8 *g_bios;
 extern u8 *g_ram;
 extern u8 *g_scratch;

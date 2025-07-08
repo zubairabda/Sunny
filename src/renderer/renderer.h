@@ -76,7 +76,7 @@ struct render_command_transfer
 typedef struct renderer_context
 {
     b8 is_initialized;
-    b8 is_threaded_present;
+    b8 threaded_present;
 #if 0
     u8 *render_commands;
     u8 *commands_at;

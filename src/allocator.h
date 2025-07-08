@@ -25,22 +25,13 @@ struct memory_pool
     u32 chunk_count;
 };
 
-inline struct memory_arena allocate_arena(size_t size)
-{
-    struct memory_arena result = {0};
-    result.base = malloc(size);
-    result.size = size;
-    return result;
-}
+struct memory_arena allocate_arena(size_t size);
+void free_arena(struct memory_arena *arena);
 
-inline void free_arena(struct memory_arena *arena)
-{
-    /*VirtualFree(arena->base, 0, MEM_RELEASE);*/
-    free(arena->base);
-    arena->base = NULL;
-    arena->size = 0;
-    arena->used = 0;
-}
+struct memory_pool allocate_pool(struct memory_arena *arena, u32 element_size, u32 element_count);
+void pool_free_all(struct memory_pool *pool);
+
+b8 string_ends_with_ignore_case(const char *str, const char *end);
 
 inline void *push_arena(struct memory_arena *arena, size_t size)
 {
@@ -58,28 +49,9 @@ inline void *push_arena_aligned(struct memory_arena *arena, size_t size, size_t 
     return (void *)aligned;
 }
 
-inline void pool_free_all(struct memory_pool *pool)
+inline void clear_arena(struct memory_arena *arena)
 {
-    for (u32 i = 0; i < pool->chunk_count; ++i)
-    {
-        struct pool_node *node = (struct pool_node *)(pool->base + pool->chunk_size * i);
-        node->next = pool->head;
-        pool->head = node;
-    }
-}
-
-inline struct memory_pool allocate_pool(struct memory_arena *arena, u32 element_size, u32 element_count)
-{
-    struct memory_pool result = {0};
-    // TODO: alignment
-    if (element_size < sizeof(struct pool_node)){ 
-        element_size = sizeof(struct pool_node);
-    }
-    result.base = push_arena(arena, element_count * element_size);
-    result.chunk_count = element_count;
-    result.chunk_size = element_size;
-    pool_free_all(&result);
-    return result;
+    arena->used = 0;
 }
 
 inline void *pool_alloc(struct memory_pool *pool)
@@ -97,9 +69,9 @@ inline void pool_dealloc(struct memory_pool *pool, void *base)
     pool->head = node;
 }
 
-inline u32 fnv1a(const char *text)
+inline u32 fnv1a(const char *str)
 {
-    const char *p = text;
+    const char *p = str;
     char c;
     u32 hash = 2166136261;
     while ((c = *p++))
@@ -110,41 +82,44 @@ inline u32 fnv1a(const char *text)
     return hash;
 }
 
-inline u32 fnv1a_n(const char *text, u32 length)
+inline u32 fnv1a_n(const char *input, u32 length)
 {
     u32 hash = 2166136261;
     while (length--)
     {
-        char c = *text++;
+        char c = *input++;
         hash ^= c;
         hash *= 16777619;
     }
     return hash;
 }
 
-inline b8 string_ends_with_ignore_case(const char *str, const char *end)
+inline u32 murmur3_mix32(u32 value)
 {
-    size_t len = strlen(str);
-    size_t end_len = strlen(end);
-    if (len >= end_len)
-    {
-        const char *p = str + (len - end_len);
-        while (end_len--)
-        {
-            char c = *p;
-            char d = *end;
-            if (c >= 65 && c <= 90)
-                c |= 32;
-            if (d >= 65 && d <= 90)
-                d |= 32;
-            if (c != d)
-                return 0;
-            ++p;
-            ++end;
-        }
-        return 1;
-    }
-    return 0;
+    value ^= value >> 16;
+    value *= 0x85ebca6b;
+    value ^= value >> 13;
+    value *= 0xc2b2ae35;
+    value ^= value >> 16;
+    return value;
+}
+
+inline u64 murmur3_mix64(u64 value)
+{
+    value ^= value >> 33;
+    value *= 0xff51afd7ed558ccdllu;
+    value ^= value >> 33;
+    value *= 0xc4ceb9fe1a85ec53llu;
+    value ^= value >> 33;
+    return value;
+}
+
+inline void *memset32(void *ptr, u32 value, u32 count)
+{
+    u32 *dst = ptr;
+    while (count--)
+        *dst++ = value;
+    return ptr;
 }
 
 #endif /* ALLOCATOR_H */
