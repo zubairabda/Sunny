@@ -114,6 +114,7 @@ void psx_init(struct memory_arena *arena, void *bios)
     g_scratch = push_arena(arena, KILOBYTES(1));
 
     g_gpu.copy_buffer = push_arena(arena, VRAM_SIZE);
+    g_gpu.readback_buffer = push_arena(arena, VRAM_SIZE);
     //g_gpu.readback_buffer = push_arena(arena, VRAM_SIZE);
     // set to NTSC timings by default
     g_gpu.vertical_timing = 263;

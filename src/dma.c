@@ -210,7 +210,7 @@ static void dma_handle_next_transfer(u32 channel)
     case DMA_MODE_SLICE:
     {
         transfer_size = port->b1;
-        next_run = 120; // TODO: timings for each device
+        next_run = 20; // TODO: timings for each device
         break;
     }
     case DMA_MODE_LINKEDLIST:
@@ -259,7 +259,7 @@ static void dma_handle_next_transfer(u32 channel)
                 s32 next_channel = dma_select_channel();
                 if (next_channel >= 0)
                 {
-                    schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                    g_dma.event_id = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
                 }
                 return;
             }
@@ -297,12 +297,13 @@ static void dma_handle_next_transfer(u32 channel)
             s32 next_channel = dma_select_channel();
             if (next_channel >= 0)
             {
-                schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                g_dma.event_id = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
             }
         }
     }
     else
     {
+        SY_ASSERT(channel == CH_MDECOUT); // we haven't experienced this with any other channel
         transfer->pending = true;
         transfer->pending_words = transfer_size;
     }
@@ -338,12 +339,7 @@ static void dma_start_transfer(u32 channel)
     else if (mode == DMA_MODE_SLICE)
         transfer->words_left = port->b1 * port->b2;
 
-#if 1
-    if (mode == DMA_MODE_LINKEDLIST)
-        debug_log("[DMA] Copying linked-list starting at: %08X to channel %u.\n", addr, channel);
-    else
-        debug_log("[DMA] Channel %u transferring %u words %s %08X.\n", channel, transfer->words_left, transfer->is_from_ram ? "from" : "to", addr);
-#endif
+    debug_log("[DMA] Channel %u requesting transfer of %u words %s %08X.\n", channel, transfer->words_left, transfer->is_from_ram ? "from" : "to", addr);
 
     transfer->in_progress = true;
     s32 selected_channel = dma_select_channel();
@@ -426,6 +422,7 @@ void dma_write(u32 offset, u32 value)
             {
                 if ((g_dma.control & (0x8 << (4 * channel))))
                 {
+                    debug_log("[DMA] start transfer for channel %u\n", channel);
                     dma_start_transfer(channel);
                 }
                 else
@@ -436,6 +433,20 @@ void dma_write(u32 offset, u32 value)
             else
             {
                 debug_warn("[DMA] stop transfer for channel %u\n", channel);
+                g_dma.transfers[channel].in_progress = false;
+                if (g_dma.event_id)
+                {
+                    remove_event(g_dma.event_id);
+                    // since the next channel to transfer relies on the current channel to re-select a channel,
+                    // we need to do it here
+                    g_dma.event_id = 0;
+                    g_dma.active_channel = -1;
+                    s32 next_channel = dma_select_channel();
+                    if (next_channel >= 0)
+                    {
+                        g_dma.event_id = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                    }
+                }
             }
             break;
         INVALID_CASE;

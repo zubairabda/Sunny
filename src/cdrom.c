@@ -499,6 +499,33 @@ static void cdrom_command(u32 command)
         cdrom_begin_read();
         break;
     }
+    case Stop:
+    {
+        if (g_cdrom.param_fifo_count) 
+        {
+            cdrom_queue_error(0x20);
+            break;
+        }
+
+        s32 delay = (g_cdrom.state != CDROM_STATE_STOPPED) ? INT_DELAY : 30000000;
+        
+        g_cdrom.state = CDROM_STATE_IDLE;
+        g_cdrom.first_response.fifo[0] = cdrom_get_stat();
+        g_cdrom.first_response.count = 1;
+        g_cdrom.first_response.cause = 3;
+
+        remove_event(g_cdrom.read_event_id); // cancel reads
+
+        g_cdrom.loc = 150 * 2352;
+
+        g_cdrom.state = CDROM_STATE_STOPPED;
+        g_cdrom.response_pending = true;
+        g_cdrom.queued_response.cause = 0x2;
+        g_cdrom.queued_response.fifo[0] = 0;
+        g_cdrom.queued_response.count = 1;
+        g_cdrom.response_delay_cycles = delay;
+        break;
+    }
     case Pause:
     {
         g_cdrom.first_response.fifo[0] = cdrom_get_stat();
@@ -915,10 +942,12 @@ void cdrom_store(u32 offset, u8 value)
         break;
     case 3: // request reg
         // NOTE: we only consider mode bit 5 when it is requested, not during transfers
-        // TODO: this seems to behave more like a latch?
+        // NOTE: this seems to behave more like a latch?
         if (value & BFRD)
         {
-            if (!g_cdrom.status.DRQSTS)
+            // TODO: not sure on the behavior here, right now
+            // we simply reset the data fifo every time BFRD is set
+            //if (!g_cdrom.status.DRQSTS)
             {
                 g_cdrom.data_fifo_index = g_cdrom.sector_offset;
                 g_cdrom.data_fifo_end = g_cdrom.data_fifo_index + g_cdrom.sector_size;

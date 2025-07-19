@@ -112,7 +112,7 @@ void close_disk(disk_image *disk);
 
 b8 read_disk_data(disk_image *disk, u32 offset, void *buffer);
 
-void write_bmp(u32 width, u32 height, u8 *data, char *filename);
-void write_wav_file(void *sample_data, u32 size_in_bytes, char *dstpath);
+void write_bmp(int width, int height, void *data, const char *path);
+void write_wav_file(void *sample_data, u32 size_in_bytes, const char *path);
 
 #endif /* STREAM_H */

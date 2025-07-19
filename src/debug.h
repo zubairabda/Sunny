@@ -1,7 +1,7 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
-#include "common.h"
+#include "allocator.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -29,9 +29,10 @@ struct debug_state
     u8 breakpoint_count;
     u8 max_psl;
     struct debug_breakpoint bp[MAX_BREAKPOINTS];
+    b8 pause_on_vblank;
+    b8 pause;
     u64 timestamp;
     u64 cpu_ticks;
-    b8 pause;
 };
 
 extern struct debug_state g_debug;

@@ -9,35 +9,35 @@
 struct gpu_state g_gpu;
 static s32 dotclks[] = {10, 8, 5, 4};
 
-static inline void fill_vram(u32 *commands)
+static void fill_vram(u32 *commands)
 {
-    u16 xsize = ((commands[2] & 0x3ff) + 0xf) & 0xff0;
-    u16 ysize = (commands[2] >> 16) & 0x1ff;
-
+    u32 xsize = ((commands[2] & 0x3ff) + 0xf) & 0xff0;
+    u32 ysize = (commands[2] >> 16) & 0x1ff;
+    // TODO: fix
     if ((xsize | ysize) == 0)
         return;
 
-    u16 xpos = commands[1] & 0x3f0;
-    u16 ypos = (commands[1] >> 16) & 0x1ff;
+    u32 xpos = commands[1] & 0x3f0;
+    u32 ypos = (commands[1] >> 16) & 0x1ff;
 
     u32 rgb = commands[0];
-    u16 color = ((rgb & 0xf8) >> 3) | ((rgb & 0xf800) >> 6) | ((rgb & 0xf80000) >> 8);
+    u16 color = ((rgb & 0xf8) >> 3) | ((rgb & 0xf800) >> 6) | ((rgb & 0xf80000) >> 9);
 
     software_renderer *renderer = (software_renderer *)g_renderer;
-
     u16 *dst = (u16 *)renderer->vram;
-    for (u32 y = ypos; y < (ypos + ysize); ++y)
+
+    while (ysize--)
     {
-        for (u32 x = xpos; x < (xpos + xsize); ++x)
+        for (u32 x = 0; x < xsize; ++x)
         {
-            u32 dst_x = x & (VRAM_WIDTH - 1);
-            u32 dst_y = y & (VRAM_HEIGHT - 1);
-            dst[dst_x + (dst_y * VRAM_WIDTH)] = color;
+            u32 dst_x = (xpos + x) & 0x3ff;
+            dst[dst_x + (ypos * VRAM_WIDTH)] = color;
         }
+        ypos = (ypos + 1) & 0x1ff;
     }
 }
 
-static inline void copy_cpu_to_vram(void)
+static void gpu_copy_cpu_to_vram(void)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
 
@@ -47,24 +47,88 @@ static inline void copy_cpu_to_vram(void)
     u16 height = g_gpu.load.height;
     u16 dst_x;
     u16 dst_y = g_gpu.load.y;
-#if 0
-    static int s_copy_count = 0;
-    char fname[64];
-    snprintf(fname, sizeof(fname), "mdec/copy#%d.bmp", s_copy_count++);
-    write_bmp(g_gpu.load.width, g_gpu.load.height, (u8 *)g_gpu.copy_buffer, fname);
-#endif
+
+    b8 check_mask = g_gpu.stat.check_mask_before_draw;
+    b16 set_mask = g_gpu.stat.set_mask_on_draw << 15;
+
     while (height--)
     {
         dst_x = g_gpu.load.x;
         for (u32 x = 0; x < width; ++x)
         {
             u32 i = dst_x + (dst_y * VRAM_WIDTH);
-            dst[i] = *src++;
+            if (check_mask && (dst[i] & 0x8000))
+            {
+                ++src;
+                continue;
+            }
+
+            u16 color = *src++;
+            color |= set_mask;
+            dst[i] = color;
+
             dst_x = (dst_x + 1) & (VRAM_WIDTH - 1);
         }
         dst_y = (dst_y + 1) & (VRAM_HEIGHT - 1);
     }
     g_gpu.copy_buffer_len = 0;
+}
+
+static void gpu_copy_vram_to_vram(struct gpu_transfer *transfer)
+{
+    software_renderer *renderer = (software_renderer *)g_renderer;
+    u16 *vram = (u16 *)renderer->vram;
+
+    u32 width = transfer->width;
+    u32 height = transfer->height;
+    u32 dx = transfer->dx;
+    u32 dy = transfer->dy;
+    u32 sx = transfer->sx;
+    u32 sy = transfer->sy;
+
+    b8 check_mask = g_gpu.stat.check_mask_before_draw;
+    b16 set_mask = g_gpu.stat.set_mask_on_draw << 15;
+    
+    while (height--)
+    {
+        for (u32 x = 0; x < width; ++x)
+        {
+            u32 di = ((dx + x) & 0x3ff) + (dy * VRAM_WIDTH);
+            u32 si = ((sx + x) & 0x3ff) + (sy * VRAM_WIDTH);
+            u16 color = vram[si];
+            if (check_mask && (vram[di] & 0x8000))
+                continue;
+            color |= set_mask;
+            vram[di] = color;
+        }
+        dy = (dy + 1) & 0x1ff;
+        sy = (sy + 1) & 0x1ff;
+    }
+}
+
+static void gpu_copy_vram_to_cpu(struct gpu_transfer *transfer)
+{
+    software_renderer *renderer = (software_renderer *)g_renderer;
+    u16 *vram = (u16 *)renderer->vram;
+    u16 *dst = g_gpu.readback_buffer;
+    u32 buffer_len = 0;
+    u32 width = transfer->width;
+    u32 height = transfer->height;
+    u32 sx = transfer->sx;
+    u32 sy = transfer->sy;
+
+    while (height--)
+    {
+        for (u32 x = 0; x < width; ++x)
+        {
+            u32 i = ((sx + x) & 0x3ff) + (sy * VRAM_WIDTH);
+            u16 result = vram[i];
+            dst[buffer_len++] = result;
+        }
+        sy = (sy + 1) & 0x1ff;
+    }
+    
+    g_gpu.readback_buffer_len = buffer_len;
 }
 
 static inline void reset_gpu_draw_state(void)
@@ -77,34 +141,17 @@ u32 gpuread(void)
 {
     if (g_gpu.pending_store)
     {
-        if (g_gpu.software_rendering)
+        u32 first = (u32)g_gpu.readback_buffer[g_gpu.read_index];
+        u32 second = (u32)g_gpu.readback_buffer[g_gpu.read_index + 1];
+        u32 result = first | (second << 16);
+        g_gpu.read_index += 2;
+        if (g_gpu.read_index >= g_gpu.readback_buffer_len)
         {
-            software_renderer *renderer = (software_renderer *)g_renderer;
-            u16 *vram = renderer->vram;
-            // TODO: assumes even number of pixels
-            if (g_gpu.store.x > (g_gpu.store.left + g_gpu.store.width))
-            {
-                g_gpu.store.x = g_gpu.store.left;
-                ++g_gpu.store.y;
-            }
-            u32 index = (g_gpu.store.y * 1024) + g_gpu.store.x;
-            u32 word = vram[index] | (((u32)vram[index + 1]) << 16);
-            g_gpu.store.x += 2;
-            return word;
+            g_gpu.stat.ready_to_send_vram = 0;
+            //g_gpu.readback_buffer_len = 0;
+            g_gpu.pending_store = false;
         }
-        else
-        {
-            u32 first_pixel = g_gpu.readback_buffer[g_gpu.readback_buffer_len++];
-            u32 second_pixel = g_gpu.readback_buffer[g_gpu.readback_buffer_len++];
-            u32 word = (first_pixel & 0xffff) | (second_pixel << 16);
-            if (g_gpu.readback_buffer_len == g_gpu.store.pending_halfwords)
-            {
-                g_gpu.stat.ready_to_send_vram = 0;
-                g_gpu.readback_buffer_len = 0;
-                g_gpu.pending_store = 0;
-            }
-            return word;
-        }
+        return result;
     }
     else
     {
@@ -245,12 +292,10 @@ void execute_gp1_command(u32 command)
         break;
     }
     default:
-    {
         debug_error("[GPU] Unknown gp1 command: %x\n", op);
         break;
     }
-    }
-    debug_log("[GPU] GP1 command: %02xh\n", op);
+    //debug_log("[GPU] GP1 command: %02xh\n", op);
 }
 
 void execute_gp0_command(u32 word)
@@ -258,7 +303,7 @@ void execute_gp0_command(u32 word)
     if (!g_gpu.pending_words)
     {
         u8 op = word >> 24;
-        g_gpu.command_type = (enum gpu_command_type)(word >> 29);
+        g_gpu.command_type = (gpu_command_type)(word >> 29);
         switch (g_gpu.command_type)
         {
         case COMMAND_TYPE_MISC:
@@ -270,7 +315,6 @@ void execute_gp0_command(u32 word)
                 g_gpu.pending_words = 1;
                 break;
             case 0x2:
-                // TODO: masking
                 g_gpu.pending_words = 3;
                 break;
             default:
@@ -280,7 +324,6 @@ void execute_gp0_command(u32 word)
             break;
         case COMMAND_TYPE_DRAW_POLYGON:
         {
-            g_gpu.render_flags = op;
             u32 vertex_count;
             if (op & POLYGON_FLAG_IS_QUAD)
             {
@@ -305,7 +348,6 @@ void execute_gp0_command(u32 word)
         } 
         case COMMAND_TYPE_DRAW_LINE:
         {
-            g_gpu.render_flags = op;
             // at minimum, we need 2 vertices
             if (op & LINE_FLAG_GOURAUD_SHADED) 
             {
@@ -319,7 +361,6 @@ void execute_gp0_command(u32 word)
         }
         case COMMAND_TYPE_DRAW_RECT:
         {
-            g_gpu.render_flags = op;
             g_gpu.pending_words = 2;
             if (op & RECT_FLAG_TEXTURED)
             {
@@ -360,11 +401,7 @@ void execute_gp0_command(u32 word)
         if (!g_gpu.pending_words)
         {
             g_gpu.pending_load = false;
-            if (g_gpu.software_rendering)
-                copy_cpu_to_vram();
-            else
-                push_cpu_to_vram_copy((void **)g_gpu.copy_buffer_at, g_gpu.load.x, g_gpu.load.y, g_gpu.load.width, g_gpu.load.height);
-            //g_gpu.copy_buffer_len = 0;
+            gpu_copy_cpu_to_vram();
         }
     }
     else
@@ -374,30 +411,19 @@ void execute_gp0_command(u32 word)
         if (!g_gpu.pending_words)
         {
             u32 *commands = g_gpu.fifo;
+            u32 op = commands[0] >> 24;
+
             switch (g_gpu.command_type)
             {
             case COMMAND_TYPE_MISC:
             {
-                switch (commands[0] >> 24)
+                switch (op)
                 {
                 case 0x1:
                     NoImplementation;
                     break;
                 case 0x2:
-                    if (g_gpu.software_rendering)
-                    {
-                        fill_vram(commands);
-                    }
-                    else
-                    {
-                        // TODO: masking for hw renderer
-                        if (g_gpu.draw_area_changed)
-                        {
-                            push_draw_area(g_gpu.drawing_area);
-                            g_gpu.draw_area_changed = false;
-                        }
-                        push_rect(commands, 0, 0, v2f(0, 0));
-                    }
+                    fill_vram(commands);
                     break;
                 INVALID_CASE;
                 }
@@ -406,9 +432,9 @@ void execute_gp0_command(u32 word)
             case COMMAND_TYPE_DRAW_POLYGON:
             {
                 // NOTE: textured polygons can change bits in gpustat, not sure if it only changes when the command begins execution.. but we pass the tests for now :p
-                if (g_gpu.render_flags & POLYGON_FLAG_TEXTURED)
+                if (op & POLYGON_FLAG_TEXTURED)
                 {
-                    u16 texpage_attribute = (u16)((commands[g_gpu.render_flags & POLYGON_FLAG_GOURAUD_SHADED ? 5 : 4]) >> 16);
+                    u16 texpage_attribute = (u16)((commands[op & POLYGON_FLAG_GOURAUD_SHADED ? 5 : 4]) >> 16);
                     g_gpu.stat.value &= 0xffff7e00;
                     g_gpu.stat.value |= (texpage_attribute & 0x1ff);
                     if (g_gpu.allow_texture_disable) {
@@ -416,30 +442,18 @@ void execute_gp0_command(u32 word)
                     }
                 }
 
-                if (g_gpu.software_rendering)
-                {
-                    draw_polygon(commands, g_gpu.render_flags, v2i(g_gpu.draw_offset_x, g_gpu.draw_offset_y), g_gpu.drawing_area);
-                }
-                else
-                {
-                    if (g_gpu.draw_area_changed)
-                    {
-                        push_draw_area(g_gpu.drawing_area);
-                        g_gpu.draw_area_changed = false;
-                    }
-                    push_polygon(commands, g_gpu.render_flags, v2f(g_gpu.draw_offset_x, g_gpu.draw_offset_y));
-                }
+                draw_polygon(commands, op);
                 break;
             }
             case COMMAND_TYPE_DRAW_LINE:
             {
-                if (g_gpu.render_flags & LINE_FLAG_POLYLINE)
+                if (op & LINE_FLAG_POLYLINE)
                 {
                     if ((word & 0xf000f000) == 0x50005000) // terminator flag
                     {
 
                     }
-                    else if (g_gpu.render_flags & LINE_FLAG_GOURAUD_SHADED) 
+                    else if (op & LINE_FLAG_GOURAUD_SHADED) 
                     {
                         g_gpu.pending_words = 4;
                     }
@@ -452,52 +466,32 @@ void execute_gp0_command(u32 word)
             }
             case COMMAND_TYPE_DRAW_RECT:
             {
-                if (g_gpu.software_rendering)
-                {
-                    draw_rectangle(commands, g_gpu.render_flags, (g_gpu.stat.value & 0x7ff), v2i(g_gpu.draw_offset_x, g_gpu.draw_offset_y), g_gpu.drawing_area);
-                }
-                else
-                {
-                    if (g_gpu.draw_area_changed)
-                    {
-                        push_draw_area(g_gpu.drawing_area);
-                        g_gpu.draw_area_changed = false;
-                    }
-                    //push_draw_area(g_gpu.renderer, g_gpu.drawing_area);
-                    push_rect(commands, g_gpu.render_flags, (g_gpu.stat.value & 0x7ff), v2f(g_gpu.draw_offset_x, g_gpu.draw_offset_y));
-                }
+                draw_rectangle(commands, op);
                 break;
             }
             case COMMAND_TYPE_VRAM_TO_VRAM:
             {
-                u16 src_x = (u16)commands[1];
-                u16 src_y = (u16)(commands[1] >> 16);
-                u16 dst_x = (u16)commands[2];
-                u16 dst_y = (u16)(commands[2] >> 16);
-                u16 width = (u16)commands[3];
-                u16 height = (u16)(commands[3] >> 16);
+                struct gpu_transfer transfer;
+                transfer.sx = commands[1] & 0x3ff;
+                transfer.sy = (commands[1] >> 16) & 0x1ff;
+                transfer.dx = commands[2] & 0x3ff;
+                transfer.dy = (commands[2] >> 16) & 0x1ff;
+                u32 width = commands[3] & 0xffff;
+                u32 height = (commands[3] >> 16);
+                transfer.width = ((width - 1) & 0x3ff) + 1;
+                transfer.height = ((height - 1) & 0x1ff) + 1;
 
-                SY_ASSERT(width && height);
-                if (g_gpu.software_rendering) {
-                    //SY_ASSERT(0);
-                }
-                else {
-                    push_vram_copy(src_x, src_y, dst_x, dst_y, width, height);
-                }
+                gpu_copy_vram_to_vram(&transfer);
                 break;
             }
             case COMMAND_TYPE_CPU_TO_VRAM:
             {
-                u16 dst_x = (u16)commands[1];
-                u16 dst_y = (commands[1] >> 16);
-                u16 width = (u16)commands[2];
+                u16 dst_x = commands[1] & 0x3ff;
+                u16 dst_y = (commands[1] >> 16) & 0x1ff;
+                u16 width = commands[2] & 0xffff;
                 u16 height = (commands[2] >> 16);
-
-                if (!(width | height))
-                {
-                    width = VRAM_WIDTH;
-                    height = VRAM_HEIGHT;
-                }
+                width = ((width - 1) & 0x3ff) + 1;
+                height = ((height - 1) & 0x1ff) + 1;
 
                 u32 size = width * height;
 
@@ -508,42 +502,23 @@ void execute_gp0_command(u32 word)
                 g_gpu.load.y = dst_y;
                 g_gpu.load.width = width;
                 g_gpu.load.height = height;
-                g_gpu.load.pending_halfwords = size;
-                g_gpu.load.left = dst_x;
                 //printf("[CPU->VRAM] dst x: %d, y: %d | w: %d, h: %d\n", dst_x, dst_y, width, height);
                 break;
             }
             case COMMAND_TYPE_VRAM_TO_CPU:
             {
-                u16 src_x = (u16)commands[1];
-                u16 src_y = (commands[1] >> 16);
-                u16 width = (u16)commands[2];
+                struct gpu_transfer transfer;
+                transfer.sx = commands[1] & 0x3ff;
+                transfer.sy = (commands[1] >> 16) & 0x1ff;
+                u16 width = commands[2] & 0xffff;
                 u16 height = (commands[2] >> 16);
-                // TODO: masking
-                if (!(width | height))
-                {
-                    width = VRAM_WIDTH;
-                    height = VRAM_HEIGHT;
-                }
+                transfer.width = ((width - 1) & 0x3ff) + 1;
+                transfer.height = ((height - 1) & 0x1ff) + 1;
 
-                u32 size = width * height;
-                //size += (size & 0x1);
-                SY_ASSERT((width & 0x1) == 0);
-                g_gpu.readback_buffer_len = 0;
-                // NOTE: since we return the data right away we flush the commands, but maybe we can rely on bit 27 of GPUSTAT?
-                if (g_gpu.software_rendering) {
-                    //SY_ASSERT(0);
-                }
-                else {
-                    push_vram_to_cpu_copy((void **)&g_gpu.readback_buffer, src_x, src_y, width, height);
-                    hardware_renderer *renderer = (hardware_renderer *)g_renderer;
-                    renderer->flush_commands();
-                    reset_gpu_draw_state();
-                }
+                g_gpu.read_index = 0;
+                gpu_copy_vram_to_cpu(&transfer);
                 
-                g_gpu.pending_store = 1;
-                struct load_params store = {.x = src_x, .y = src_y, .width = width, .height = height, .pending_halfwords = size, .left = src_x};
-                g_gpu.store = store;
+                g_gpu.pending_store = true;
                 g_gpu.stat.ready_to_send_vram = 1;
                 //debug_log("[VRAM->CPU] src x: %d, y: %d | w: %d, h: %d\n", src_x, src_y, width, height);
                 break;
@@ -570,30 +545,21 @@ void execute_gp0_command(u32 word)
                     g_gpu.drawing_area.left = (commands[0] & 0x3ff);
                     g_gpu.drawing_area.top = ((commands[0] >> 10) & 0x3ff);
                     g_gpu.draw_area_changed = true;
-                    //debug_log("GP0 draw area: left -> %d, top -> %d\n", g_gpu.drawing_area.left, g_gpu.drawing_area.top);
                     //push_draw_area(g_gpu.renderer, g_gpu.drawing_area);
                     break;
                 case 0xe4:
                     g_gpu.drawing_area.right = (commands[0] & 0x3ff);
                     g_gpu.drawing_area.bottom = ((commands[0] >> 10) & 0x3ff);
                     g_gpu.draw_area_changed = true;
-
-                    //debug_log("GP0 draw area: right -> %d, bottom -> %d\n", g_gpu.drawing_area.right, g_gpu.drawing_area.bottom);
                     //push_draw_area(g_gpu.renderer, g_gpu.drawing_area);
                     break;
                 case 0xe5:
-                    s16 draw_offset_x = ((s16)commands[0] & 0x7ff) << 5;
-                    draw_offset_x >>= 5;
-                    g_gpu.draw_offset_x = draw_offset_x;
-                    s16 draw_offset_y = ((s16)(commands[0] >> 11) & 0x7ff) << 5;
-                    draw_offset_y >>= 5;
-                    g_gpu.draw_offset_y = draw_offset_y;
-                    //debug_log("GP0 draw offset: X -> %d, Y -> %d\n", g_gpu.draw_offset_x, g_gpu.draw_offset_y);
+                    g_gpu.draw_offset_x = SIGN_EXTEND32(11, commands[0] & 0x7ff);
+                    g_gpu.draw_offset_y = SIGN_EXTEND32(11, commands[0] >> 11);
                     break;
                 case 0xe6:
                     g_gpu.stat.set_mask_on_draw = (commands[0] & 0x1);
-                    g_gpu.stat.draw_to_masked = (commands[0] >> 1) & 0x1;
-                    SY_ASSERT(!(g_gpu.stat.set_mask_on_draw | g_gpu.stat.draw_to_masked));
+                    g_gpu.stat.check_mask_before_draw = (commands[0] >> 1) & 0x1;
                     break;
                 INVALID_CASE;
                 }
@@ -679,20 +645,13 @@ void gpu_scanline_complete(u32 param)
             counter1->sync = true;
         }
 
-        if (!g_gpu.software_rendering)
-        {
-            hardware_renderer *renderer = (hardware_renderer *)g_renderer;
-            renderer->flush_commands();
-            reset_gpu_draw_state();
-        }
-        else
-        {
-            update_vram();
-        }
+        update_vram();
         
         ++g_vblank_counter;
         g_cpu.i_stat |= INTERRUPT_VBLANK;
-        platform_set_event(&g_present_ready);
+
+        if (g_debug.pause_on_vblank)
+            g_debug.pause = true;
     }
     //s32 cycles_until_event = (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE) - cycles_late;
     //schedule_event(gpu_scanline_complete, 0, cycles_until_event);

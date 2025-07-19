@@ -625,6 +625,14 @@ void debug_ui_quad(u32 color, rect2 rect)
     quad->r = rect;
 }
 
+void debug_ui_outline(u32 color, rect2 rect, u32 size)
+{
+    debug_ui_quad(color, r2(rect.left - size, rect.top - size, size, (rect.bottom - rect.top) + 2 * size));
+    debug_ui_quad(color, r2(rect.left, rect.top - size, rect.right - rect.left, size));
+    debug_ui_quad(color, r2(rect.right, rect.top - size, size, (rect.bottom - rect.top) + 2 * size));
+    debug_ui_quad(color, r2(rect.left, rect.bottom, rect.right - rect.left, size));
+}
+
 void debug_ui_push_clip_rect(rect2 r)
 {
     rect2 prev = g_debug_ui.clip_stack[g_debug_ui.clip_stack_index - 1];

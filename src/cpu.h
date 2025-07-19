@@ -144,7 +144,7 @@ struct cpu_state
     u32 i_mask;
 
     u32 cop0[32];
-    u32 cop2[64 + 3]; // TODO: temp hack to get 0-filled regs for MVMVA
+    u32 cop2[64 + 3]; // NOTE: hack to get 0-filled regs for MVMVA
 };
 
 extern struct cpu_state g_cpu;
@@ -177,7 +177,7 @@ inline u64 sign_extend32_64(u64 val)
 
 void cpu_init(void);
 u32 fetch_instruction(u32 pc);
-b32 execute_instructions(void);
+int execute_instructions(void);
 void set_interrupt(u32 irq);
 
 #endif /* CPU_H */

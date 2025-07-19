@@ -6,7 +6,7 @@
 
 #define NTSC_VIDEO_CYCLES_PER_SCANLINE 3413
 
-enum gpu_command_type
+typedef enum gpu_command_type
 {
     COMMAND_TYPE_MISC = 0x0,
     COMMAND_TYPE_DRAW_POLYGON = 0x1,
@@ -16,8 +16,7 @@ enum gpu_command_type
     COMMAND_TYPE_CPU_TO_VRAM = 0x5,
     COMMAND_TYPE_VRAM_TO_CPU = 0x6,
     COMMAND_TYPE_ENV = 0x7
-};
-typedef enum gpu_command_type gpu_command_type;
+} gpu_command_type;
 
 struct load_params
 {
@@ -25,9 +24,16 @@ struct load_params
     u16 height;
     u16 x;
     u16 y;
-    u16 left;
-    u16 reserved;
-    u32 pending_halfwords;
+};
+
+struct gpu_transfer
+{
+    u32 sx;
+    u32 sy;
+    u32 dx;
+    u32 dy;
+    u32 width;
+    u32 height;
 };
 
 typedef union
@@ -41,7 +47,7 @@ typedef union
         u32 dither_enable : 1;
         u32 draw_to_display_area : 1;
         u32 set_mask_on_draw : 1;
-        u32 draw_to_masked : 1;
+        u32 check_mask_before_draw : 1;
         u32 interlace_field : 1;
         u32 reverse_flag : 1;
         u32 texture_disable : 1;
@@ -65,10 +71,7 @@ typedef union
 
 struct gpu_state
 {
-    //renderer_interface *renderer;
-    b8 software_rendering;
     gpu_command_type command_type;
-    u8 render_flags;
 
     u32 fifo[16];
     u32 fifo_len;
@@ -90,6 +93,7 @@ struct gpu_state
     u32 scanline;
     u32 copy_buffer_len;
     u32 readback_buffer_len;
+    u32 read_index;
     u16 *copy_buffer;
     u16 *readback_buffer;
     u16 *copy_buffer_at;
@@ -101,7 +105,6 @@ struct gpu_state
     b8 pending_store;
     u32 pending_words;
     struct load_params load;
-    struct load_params store;
     u8 texture_window_mask_x;
     u8 texture_window_mask_y;
     u8 texture_window_offset_x;

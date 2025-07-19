@@ -96,6 +96,7 @@ void debug_ui_mouseup(int button);
 void debug_ui_mousewheel(int delta);
 
 void debug_ui_quad(u32 color, rect2 rect);
+void debug_ui_outline(u32 color, rect2 rect, u32 size);
 
 void debug_ui_push_clip_rect(rect2 r);
 void debug_ui_pop_clip_rect(void);

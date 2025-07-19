@@ -39,16 +39,14 @@ typedef s32         b32;
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
+#define SIGN_EXTEND32(bits, value) (((s32)(value) << (32 - (bits))) >> (32 - (bits)))
+
 inline s32 clamp16(s32 val)
 {
     if (val > 32767)
-    {
         val = 32767;
-    }
     else if (val < -32768)
-    {
         val = -32768;
-    }
     return val;
 }
 

@@ -697,16 +697,17 @@ b8 read_disk_data(disk_image *disk, u32 offset, void *buffer)
     return false;
 }
 
-void write_bmp(u32 width, u32 height, u8 *data, char *filename)
+void write_bmp(int width, int height, void *data, const char *path)
 {
 #pragma pack(push, 1)
     typedef struct
     {
-        u16 signature;
+        u8 signature[2];
         u32 filesize;
         u32 reserved;
         u32 offset;
     } BmpHeader;
+
     typedef struct
     {
         u32 size;
@@ -722,11 +723,29 @@ void write_bmp(u32 width, u32 height, u8 *data, char *filename)
         u32 important_colors;
     } BmpInfo;
 #pragma pack(pop)
-    FILE* file = fopen(filename, "wb");
+    FILE *file = fopen(path, "wb");
 
-    u32 filesize = (width * height * 2) + sizeof(BmpHeader) + sizeof(BmpInfo);
+    u32 image_width = width;
+    // if the width is odd, must pad scanlines to 4-byte boundary
+    if (width & 0x1)
+        image_width += 1;
+
+    u32 px_data_size = image_width * height * 2;
+
+    u16 *pixels = calloc(image_width * height, 2);
+    if (!pixels)
+        return;
+    
+    u16 *src = data;
+
+    for (int i = 0; i < height; ++i)
+        memcpy(&pixels[i * image_width], &src[i * width], width * 2);
+    
+    u32 filesize = px_data_size + sizeof(BmpHeader) + sizeof(BmpInfo);
+    
     BmpHeader header = {0};
-    header.signature = *(u16*)"BM";
+    header.signature[0] = 'B';
+    header.signature[1] = 'M';
     header.filesize = filesize;
     header.offset = sizeof(BmpHeader) + sizeof(BmpInfo);
 
@@ -736,20 +755,19 @@ void write_bmp(u32 width, u32 height, u8 *data, char *filename)
     info.height = -height;
     info.planes = 1;
     info.bpp = 16;
-    
-    u64 size = width * height * (info.bpp >> 3);
+
     fwrite(&header, sizeof(BmpHeader), 1, file);
     fwrite(&info, sizeof(BmpInfo), 1, file);
-    //u8* buffer = malloc(size);
-    //reverse_memcpy(data, buffer, size);
-    fwrite(data, 2, (width * height), file);
+    fwrite(pixels, 1, px_data_size, file);
+
     fclose(file);
-    //free(buffer);
+
+    free(pixels);
 }
 
-void write_wav_file(void *sample_data, u32 size_in_bytes, char *dstpath)
+void write_wav_file(void *sample_data, u32 size_in_bytes, const char *path)
 {
-    FILE *f = fopen(dstpath, "wb");
+    FILE *f = fopen(path, "wb");
     struct wav_header header = {0};
     header.riff[0] = 'R';
     header.riff[1] = 'I';

@@ -165,7 +165,7 @@ u32 fetch_instruction(u32 pc)
     return 0;
 }
 
-b32 execute_instructions(void)
+int execute_instructions(void)
 {
     b8 branched = false;
     reg_tuple new_load = {0};
@@ -181,14 +181,14 @@ b32 execute_instructions(void)
             if (!g_debug.breakpoint_was_hit && breakpoint_get(pc))
             {
                 g_debug.breakpoint_was_hit = true;
-                return false;
+                return 0;
             }
             g_debug.breakpoint_was_hit = false;
         }
         if (g_debug.pause)
         {
             g_debug.pause = false;
-            return false;
+            return 0;
         }
 #endif
         log_tty();
@@ -838,5 +838,5 @@ b32 execute_instructions(void)
         ++g_cycles_elapsed;
         //++g_debug.cpu_ticks;
     }
-    return true;
+    return 1;
 }

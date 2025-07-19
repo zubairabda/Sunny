@@ -107,6 +107,7 @@ static b8 show_voices = false;
 static b8 show_debug = false;
 static b8 show_files = false;
 static b8 show_dma = false;
+static rect2 bounds = {0};
 static char current_dir[MAX_PATH];
 static char textbuf[16];
 
@@ -121,7 +122,7 @@ static void pause_button(void)
     }
 }
 
-void draw_debug_ui(u32 width, u32 height)
+void update_debug_ui(u32 width, u32 height)
 {
     debug_ui_begin(width, height);
 
@@ -449,14 +450,6 @@ void draw_debug_ui(u32 width, u32 height)
                     if (next_entry & 0x800000)
                         break;
                 }
-                static enum system_state last_state;
-                
-                if (addr == 0xeb8d4 && last_state == SYSTEM_STATE_RUNNING) {
-                    printf("paused.\n");
-                    g_state = SYSTEM_STATE_PAUSED;
-                }
-
-                last_state = g_state;
 
                 debug_ui_end_group();
             }
@@ -523,16 +516,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     platform_window window = {0};
     window.handle = hwnd;
 
-    if (g_config.software_rendering)
+    if (!g_config.software_rendering)
     {
-        g_gpu.software_rendering = true;
-        g_renderer = (renderer_context *)platform_init_software_renderer(&window);
+        MessageBoxA(hwnd, "Hardware rendering is currently unsupported.\n", "Renderer error", MB_ICONERROR | MB_OK);   
     }
-    else 
-    {
-        MessageBoxA(hwnd, "Hardware rendering support is currently not implemented.\n", "Renderer error", MB_ICONERROR | MB_OK);
-        //g_renderer = win32_load_renderer_from_dll(hwnd, hInstance, "vulkan_renderer.dll");
-    }
+    g_renderer = (renderer_context *)platform_init_software_renderer(&window);
 
     g_sio.devices[0] = push_arena(&arena, sizeof(struct keyboard_pad));
     g_sio.devices[0]->type = INPUT_DEVICE_DIGITAL_PAD;
@@ -573,7 +561,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         int window_w = client.right - client.left;
         int window_h = client.bottom - client.top;
 
-        draw_debug_ui(window_w, window_h);
+        update_debug_ui(window_w, window_h);
 
         if (g_state == SYSTEM_STATE_RUNNING)
         {

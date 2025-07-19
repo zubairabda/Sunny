@@ -3,6 +3,22 @@
 #include "debug/debug_ui.h"
 #include "debug/atlas.h"
 
+typedef struct
+{
+    u32 flags;
+    u32 mode;
+    rect2 clip;
+    vec2i texpage;
+    vec2i clut;
+} draw_params;
+
+typedef struct
+{
+    vec2i pos;
+    vec2i uv;
+    u32 color;
+} vertex;
+
 static void renderer_stub_function(void) {}
 
 static inline u32 swizzle_16_32(u16 pixel)
@@ -50,29 +66,9 @@ void update_vram(void)
 #endif
 }
 
-static void update_display(void)
+void draw_debug_ui(u32 *framebuffer, int width, int height)
 {
-#if defined(SY_PLATFORM_WIN32)
-    win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
-#if 1
-    int width = renderer->window_width;
-    int height = renderer->window_height;
-#if 0
-    int src_x = g_gpu.vram_display_x;
-    int src_y = g_gpu.vram_display_y;
-    int src_w = (g_gpu.horizontal_display_x2 - g_gpu.horizontal_display_x1) / g_gpu.dot_div;
-    int src_h = g_gpu.vertical_display_y2 - g_gpu.vertical_display_y1;
-    if ((g_gpu.stat.value >> 22) & 0x1)
-    {
-        src_h <<= 1;
-    }
-    StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, src_x, src_y, src_w, src_h, SRCCOPY);
-#else
-    StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);
-#endif
-    // update ui
     debug_ui_reset_command_ptr();
-    u32 *pixels = renderer->fullscreen_data;
 
     rect2 clip_rect = {0, 0, width, height};
 
@@ -110,7 +106,7 @@ static void update_display(void)
                 {
                     u32 color = quad->color;
                     //u32 alpha = (color & 0xff000000) >> 24;
-                    pixels[x + (width * y)] = color;
+                    framebuffer[x + (width * y)] = color;
                 }
             }
             break;
@@ -191,7 +187,7 @@ static void update_display(void)
                         u32 dst_y = dest.top + y;
 
                         u32 dst = dst_x + (width * dst_y);
-                        u32 c_dst = pixels[dst];
+                        u32 c_dst = framebuffer[dst];
 
                         u8 dst_b = c_dst & 0xff;
                         u8 dst_g = (c_dst >> 8) & 0xff;
@@ -202,7 +198,7 @@ static void update_display(void)
                         u32 c_g = tg + dst_g * factor;
                         u32 c_r = tr + dst_r * factor;
 
-                        pixels[dst] = c_b | (c_g << 8) | (c_r << 16);
+                        framebuffer[dst] = c_b | (c_g << 8) | (c_r << 16);
                     }
                 }
                 pen.x += glyph.advance;
@@ -213,8 +209,30 @@ static void update_display(void)
             break;
         }
     }
-        //printf("%d\n", count);
-    //}
+}
+
+static void update_display(void)
+{
+#if defined(SY_PLATFORM_WIN32)
+    win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
+#if 1
+    int width = renderer->window_width;
+    int height = renderer->window_height;
+#if 0
+    int src_x = g_gpu.vram_display_x;
+    int src_y = g_gpu.vram_display_y;
+    int src_w = (g_gpu.horizontal_display_x2 - g_gpu.horizontal_display_x1) / g_gpu.dot_div;
+    int src_h = g_gpu.vertical_display_y2 - g_gpu.vertical_display_y1;
+    if ((g_gpu.stat.value >> 22) & 0x1)
+    {
+        src_h <<= 1;
+    }
+    StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, src_x, src_y, src_w, src_h, SRCCOPY);
+#else
+    StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);
+#endif
+
+    draw_debug_ui(renderer->fullscreen_data, width, height);
 
     HDC window_dc = GetDC(renderer->window);
 #if 0
@@ -347,537 +365,431 @@ software_renderer *platform_init_software_renderer(platform_window *window)
 #endif
 }
 
-static inline vec2i vertex_position(s32 v)
+static int dither_offsets[16] = {-4, 0, -3, 1, 2, -2, 3, -1, -3, 1, -4, 0, 3, -1, 2, -2};
+
+static inline int clamp8(int value)
 {
-    vec2i result;
-    result.x = ((v & 0x7ff) << 21) >> 21;
-    result.y = ((v & 0x7ff0000) << 5) >> 21;
+    if (value > 0xff)
+        return 0xff;
+    if (value < 0)
+        return 0;
+    return value;
+}
+
+#define CLAMP_UPPER(value, to) (value) > (to) ? (to) : (value)
+#define CLAMP_LOWER(value, to) (value) < (to) ? (to) : (value)
+
+static inline u32 blend_color(u8 mode, u32 bg_color, u32 fg_color)
+{
+    s32 br = bg_color & 0x1f;
+    s32 bg = (bg_color >> 5) & 0x1f;
+    s32 bb = (bg_color >> 10) & 0x1f;
+
+    s32 fr = fg_color & 0x1f;
+    s32 fg = (fg_color >> 5) & 0x1f;
+    s32 fb = (fg_color >> 10) & 0x1f;
+    u32 rr, rg, rb;
+    switch (mode)
+    {
+    case 0:
+        rr = (br + fr) >> 1;
+        rg = (bg + fg) >> 1;
+        rb = (bb + fb) >> 1;
+        break;
+    case 1:
+        rr = CLAMP_UPPER(br + fr, 31);
+        rg = CLAMP_UPPER(bg + fg, 31);
+        rb = CLAMP_UPPER(bb + fb, 31);
+        break;
+    case 2:
+        rr = CLAMP_LOWER(br - fr, 0);
+        rg = CLAMP_LOWER(bg - fg, 0);
+        rb = CLAMP_LOWER(bb - fb, 0);
+        break;
+    case 3:
+        rr = CLAMP_UPPER(br + (fr >> 2), 31);
+        rg = CLAMP_UPPER(bg + (fg >> 2), 31);
+        rb = CLAMP_UPPER(bb + (fb >> 2), 31);
+        break;
+    }
+    u32 result = rr | (rg << 5) | (rb << 10) | (fg_color & 0x8000);
     return result;
+}
+
+static inline u32 blend_texel(u32 r, u32 g, u32 b, u16 texel)
+{
+    // texel channels are expanded to 8-bit before being converted to 5-bit
+    u32 texel_r = (texel & 0x1f) << 3;
+    u32 texel_g = (texel >> 2) & 0xf8;
+    u32 texel_b = (texel >> 7) & 0xf8;
+    u32 red = ((r * texel_r) >> 7) >> 3;
+    u32 green = ((g * texel_g) >> 7) >> 3;
+    u32 blue = ((b * texel_b) >> 7) >> 3;
+    return red | (green << 5) | (blue << 10) | (texel & 0x8000);
 }
 
 static inline s32 edge(vec2i a, vec2i b, vec2i p)
 {
-    return ((p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x));
+    return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
 }
 
-void draw_triangle(vec2i v1, vec2i v2, vec2i v3, u16 color, rect2 scissor)
+static inline int top_left(vec2i a, vec2i b)
 {
-    software_renderer *renderer = (software_renderer *)g_renderer;
-    u16 *vram = renderer->vram;
-    
-    s32 minY = min3(v1.y, v2.y, v3.y);
-    s32 minX = min3(v1.x, v2.x, v3.x);
-    s32 maxY = max3(v1.y, v2.y, v3.y);
-    s32 maxX = max3(v1.x, v2.x, v3.x);
-
-    f32 area = (f32)edge(v1, v2, v3);
-    if (area < 0)
-    {
-        vec2i a = v3;
-        v3 = v2;
-        v2 = a;
-        area = -area;
-    }
-
-    if (minX < scissor.left)
-        minX = scissor.left;
-    if (minY < scissor.top)
-        minY = scissor.top;
-    if (maxX > scissor.right)
-        maxX = scissor.right;
-    if (maxY > scissor.bottom)
-        maxY = scissor.bottom;
-
-    for (s32 y = minY; y <= maxY; ++y)
-    {
-        for (s32 x = minX; x <= maxX; ++x)
-        {
-            vec2i p = {.x = x, .y = y};
-
-            s32 w1 = edge(v2, v3, p);
-            s32 w2 = edge(v3, v1, p);
-            s32 w3 = edge(v1, v2, p);
-
-            if ((w1 | w2 | w3) >= 0)
-            {
-                vram[x + (VRAM_WIDTH * y)] = color;
-            }
-        }
-    }
+    if ((b.x > a.x && a.y == b.y) || b.y < a.y)
+        return 0;
+    return -1;
 }
 
-// TODO: pass color as vec4
-void draw_shaded_triangle(u16 c1, vec2i v1, u16 c2, vec2i v2, u16 c3, vec2i v3, rect2 scissor)
+static void rasterize_triangle(vertex v0, vertex v1, vertex v2, draw_params *params)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
     u16 *vram = renderer->vram;
 
-    s32 minY = min3(v1.y, v2.y, v3.y);
-    s32 minX = min3(v1.x, v2.x, v3.x);
-    s32 maxY = max3(v1.y, v2.y, v3.y);
-    s32 maxX = max3(v1.x, v2.x, v3.x);
-
-    f32 area = (f32)edge(v1, v2, v3);
-    if (area < 0)
-    {
-        vec2i a = v3;
-        u16 c = c3;
-        v3 = v2;
-        c3 = c2;
-        v2 = a;
-        c2 = c;
-        area = -area;
-    }
-
-    if (minX < scissor.left)
-        minX = scissor.left;
-    if (minY < scissor.top)
-        minY = scissor.top;
-    if (maxX > scissor.right)
-        maxX = scissor.right;
-    if (maxY > scissor.bottom)
-        maxY = scissor.bottom;
-
-    f32 c1r = (f32)(c1 & 0x1f);
-    f32 c1g = (f32)((c1 >> 5) & 0x1f);
-    f32 c1b = (f32)((c1 >> 10) & 0x1f);
-
-    f32 c2r = (f32)(c2 & 0x1f);
-    f32 c2g = (f32)((c2 >> 5) & 0x1f);
-    f32 c2b = (f32)((c2 >> 10) & 0x1f);
-
-    f32 c3r = (f32)(c3 & 0x1f);
-    f32 c3g = (f32)((c3 >> 5) & 0x1f);
-    f32 c3b = (f32)((c3 >> 10) & 0x1f);
-
-    for (s32 y = minY; y <= maxY; ++y)
-    {
-        for (s32 x = minX; x <= maxX; ++x)
-        {
-            vec2i p = {.x = x, .y = y};
-            s32 e1 = edge(v2, v3, p);
-            s32 e2 = edge(v3, v1, p);
-            s32 e3 = edge(v1, v2, p);
-            if ((e1 | e2 | e3) >= 0)
-            {
-                f32 w1 = e1 / area;
-                f32 w2 = e2 / area;
-                f32 w3 = e3 / area;
-
-                f32 r = w1 * c1r + w2 * c2r + w3 * c3r;
-                f32 g = w1 * c1g + w2 * c2g + w3 * c3g;
-                f32 b = w1 * c1b + w2 * c2b + w3 * c3b;
-
-                //u16 color = ((u16)r << 10) | ((u16)g << 5) | ((u16)b);
-                u16 color = ((u16)r) | ((u16)g << 5) | ((u16)b << 10);
-
-                vram[x + (VRAM_WIDTH * y)] = color;
-            }
-        }
-    }
-}
-
-void draw_shaded_textured_triangle(u32 c1, vec2i t1, vec2i v1, u32 c2, vec2i t2, vec2i v2, u32 c3, vec2i t3, vec2i v3, 
-                                u32 mode, vec2i texture_page, vec2i palette, rect2 scissor)
-{
-    software_renderer *renderer = (software_renderer *)g_renderer;
-    u16 *vram = renderer->vram;
-
-    s32 area = edge(v1, v2, v3);
-    if (!area) {
+    s32 area = edge(v0.pos, v1.pos, v2.pos);
+    if (!area)
         return;
-    }
 
     if (area < 0)
     {
-        vec2i a = v3;
-        vec2i b = t3;
-        u16 c = c3;
-        v3 = v2;
-        t3 = t2;
-        c3 = c2;
-        v2 = a;
-        t2 = b;
-        c2 = c;
+        // sort to clockwise ordering
+        vertex swap = v2;
+        v2 = v1;
+        v1 = swap;
         area = -area;
     }
 
-    s32 minY = min3(v1.y, v2.y, v3.y);
-    s32 minX = min3(v1.x, v2.x, v3.x);
-    s32 maxY = max3(v1.y, v2.y, v3.y);
-    s32 maxX = max3(v1.x, v2.x, v3.x);
+    int minX = min3(v0.pos.x, v1.pos.x, v2.pos.x);
+    int maxX = max3(v0.pos.x, v1.pos.x, v2.pos.x);
+    int minY = min3(v0.pos.y, v1.pos.y, v2.pos.y);
+    int maxY = max3(v0.pos.y, v1.pos.y, v2.pos.y);
 
-    if (minX < scissor.left)
-        minX = scissor.left;
-    if (minY < scissor.top)
-        minY = scissor.top;
-    if (maxX > scissor.right)
-        maxX = scissor.right;
-    if (maxY > scissor.bottom)
-        maxY = scissor.bottom;
+    if ((maxX - minX) > 1023 || (maxY - minY) > 511)
+        return;
 
-    f32 c1b = (f32)((c1 >> 16) & 0xff);
-    f32 c1g = (f32)((c1 >> 8) & 0xff);
-    f32 c1r = (f32)(c1 & 0xff);
+    rect2 *clip = &params->clip;
+    if (minX < clip->left)
+        minX = clip->left;
+    if (minY < clip->top)
+        minY = clip->top;
+    if (maxX > clip->right + 1)
+        maxX = clip->right + 1;
+    if (maxY > clip->bottom + 1)
+        maxY = clip->bottom + 1;
 
-    f32 c2b = (f32)((c2 >> 16) & 0xff);
-    f32 c2g = (f32)((c2 >> 8) & 0xff);
-    f32 c2r = (f32)(c2 & 0xff);
+    u32 c0b = (v0.color >> 16) & 0xff;
+    u32 c0g = (v0.color >> 8) & 0xff;
+    u32 c0r = v0.color & 0xff;
 
-    f32 c3b = (f32)((c3 >> 16) & 0xff);
-    f32 c3g = (f32)((c3 >> 8) & 0xff);
-    f32 c3r = (f32)(c3 & 0xff);
+    u32 c1b = (v1.color >> 16) & 0xff;
+    u32 c1g = (v1.color >> 8) & 0xff;
+    u32 c1r = v1.color & 0xff;
 
-    vec2i p;
+    u32 c2b = (v2.color >> 16) & 0xff;
+    u32 c2g = (v2.color >> 8) & 0xff;
+    u32 c2r = v2.color & 0xff;
 
-    for (s32 y = minY; y <= maxY; ++y)
+    vec2i texpage = params->texpage;
+    vec2i clut = params->clut;
+    u32 mode = params->mode;
+    u32 flags = params->flags;
+    vec2i p = {.x = minX, .y = minY};
+
+    int bias0 = top_left(v1.pos, v2.pos);
+    int bias1 = top_left(v2.pos, v0.pos);
+    int bias2 = top_left(v0.pos, v1.pos);
+
+    // Pineda edge test
+    s32 e0_row = edge(v1.pos, v2.pos, p) + bias0;
+    s32 e1_row = edge(v2.pos, v0.pos, p) + bias1;
+    s32 e2_row = edge(v0.pos, v1.pos, p) + bias2;
+
+    s32 dy0 = v1.pos.y - v2.pos.y;
+    s32 dy1 = v2.pos.y - v0.pos.y;
+    s32 dy2 = v0.pos.y - v1.pos.y;
+
+    s32 dx0 = v2.pos.x - v1.pos.x;
+    s32 dx1 = v0.pos.x - v2.pos.x;
+    s32 dx2 = v1.pos.x - v0.pos.x;
+
+    b32 set_mask = g_gpu.stat.set_mask_on_draw << 15;
+    b8 check_mask = g_gpu.stat.check_mask_before_draw;
+    u8 semi_transparency = g_gpu.stat.semi_transparency_mode;
+    b8 dither = g_gpu.stat.dither_enable && ((flags & POLYGON_FLAG_GOURAUD_SHADED) || !(flags & POLYGON_FLAG_RAW_TEXTURE));
+
+    for (int y = minY; y < maxY; ++y)
     {
-        for (s32 x = minX; x <= maxX; ++x)
-        {
-            p.x = x;
-            p.y = y;
-            
-            s32 e1 = edge(v2, v3, p);
-            s32 e2 = edge(v3, v1, p);
-            s32 e3 = edge(v1, v2, p);
+        s32 e0 = e0_row;
+        s32 e1 = e1_row;
+        s32 e2 = e2_row;
 
-            if ((e1 | e2 | e3) >= 0)
+        for (int x = minX; x < maxX; ++x)
+        {   
+            if ((e0 | e1 | e2) >= 0)
             {
-                f32 w1 = e1 / (f32)area;
-                f32 w2 = e2 / (f32)area;
-                f32 w3 = e3 / (f32)area;
+                if (check_mask)
+                {
+                    if (vram[x + y * VRAM_WIDTH] & 0x8000)
+                    {
+                        e0 += dy0;
+                        e1 += dy1;
+                        e2 += dy2;
+                        continue;
+                    }
+                }
 
-                f32 texcoord_x = w1 * t1.x + w2 * t2.x + w3 * t3.x;
-                f32 texcoord_y = w1 * t1.y + w2 * t2.y + w3 * t3.y;
-
-                f32 r = w1 * c1r + w2 * c2r + w3 * c3r;
-                f32 g = w1 * c1g + w2 * c2g + w3 * c3g;
-                f32 b = w1 * c1b + w2 * c2b + w3 * c3b;
-#if 1
+                // fix barycentric coordinates
+                s32 w0 = e0 - bias0;
+                s32 w1 = e1 - bias1;
+                s32 w2 = e2 - bias2;
+                
+                u32 r = c0r;
+                u32 g = c0g;
+                u32 b = c0b;
                 u16 mask = 0;
-                switch (mode)
+        
+                if (flags & POLYGON_FLAG_GOURAUD_SHADED)
                 {
-                case 0:
+                    r = (w0 * c0r + w1 * c1r + w2 * c2r) / area;
+                    g = (w0 * c0g + w1 * c1g + w2 * c2g) / area;
+                    b = (w0 * c0b + w1 * c1b + w2 * c2b) / area;
+                }
 
-                    break;
-                case 1:
+                if (flags & POLYGON_FLAG_TEXTURED)
                 {
-                    s32 sample_x = ((s32)texcoord_x >> 2) + texture_page.x;
-                    s32 sample_y = (s32)texcoord_y + texture_page.y;
+                    s32 texcoord_x = (w0 * v0.uv.x + w1 * v1.uv.x + w2 * v2.uv.x) / area;
+                    s32 texcoord_y = (w0 * v0.uv.y + w1 * v1.uv.y + w2 * v2.uv.y) / area;
 
-                    s32 shift = ((s32)texcoord_x & 0x3) << 2;
+                    //u32 texel = (u32)sample_texture(vram, mode, texcoord_x, texcoord_y, texture_page, clut);
+                    u32 texel = 0;
 
-                    u16 clut = vram[sample_x + (VRAM_WIDTH * sample_y)];
+                    switch (mode)
+                    {
+                    case TEXTURE_MODE_DIRECT:
+                    {
+                        s32 sample_x = texcoord_x + texpage.x;
+                        s32 sample_y = texcoord_y + texpage.y;
+                        texel = vram[sample_x + (sample_y * VRAM_WIDTH)];
+                        break;
+                    }
+                    case TEXTURE_MODE_4BPP:
+                    {
+                        s32 sample_x = (texcoord_x >> 2) + texpage.x;
+                        s32 sample_y = texcoord_y + texpage.y;
 
-                    u16 index = (clut >> shift) & 0xf;
+                        s32 shift = (texcoord_x & 0x3) << 2;
 
-                    u16 result = vram[(palette.x + index) + (VRAM_WIDTH) * palette.y];
+                        u16 sample = vram[sample_x + (sample_y * VRAM_WIDTH)];
 
-                    r = (r * (result & 0x1f)) / 128.0f;
-                    g = (g * ((result >> 5) & 0x1f)) / 128.0f;
-                    b = (b * ((result >> 10) & 0x1f)) / 128.0f;
+                        int index = (sample >> shift) & 0xf;
 
-                    mask = result & 0x8000;
-                    break;
+                        texel = vram[(clut.x + index) + (clut.y * VRAM_WIDTH)];
+                        break;
+                    }
+                    case TEXTURE_MODE_8BPP:
+                    {
+                        s32 sample_x = (texcoord_x >> 1) + texpage.x;
+                        s32 sample_y = texcoord_y + texpage.y;
+
+                        s32 shift = (texcoord_x & 0x1) << 3;
+
+                        u16 sample = vram[sample_x + (sample_y * VRAM_WIDTH)];
+
+                        int index = (sample >> shift) & 0xff;
+
+                        texel = vram[(clut.x + index) + (clut.y * VRAM_WIDTH)];
+                        break;
+                    }
+                    }
+
+                    if (!texel)
+                    {
+                        e0 += dy0;
+                        e1 += dy1;
+                        e2 += dy2;
+                        continue;
+                    }
+
+                    // texture modulation - raw textures have a color value of 0x808080, which negates the modulation
+                    // we could also just branch if its a raw texture :p
+                    #if 0
+                    color = blend_texel(cr, cg, cb, texel);
+                    #else
+                    r = (r * ((texel & 0x1f) << 3)) >> 7;
+                    g = ((g * ((texel >> 5) & 0x1f) << 3) >> 7);
+                    b = ((b * ((texel >> 10) & 0x1f) << 3) >> 7);
+                    mask = texel & 0x8000;
+                    #endif
                 }
-                case 2:
+
+                if (dither)
                 {
-                    s32 sample_x = ((s32)texcoord_x >> 1) + texture_page.x;
-                    s32 sample_y = (s32)texcoord_y + texture_page.y;
-
-                    s32 shift = ((s32)texcoord_x & 0x1) << 3;
-
-                    u16 clut = vram[sample_x + (VRAM_WIDTH * sample_y)];
-
-                    u16 index = (clut >> shift) & 0xff;
-
-                    u16 result = vram[(palette.x + index) + (VRAM_WIDTH) * palette.y];
-
-                    r = (r * (result & 0x1f)) / 128.0f;
-                    g = (g * ((result >> 5) & 0x1f)) / 128.0f;
-                    b = (b * ((result >> 10) & 0x1f)) / 128.0f;
-
-                    mask = result & 0x8000;
-                    break;
+                    int offset = dither_offsets[(x & 0x3) + ((y & 0x3) * 4)];
+                    r = clamp8(r + offset);
+                    g = clamp8(g + offset);
+                    b = clamp8(b + offset);
                 }
+
+                u16 color = color16from888(r, g, b) | mask;
+
+                if (flags & POLYGON_FLAG_SEMI_TRANSPARENT && (!(flags & POLYGON_FLAG_TEXTURED) || (color & 0x8000)))
+                {
+                    u32 b = (u32)vram[x + y * VRAM_WIDTH];
+                    color = blend_color(semi_transparency, b, color);
                 }
-#endif
-                //u16 color = ((u16)r << 10) | ((u16)g << 5) | ((u16)b);
-                u16 color = ((u16)r) | ((u16)g << 5) | ((u16)b << 10) | mask;
 
-                if (!color)
-                    continue;
-
+                color |= set_mask;
+                
                 vram[x + (VRAM_WIDTH * y)] = color;
             }
+
+            e0 += dy0;
+            e1 += dy1;
+            e2 += dy2;
         }
+        
+        e0_row += dx0;
+        e1_row += dx1;
+        e2_row += dx2;
     }
 }
 
-void draw_textured_triangle(u32 color, vec2i t1, vec2i v1, vec2i t2, vec2i v2, vec2i t3, vec2i v3, 
-                                u32 mode, vec2i texture_page, vec2i palette, rect2 scissor)
+void draw_polygon(u32 *commands, u32 op)
 {
-    software_renderer *renderer = (software_renderer *)g_renderer;
-    u16 *vram = renderer->vram;
-
-    s32 area = edge(v1, v2, v3);
-    if (!area) {
-        return;
-    }
-
-    if (area < 0)
-    {
-        vec2i a = v3;
-        vec2i b = t3;
-        v3 = v2;
-        t3 = t2;
-        v2 = a;
-        t2 = b;
-        area = -area;
-    }
-
-    s32 minY = min3(v1.y, v2.y, v3.y);
-    s32 minX = min3(v1.x, v2.x, v3.x);
-    s32 maxY = max3(v1.y, v2.y, v3.y);
-    s32 maxX = max3(v1.x, v2.x, v3.x);
-
-    if (minX < scissor.left)
-        minX = scissor.left;
-    if (minY < scissor.top)
-        minY = scissor.top;
-    if (maxX > scissor.right)
-        maxX = scissor.right;
-    if (maxY > scissor.bottom)
-        maxY = scissor.bottom;
-
-    f32 cr = (f32)(color & 0xff);
-    f32 cg = (f32)((color >> 8) & 0xff);
-    f32 cb = (f32)((color >> 16) & 0xff);
-
-    u16 mask = 0;
-
-    for (s32 y = minY; y <= maxY; ++y)
-    {
-        for (s32 x = minX; x <= maxX; ++x)
-        {
-            vec2i p = {.x = x, .y = y};
-            s32 e1 = edge(v2, v3, p);
-            s32 e2 = edge(v3, v1, p);
-            s32 e3 = edge(v1, v2, p);
-            if ((e1 | e2 | e3) >= 0)
-            {
-                f32 w1 = e1 / (f32)area;
-                f32 w2 = e2 / (f32)area;
-                f32 w3 = e3 / (f32)area;
-
-                f32 texcoord_x = w1 * t1.x + w2 * t2.x + w3 * t3.x;
-                f32 texcoord_y = w1 * t1.y + w2 * t2.y + w3 * t3.y;
-
-                f32 r = 0.0f;
-                f32 g = 0.0f;
-                f32 b = 0.0f;
-
-                switch (mode)
-                {
-                case 0:
-
-                    break;
-                case 1:
-                {
-                    s32 sample_x = ((s32)texcoord_x >> 2) + texture_page.x;
-                    s32 sample_y = (s32)texcoord_y + texture_page.y;
-
-                    s32 shift = ((s32)texcoord_x & 0x3) << 2;
-
-                    u16 value = vram[sample_x + (VRAM_WIDTH * sample_y)];
-
-                    u16 index = (value >> shift) & 0xf;
-
-                    u16 result = vram[(palette.x + index) + (VRAM_WIDTH) * palette.y];
-
-                    r = (cr * (result & 0x1f)) / 128.0f;
-                    g = (cg * ((result >> 5) & 0x1f)) / 128.0f;
-                    b = (cb * ((result >> 10) & 0x1f)) / 128.0f;
-
-                    mask = result & 0x8000;
-                    break;
-                }
-                case 2:
-
-                    break;
-                }
-
-                //u16 color = ((u16)r << 10) | ((u16)g << 5) | ((u16)b);
-                u16 color = ((u16)r) | ((u16)g << 5) | ((u16)b << 10) | mask;
-#if 1
-                if (!color)
-                    continue;
-#endif
-                vram[x + (VRAM_WIDTH * y)] = color;
-            }
-        }
-    }
-}
-
-void draw_polygon(u32 *commands, u32 flags, vec2i draw_offset, rect2 scissor)
-{
-    //u32 num_vertices = (flags & POLYGON_FLAG_IS_QUAD) ? 4 : 3;
+    // op is commands[0] >> 24, passed for convenience
     u32 stride = 1;
 
     u32 mode = 0;
     vec2i texture_page;
     vec2i clut_base;
+    rect2 clip = g_gpu.drawing_area;
 
-    if (flags & POLYGON_FLAG_TEXTURED)
+    int draw_offset_x = (int)g_gpu.draw_offset_x;
+    int draw_offset_y = (int)g_gpu.draw_offset_y;
+
+    draw_params params;
+    params.flags = op;
+    params.clip = g_gpu.drawing_area;
+
+    int is_raw_texture = op & POLYGON_FLAG_RAW_TEXTURE;
+    int is_gouraud = op & POLYGON_FLAG_GOURAUD_SHADED;
+    int is_textured = op & POLYGON_FLAG_TEXTURED;
+    
+    if (is_textured)
     {
-        stride += 1;
+        ++stride;
+
         u32 clut_x = (commands[2] >> 16) & 0x3f;
         u32 clut_y = (commands[2] >> 22) & 0x1ff;
 
-        u16 texpage = (u16)((commands[(flags & POLYGON_FLAG_GOURAUD_SHADED) ? 5 : 4]) >> 16);
+        u32 texpage = commands[(op & POLYGON_FLAG_GOURAUD_SHADED) ? 5 : 4] >> 16;
         u32 texpage_x = texpage & 0xf;
         u32 texpage_y = (texpage >> 4) & 0x1;
 
-        texture_page.x = texpage_x * 64;
-        texture_page.y = texpage_y * 256;
+        params.texpage.x = texpage_x * 64;
+        params.texpage.y = texpage_y * 256;
 
-        clut_base.x = clut_x * 16;
-        clut_base.y = clut_y;
+        params.clut.x = clut_x * 16;
+        params.clut.y = clut_y;
      
         switch ((texpage >> 7) & 0x3)
         {
-        case 0: // 4-bit CLUT mode
-            mode = 1;
+        case 0:
+            mode = TEXTURE_MODE_4BPP;
             break;
-        case 1: // 8-bit CLUT mode
-            mode = 2;
+        case 1:
+            mode = TEXTURE_MODE_8BPP;
             break;
-        case 2: // 15-bit direct
+        case 2:
         case 3:
-            mode = 0;
+            mode = TEXTURE_MODE_DIRECT;
             break;
         }
-        
-        if (flags & POLYGON_FLAG_RAW_TEXTURE)
+
+        params.mode = mode;
+    }
+
+    if (is_gouraud)
+    {
+        ++stride;
+    }
+
+    u32 color = commands[0]; // by default, color is the first word in the command
+    
+    vertex v[4];
+
+    s32 v0 = commands[1];
+    s32 v1 = commands[1 + stride];
+    s32 v2 = commands[1 + stride * 2];
+
+    v[0].pos.x = VERTEX_X(v0) + draw_offset_x;
+    v[0].pos.y = VERTEX_Y(v0) + draw_offset_y;
+
+    v[1].pos.x = VERTEX_X(v1) + draw_offset_x;
+    v[1].pos.y = VERTEX_Y(v1) + draw_offset_y;
+
+    v[2].pos.x = VERTEX_X(v2) + draw_offset_x;
+    v[2].pos.y = VERTEX_Y(v2) + draw_offset_y;
+
+    if (is_textured)
+    {
+        u16 t0 = commands[2 + stride * 0];
+        u16 t1 = commands[2 + stride * 1];
+        u16 t2 = commands[2 + stride * 2];
+
+        v[0].uv.x = t0 & 0xff;
+        v[0].uv.y = (t0 >> 8) & 0xff;
+
+        v[1].uv.x = t1 & 0xff;
+        v[1].uv.y = (t1 >> 8) & 0xff;
+
+        v[2].uv.x = t2 & 0xff;
+        v[2].uv.y = (t2 >> 8) & 0xff;
+
+        if (is_raw_texture)
         {
-            // raw texture
-            u32 color = 0x00808080;
-            SY_ASSERT(0); // TODO: pass down the stride
+            // gouraud shading without modulation means we output raw textures without blending, assuming texturing is enabled
+            is_gouraud = 0;
+            color = 0x808080;
         }
-        else if (flags & POLYGON_FLAG_GOURAUD_SHADED)
-        {
-            // shaded textured
-            stride += 1;
-            u32 c0 = commands[stride * 0];
-            u32 c1 = commands[stride * 1];
-            u32 c2 = commands[stride * 2];
+    }
 
-            u16 t0 = commands[2 + stride * 0];
-            u16 t1 = commands[2 + stride * 1];
-            u16 t2 = commands[2 + stride * 2];
-
-            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
-
-            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
-
-            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
-
-            draw_shaded_textured_triangle(c0, v2i(t0 & 0xff, (t0 >> 8) & 0xff), v0, c1, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, c2, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2, 
-                mode, texture_page, clut_base, scissor);
-
-            if (flags & POLYGON_FLAG_IS_QUAD)
-            {
-                u32 c3 = commands[stride * 3];
-                u16 t3 = commands[2 + stride * 3];
-                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
-                draw_shaded_textured_triangle(c1, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, c2, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2, c3, v2i(t3 & 0xff, (t3 >> 8) & 0xff), v3, 
-                    mode, texture_page, clut_base, scissor);
-            }
-        }
-        else
-        {
-            // monochrome textured?
-            u32 color = commands[0];
-
-            u16 t0 = commands[2 + stride * 0];
-            u16 t1 = commands[2 + stride * 1];
-            u16 t2 = commands[2 + stride * 2];
-
-            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
-
-            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
-
-            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
-
-            draw_textured_triangle(color, v2i(t0 & 0xff, (t0 >> 8) & 0xff), v0, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2,
-                mode, texture_page, clut_base, scissor);
-
-            if (flags & POLYGON_FLAG_IS_QUAD)
-            {
-                u16 t3 = commands[2 + stride * 3];
-                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
-                draw_textured_triangle(color, v2i(t1 & 0xff, (t1 >> 8) & 0xff), v1, v2i(t2 & 0xff, (t2 >> 8) & 0xff), v2, v2i(t3 & 0xff, (t3 >> 8) & 0xff), v3,
-                    mode, texture_page, clut_base, scissor);
-            }
-        }
+    if (is_gouraud)
+    {
+        v[0].color = commands[stride * 0];
+        v[1].color = commands[stride * 1];
+        v[2].color = commands[stride * 2];
     }
     else
     {
-        if (flags & POLYGON_FLAG_GOURAUD_SHADED)
+        // flat shading/raw-texture
+        v[0].color = v[1].color = v[2].color = v[3].color = color;
+    }
+
+    rasterize_triangle(v[0], v[1], v[2], &params);
+
+    if (op & POLYGON_FLAG_IS_QUAD)
+    {
+        s32 v3 = commands[1 + stride * 3];
+        v[3].pos.x = VERTEX_X(v3) + draw_offset_x;
+        v[3].pos.y = VERTEX_Y(v3) + draw_offset_y;
+
+        if (is_textured)
         {
-            // shaded polygon
-            stride += 1;
-
-            u16 c0 = color16from24(commands[stride * 0]);
-            u16 c1 = color16from24(commands[stride * 1]);
-            u16 c2 = color16from24(commands[stride * 2]);
-
-            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
-
-            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
-
-            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
-
-            draw_shaded_triangle(c0, v0, c1, v1, c2, v2, scissor);
-
-            if (flags & POLYGON_FLAG_IS_QUAD)
-            {
-                u16 c3 = color16from24(commands[stride * 3]);
-                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
-                draw_shaded_triangle(c1, v1, c2, v2, c3, v3, scissor);
-            }
+            u16 t3 = commands[2 + stride * 3];
+            v[3].uv.x = t3 & 0xff;
+            v[3].uv.y = (t3 >> 8) & 0xff;
         }
-        else
+
+        if (is_gouraud)
         {
-            // flat color polygon
-            u16 c = color16from24(commands[0]);
-
-            vec2i v0 = v2i_add(vertex_position(commands[1]), draw_offset);
-
-            vec2i v1 = v2i_add(vertex_position(commands[1 + stride]), draw_offset);
-
-            vec2i v2 = v2i_add(vertex_position(commands[1 + stride * 2]), draw_offset);
-
-            draw_triangle(v0, v1, v2, c, scissor);
-
-            if (flags & POLYGON_FLAG_IS_QUAD)
-            {
-                vec2i v3 = v2i_add(vertex_position(commands[1 + stride * 3]), draw_offset);
-                draw_triangle(v1, v2, v3, c, scissor);
-            }
+            v[3].color = commands[stride * 3];
         }
+
+        rasterize_triangle(v[1], v[2], v[3], &params);
     }
 }
 
-static inline u16 blend_texel(u32 r, u32 g, u32 b, u16 texel)
-{
-    u32 red = (r * (texel & 0x1f)) >> 7;
-    u32 green = (g * ((texel >> 5) & 0x1f)) >> 7;
-    u32 blue = (b * ((texel >> 10) & 0x1f)) >> 7;
-    return (red) | (green << 5) | (blue << 10) | (texel & 0x8000);
-}
-
-void draw_rectangle(u32 *commands, u32 flags, u32 texpage, vec2i draw_offset, rect2 scissor)
+void draw_rectangle(u32 *commands, u32 op)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
     u16 *vram = renderer->vram;
@@ -888,7 +800,7 @@ void draw_rectangle(u32 *commands, u32 flags, u32 texpage, vec2i draw_offset, re
     switch (size)
     {
     case 0:
-        u32 param = commands[flags & RECT_FLAG_TEXTURED ? 3 : 2];
+        u32 param = commands[op & RECT_FLAG_TEXTURED ? 3 : 2];
         x_size = param & 0x3ff;
         y_size = (param >> 16) & 0x1ff;
         break;
@@ -903,28 +815,38 @@ void draw_rectangle(u32 *commands, u32 flags, u32 texpage, vec2i draw_offset, re
         break;
     }
 
-    vec2i pos = vertex_position(commands[1]);
+    s32 pos = commands[1];
+    int draw_offset_x = (int)g_gpu.draw_offset_x;
+    int draw_offset_y = (int)g_gpu.draw_offset_y;
+    int pos_x = VERTEX_X(pos) + draw_offset_x;
+    int pos_y = VERTEX_Y(pos) + draw_offset_y;
 
-    pos.x += draw_offset.x;
-    pos.y += draw_offset.y;
+    int x1 = pos_x;
+    int y1 = pos_y;
+    int x2 = pos_x + x_size;
+    int y2 = pos_y + y_size;
 
-    s32 width = pos.x + x_size;
-    s32 height = pos.y + y_size;
+    rect2 clip = g_gpu.drawing_area;
 
-    if (pos.x < scissor.left)
-        pos.x = scissor.left;
-    if (pos.y < scissor.top)
-        pos.y = scissor.top;
-    if (width > scissor.right)
-        width = scissor.right;
-    if (height > scissor.bottom)
-        height = scissor.bottom;
+    if (x1 < clip.left)
+        x1 = clip.left;
+    if (y1 < clip.top)
+        y1 = clip.top;
+    if (x2 > clip.right + 1)
+        x2 = clip.right + 1;
+    if (y2 > clip.bottom + 1)
+        y2 = clip.bottom + 1;
 
-    if (flags & RECT_FLAG_TEXTURED)
+    b8 check_mask = g_gpu.stat.check_mask_before_draw;
+    b32 set_mask = g_gpu.stat.set_mask_on_draw << 15;
+    u8 semi_transparency = g_gpu.stat.semi_transparency_mode;
+
+    if (op & RECT_FLAG_TEXTURED)
     {
+        u32 draw_mode = g_gpu.stat.value & 0x1ff;
         u32 r, g, b;
 
-        if (flags & RECT_FLAG_RAW_TEXTURE)
+        if (op & RECT_FLAG_RAW_TEXTURE)
         {
             r = g = b = 0x80;
         }
@@ -936,111 +858,139 @@ void draw_rectangle(u32 *commands, u32 flags, u32 texpage, vec2i draw_offset, re
             b = (color >> 16) & 0xff;
         }
 
-        u32 texpage_x = texpage & 0xf;
-        u32 texpage_y = (texpage >> 4) & 0x1;
+        u32 texpage_x = draw_mode & 0xf;
+        u32 texpage_y = (draw_mode >> 4) & 0x1;
 
-        vec2i texture_page;
-        texture_page.x = texpage_x * 64;
-        texture_page.y = texpage_y * 256;
+        vec2i texpage;
+        texpage.x = texpage_x * 64;
+        texpage.y = texpage_y * 256;
 
-        u32 clut_x = (commands[2] >> 16) & 0x3f;
-        u32 clut_y = (commands[2] >> 22) & 0x1ff;
+        u32 uv = commands[2];
 
-        u32 uv_x = commands[2] & 0xff;
-        u32 uv_y = (commands[2] >> 8) & 0xff;
+        u32 clut_x = (uv >> 16) & 0x3f;
+        u32 clut_y = (uv >> 22) & 0x1ff;
 
-        //uv_x += texture_page.x;
-        //uv_y += texture_page.y;
+        vec2i clut;
+        clut.x = clut_x * 16;
+        clut.y = clut_y;
 
-        vec2i clut_base;
-        clut_base.x = clut_x * 16;
-        clut_base.y = clut_y;
-     
+        u32 uv_x = uv & 0xff;
+        u32 uv_y = (uv >> 8) & 0xff;
+
         u32 mode;
 
-        switch ((texpage >> 7) & 0x3)
+        switch ((draw_mode >> 7) & 0x3)
         {
-        case 0: // 4-bit CLUT mode
-            mode = 1;
+        case 0:
+            mode = TEXTURE_MODE_4BPP;
             break;
-        case 1: // 8-bit CLUT mode
-            mode = 2;
+        case 1:
+            mode = TEXTURE_MODE_8BPP;
             break;
-        case 2: // 15-bit direct
+        case 2:
         case 3:
-            mode = 0;
+            mode = TEXTURE_MODE_DIRECT;
             break;
         }
 
         u16 color;
+        int texcoord_row = uv_y + (y1 - pos_y);
+        int texcoord_col = uv_x + (x1 - pos_x);
 
-        for (s32 y = pos.y, texcoord_y = uv_y; y < height; ++y, ++texcoord_y)
+        for (int y = y1, texcoord_y = texcoord_row; y < y2; ++y, ++texcoord_y)
         {
-            for (s32 x = pos.x, texcoord_x = uv_x; x < width; ++x, ++texcoord_x)
+            texcoord_y &= 0xff;
+
+            for (int x = x1, texcoord_x = texcoord_col; x < x2; ++x, ++texcoord_x)
             {
                 texcoord_x &= 0xff;
-                texcoord_y &= 0xff;
+
+                if (check_mask)
+                {
+                    if (vram[x + y * VRAM_WIDTH] & 0x8000)
+                        continue;
+                }
+
+                u16 texel = 0;
 
                 switch (mode)
                 {
-                case 0:
+                case TEXTURE_MODE_DIRECT:
                 {
-                    u32 sample_x = texcoord_x + texture_page.x;
-                    u32 sample_y = texcoord_y + texture_page.y;
-                    u16 texel = vram[sample_x + (VRAM_WIDTH * sample_y)];
-                    color = blend_texel(r, g, b, texel);
+                    s32 sample_x = texcoord_x + texpage.x;
+                    s32 sample_y = texcoord_y + texpage.y;
+                    texel = vram[sample_x + (sample_y * VRAM_WIDTH)];
                     break;
                 }
-                case 1:
+                case TEXTURE_MODE_4BPP:
                 {
-                    s32 sample_x = (texcoord_x >> 2) + texture_page.x;
-                    s32 sample_y = texcoord_y + texture_page.y;
+                    s32 sample_x = (texcoord_x >> 2) + texpage.x;
+                    s32 sample_y = texcoord_y + texpage.y;
 
                     s32 shift = (texcoord_x & 0x3) << 2;
 
-                    u16 value = vram[sample_x + (VRAM_WIDTH * sample_y)];
+                    u16 sample = vram[sample_x + (sample_y * VRAM_WIDTH)];
 
-                    u16 index = (value >> shift) & 0xf;
+                    int index = (sample >> shift) & 0xf;
 
-                    u16 indexed_color = vram[(clut_base.x + index) + (VRAM_WIDTH * clut_base.y)];
-
-                    color = blend_texel(r, g, b, indexed_color);
+                    texel = vram[(clut.x + index) + (clut.y * VRAM_WIDTH)];
                     break;
                 }
-                case 2:
+                case TEXTURE_MODE_8BPP:
                 {
-                    s32 sample_x = (texcoord_x >> 1) + texture_page.x;
-                    s32 sample_y = texcoord_y + texture_page.y;
+                    s32 sample_x = (texcoord_x >> 1) + texpage.x;
+                    s32 sample_y = texcoord_y + texpage.y;
 
                     s32 shift = (texcoord_x & 0x1) << 3;
 
-                    u16 value = vram[sample_x + (VRAM_WIDTH * sample_y)];
+                    u16 sample = vram[sample_x + (sample_y * VRAM_WIDTH)];
 
-                    u16 index = (value >> shift) & 0xff;
+                    int index = (sample >> shift) & 0xff;
 
-                    u16 indexed_color = vram[(clut_base.x + index) + (VRAM_WIDTH * clut_base.y)];
-
-                    color = blend_texel(r, g, b, indexed_color);
+                    texel = vram[(clut.x + index) + (clut.y * VRAM_WIDTH)];
                     break;
                 }
                 }
 
-                if (!color)
+                if (!texel)
                     continue;
 
-                vram[x + (VRAM_WIDTH * y)] = color;
+                color = (u16)blend_texel(r, g, b, texel);
+
+                if (op & RECT_FLAG_SEMI_TRANSPARENT && (color & 0x8000))
+                {
+                    u16 b = vram[x + (y * VRAM_WIDTH)];
+                    color = blend_color(semi_transparency, b, color);
+                }
+
+                color |= set_mask;
+
+                vram[x + (y * VRAM_WIDTH)] = color;
             }
         }
     }
     else
-    {
+    {   
         u16 color = color16from24(commands[0]);
-
-        for (s32 y = pos.y; y < height; ++y)
+        color |= set_mask;
+        for (int y = y1; y < y2; ++y)
         {
-            for (s32 x = pos.x; x < width; ++x)
+            for (int x = x1; x < x2; ++x)
             {
-                vram[x + (VRAM_WIDTH * y)] = color;
+                u16 result = color;
+                if (check_mask)
+                {
+                    if (vram[x + (y * VRAM_WIDTH)] & 0x8000)
+                        continue;
+                }
+
+                if (op & RECT_FLAG_SEMI_TRANSPARENT)
+                {
+                    u16 b = vram[x + (y * VRAM_WIDTH)];
+                    result = blend_color(semi_transparency, b, color);
+                }
+
+                vram[x + (y * VRAM_WIDTH)] = result;
             }
         }
     }

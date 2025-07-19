@@ -96,13 +96,7 @@ enum
 
 #define MDEC_DATA_END 0xFE00
 
-s32 sign_extend10_32(u32 value)
-{
-    s32 temp = (s32)(value << 22);
-    return (temp >> 22);
-}
-
-s32 rl_clamp11(s32 value)
+static s32 clamp11(s32 value)
 {
     if (value > 0x3ff)
         return 0x3ff;
@@ -200,15 +194,15 @@ static b8 rl_decode_block(u16 *blk, u8 *iq)
         
         u8 q = (dct >> 10) & 0x3f;
         u16 dc = dct & 0x3ff;
-        s32 val = sign_extend10_32(dc) * iq[0];
+        s32 val = SIGN_EXTEND32(10, dc) * iq[0];
         u8 k = 0;
         while (k < 64)
         {
             if (q == 0)
             {
-                val = sign_extend10_32(dc) * 2;
+                val = SIGN_EXTEND32(10, dc) * 2;
             }
-            val = rl_clamp11(val);
+            val = clamp11(val);
             if (q > 0)
                 blk[zagzig[k]] = val;
             else if (q == 0)
@@ -219,7 +213,7 @@ static b8 rl_decode_block(u16 *blk, u8 *iq)
             u16 ac = rle & 0x3ff;
             u16 len = (rle >> 10) & 0x3f;
             k = k + len + 1;
-            val = (s32)(sign_extend10_32(ac) * iq[k] * q + 4) / 8;
+            val = (SIGN_EXTEND32(10, ac) * iq[k] * q + 4) / 8;
         }
         idct_core(blk);
         return true;
@@ -360,24 +354,14 @@ static void mdec_decode(void)
         }
     }
 
-    //SY_ASSERT(data_fifo_count > 0);
     SY_ASSERT(data_fifo_count <= DATA_FIFO_SIZE);
-#if 0
-    stat.data_out_fifo_empty = false;
-    if (g_dma.transfers[CH_MDECOUT].transfer_pending)
-    {
-        g_dma.transfers[CH_MDECOUT].transfer_pending = false;
-        mdecout_on_dma();
-        //schedule_event(dma_transfer_event, CH_MDECOUT, g_dma.transfers[CH_MDECOUT].words_left); // TODO: timing
-    }
-#endif
 }
 
 void mdec_command(u32 word)
 {
     if (!parameters_left)
     {
-        printf("[MDEC] Send command: %d\n", (word >> 29));
+        //debug_log("[MDEC] Send command: %d\n", (word >> 29));
         command = word;
         u32 cmd = word >> 29;
         switch (cmd)
@@ -399,7 +383,7 @@ void mdec_command(u32 word)
     }
     else
     {
-        //printf("[MDEC] Send parameter: %08x\n", word);
+        //debug_log("[MDEC] Send parameter: %08x\n", word);
         parameter_fifo[parameter_fifo_count++] = word;
 
         --parameters_left;
@@ -456,10 +440,11 @@ b8 mdecout_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
     {
         SY_ASSERT(size < DATA_FIFO_SIZE);
         if (size > data_fifo_count)
+        {
             mdec_decode();
-        
-        if (size > data_fifo_count)
-            return false;
+            if (size > data_fifo_count)
+                return false;
+        }
 
         //u32 *at = (u32 *)(g_ram + dst);
         u32 addr = *paddr;
