@@ -88,8 +88,10 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
 static inline const char *spu_voice_state_to_str(int voice)
 {
-    switch (g_spu.voice.internal[voice].state)
+    switch (g_spu.voice.states[voice].stage)
     {
+    case ADSR_OFF:
+        return "Off";
     case ADSR_ATTACK:
         return "Attack";
     case ADSR_DECAY:

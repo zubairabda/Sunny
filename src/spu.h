@@ -3,13 +3,6 @@
 
 #include "common.h"
 
-struct spu_block
-{
-    u8 filter;
-    u8 flags;
-    u8 data[14];
-};
-
 struct voice_regs
 {
     s16 volume_left;    // 0x0
@@ -21,28 +14,29 @@ struct voice_regs
     u16 repeat_addr;    // 0xE
 };
 
-enum adsr_state
+enum adsr_stage
 {
-    //ADSR_OFF = 0,
+    ADSR_OFF = 0,
     ADSR_ATTACK,
     ADSR_DECAY,
     ADSR_SUSTAIN,
     ADSR_RELEASE
 };
 
-struct voice_internal
+struct voice_state
 {
     u32 current_addr;
-    enum adsr_state state;
+    enum adsr_stage stage;
     u32 pitch_counter;
     s32 adsr_cycles;
-    s16 adsr_target;
-    s16 older;
-    s16 old;
-    s16 prev_amplitude;
+    u16 adsr_target;
+    //s16 older;
+    //s16 old;
+    s16 amplitude;
     b8 has_samples;
     u8 block_flags;
-    s16 decoded_samples[31];
+    
+    s16 decoded_samples[31]; // 3 saved samples from previous block + 28 samples per block
 };
 
 typedef union
@@ -145,20 +139,15 @@ struct spu_state
             struct voice_regs data[24];
             u16 regs[(sizeof(struct voice_regs) * 24) >> 1];
         };
-        struct voice_internal internal[24];
+        struct voice_state states[24];
     } voice;
-#if 0
-    union {
-        struct spu_control data;
-        u8 regs[sizeof(struct spu_control)];
-    } control;
-#endif
+
     struct spu_control cnt;
     u8 transfer_fifo_len;
     u16 transfer_fifo[32];
     u32 current_transfer_addr;
-    u32 frames_buffered;
-    s16 *audio_buffer;
+    //u32 frames_buffered;
+    //s16 *audio_buffer;
     u8 *dram;
 };
 

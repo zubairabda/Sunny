@@ -1,5 +1,4 @@
 #include "event.h"
-#include "cpu.h"
 
 #define MAX_EVENT_COUNT 16
 
@@ -93,7 +92,7 @@ u64 schedule_event(event_callback callback, u32 param, s32 cycles_until_event, s
     event->id = ++id_count;
     event->param = param;
     event->period = period;
-
+    
     insert_event(event);
 
     return event->id;
@@ -113,7 +112,8 @@ void tick_events(void)
             if (current->period)
             {
                 s32 cycles_late = -(s32)(current->system_cycles_at_event - g_cycles_elapsed);
-                current->system_cycles_at_event = g_cycles_elapsed + (current->period - cycles_late);
+                s32 next_run = current->period - cycles_late;
+                current->system_cycles_at_event = g_cycles_elapsed + next_run;
                 insert_event(current);
             }
             else

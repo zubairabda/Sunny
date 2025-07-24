@@ -611,14 +611,10 @@ static void rasterize_triangle(vertex v0, vertex v1, vertex v2, draw_params *par
 
                     // texture modulation - raw textures have a color value of 0x808080, which negates the modulation
                     // we could also just branch if its a raw texture :p
-                    #if 0
-                    color = blend_texel(cr, cg, cb, texel);
-                    #else
                     r = (r * ((texel & 0x1f) << 3)) >> 7;
                     g = ((g * ((texel >> 5) & 0x1f) << 3) >> 7);
                     b = ((b * ((texel >> 10) & 0x1f) << 3) >> 7);
                     mask = texel & 0x8000;
-                    #endif
                 }
 
                 if (dither)

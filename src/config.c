@@ -336,7 +336,7 @@ static b8 config_get_bool(struct config_table_entry *entry, b8 *result)
 b8 load_config(void)
 {
     load_default_config();
-    struct file_dat file; // TODO: free file
+    struct file_dat file;
     if (allocate_and_read_file("sunny.cfg", FILE_FLAG_NULL_TERMINATE, &file))
     {
         struct config_table *table = parse_config(file.memory);
@@ -365,6 +365,7 @@ b8 load_config(void)
         }
 
         free(table);
+        free(file.memory);
         return true;
     }
     return false;

@@ -6,7 +6,6 @@
 #include <stdio.h>
 
 #include "audio.h"
-#include "spu.h"
 #include "debug.h"
 #include "psx.h"
 
@@ -22,13 +21,17 @@ typedef struct
 {
     IAudioClient *client;
     IAudioRenderClient *render_client;
+    void *buffer;
     u32 buffer_size;
+    u32 frames_buffered;
+    u32 frames_available;
     f32 volume;
     b8 mute;
     HANDLE event;
 } win32_audio_impl;
 
 static win32_audio_impl *g_audio;
+static u32 avail = 0;
 
 static const char *hr_to_str(HRESULT hr)
 {
@@ -79,7 +82,7 @@ b32 emulate_from_audio(void)
 {
     u32 pad = 0;
     HRESULT hr;
-    BYTE *pdata = NULL;
+    g_audio->buffer = NULL;
 
     DWORD res = WaitForSingleObject(g_audio->event, INFINITE);
     if (res != WAIT_OBJECT_0)
@@ -90,21 +93,20 @@ b32 emulate_from_audio(void)
 
     hr = IAudioClient_GetCurrentPadding(g_audio->client, &pad);
     u32 available_frames = g_audio->buffer_size - pad;
+    avail = available_frames;
 
-    hr = IAudioRenderClient_GetBuffer(g_audio->render_client, available_frames, &pdata);
+    hr = IAudioRenderClient_GetBuffer(g_audio->render_client, available_frames, (BYTE **)&g_audio->buffer);
     if (hr != S_OK)
     {
         debug_error("GetBuffer failed with error: %s\n", hr_to_str(hr));
         return false;
     }
 
-    u32 buffer_size = available_frames * 4; // multiply by nBlockAlign
+    g_audio->frames_buffered = 0;
+    g_audio->frames_available = available_frames;
 
-    s16 *data = (s16 *)pdata;
-    g_spu.audio_buffer = data;
-
-    // still deciding if breakpoints will be removed at some point/kept in a debug only scenario
-    while (g_spu.frames_buffered < available_frames)
+    // still deciding if breakpoints will be removed at some point or kept in a debug only scenario
+    while (g_audio->frames_buffered < available_frames)
     {
         if (!psx_run())
         {
@@ -112,14 +114,29 @@ b32 emulate_from_audio(void)
             break;
         }
     }
-    DWORD frames_written = MIN(g_spu.frames_buffered, available_frames);
-    g_spu.frames_buffered = 0;
+
+    DWORD frames_written = MIN(g_audio->frames_buffered, available_frames);
 
     IAudioRenderClient_ReleaseBuffer(g_audio->render_client, frames_written, g_audio->mute ? AUDCLNT_BUFFERFLAGS_SILENT : 0);
 
     return true;
 }
 
+void audio_buffer_write(s16 left, s16 right)
+{
+    s16 *buffer = g_audio->buffer;
+    u32 frames_buffered = g_audio->frames_buffered;
+    // samples are dropped if the SPU is ticked multiple times past the available frame count
+    if (buffer && (frames_buffered < g_audio->frames_available))
+    {
+        left *= g_audio->volume;
+        right *= g_audio->volume;
+        int index = frames_buffered << 1;
+        buffer[index] = left;
+        buffer[index + 1] = right;
+        ++g_audio->frames_buffered;
+    }
+}
 
 void play_sound(s16 *data, u32 num_frames)
 {

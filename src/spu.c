@@ -4,6 +4,25 @@
 #include "event.h"
 #include "debug.h"
 
+enum
+{
+    LOOP_END = 0x1,
+    LOOP_REPEAT = 0x2,
+    LOOP_START = 0x4
+};
+
+enum
+{
+    MODE_LINEAR = 0,
+    MODE_EXPONENTIAL = 1
+};
+
+enum
+{
+    DIR_INCREASE = 0,
+    DIR_DECREASE = 1
+};
+
 static s16 gauss_table[] = 
 {
     -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001,
@@ -111,10 +130,8 @@ void spu_write(u32 offset, u32 value)
 {
     if (offset < 0x180)
     {
-        //u8 voice = (offset >> 4) & 0x1f;
-        //debug_log("SPU voice %u\t%-15.15s <- %u\n", voice, debug_spu_reg_table[(offset & 0xf) >> 1], value);
+        // NOTE: still not clear on the behavior when ADSR volume is written to
         g_spu.voice.regs[(offset & 0x1ff) >> 1] = value;
-        //printf("sent %08x to %04x\n", value, offset);
     }
     else if (offset < 0x1c0)
     {
@@ -134,7 +151,7 @@ void spu_write(u32 offset, u32 value)
             break;
         case 0x8:
         case 0xa:
-            // KEY ON
+            // KON
             // if this is a 16 bit write, determine which halfword were writing to
             value <<= ((offset & 0x2) << 3);
             
@@ -144,21 +161,20 @@ void spu_write(u32 offset, u32 value)
                 if (value & pos)
                 {
                     //debug_log("KON: %d\n", i);
-                    g_spu.voice.internal[i].state = ADSR_ATTACK;
+                    g_spu.voice.states[i].stage = ADSR_ATTACK;
                     g_spu.voice.data[i].adsr_volume = 0;
-                    // TODO: according to docs, repeat gets set to start addr on key on.. but not sure this is needed?
-                    //g_spu.voice.data[i].repeat_addr = g_spu.voice.data[i].start_addr;
-                    g_spu.voice.internal[i].current_addr = g_spu.voice.data[i].start_addr;
-                    g_spu.voice.internal[i].pitch_counter = 0;
-                    g_spu.voice.internal[i].has_samples = 0;
-                    g_spu.voice.internal[i].adsr_cycles = 0;
+                    g_spu.voice.data[i].repeat_addr = g_spu.voice.data[i].start_addr;
+                    g_spu.voice.states[i].current_addr = g_spu.voice.data[i].start_addr;
+                    g_spu.voice.states[i].pitch_counter = 0;
+                    g_spu.voice.states[i].has_samples = false;
+                    g_spu.voice.states[i].adsr_cycles = 0;
                 }
             }
             g_spu.cnt.endx &= ~(value & 0x00ffffff);
             break;
         case 0xc:
         case 0xe:
-            // KEY OFF
+            // KOFF
             value <<= ((offset & 0x2) << 3);
             
             for (u32 i = 0; i < 24; ++i)
@@ -167,8 +183,8 @@ void spu_write(u32 offset, u32 value)
                 if (value & pos)
                 {
                     //debug_log("voice %u -> KEY OFF\n", i);
-                    g_spu.voice.internal[i].adsr_cycles = 0;
-                    g_spu.voice.internal[i].state = ADSR_RELEASE;
+                    g_spu.voice.states[i].adsr_cycles = 0;
+                    g_spu.voice.states[i].stage = ADSR_RELEASE;
                 }
             }
             g_spu.cnt.endx |= (value & 0x00ffffff);
@@ -256,7 +272,6 @@ void spu_write(u32 offset, u32 value)
             break;
         INVALID_CASE;
         }
-        //debug_log("SPU CTRL\t%-20.20s <- %u\n", debug_spu_str_table[(offset & 0x3f) >> 1], value);
     }
     else if (offset < 0x200)
     {
@@ -267,6 +282,105 @@ void spu_write(u32 offset, u32 value)
         debug_log("SPU write internal voice regs\n");
     }
     //debug_log("SPU write to: %08x <- %u\n", offset + 0x1f801c00, value);
+}
+
+static void update_adsr(struct voice_regs *regs, struct voice_state *state)
+{
+    u8 mode = 0; // 0 - linear, 1 - exponential
+    s8 shift = 0;
+    u32 stepval = 0;
+    //s32 step = 0;
+    u8 dir = 0; // 0 - increase, 1 - decrease
+
+    switch (state->stage)
+    {
+    case ADSR_ATTACK:
+    {
+        //dir = 0;
+        mode = (regs->adsr >> 15) & 0x1;
+        shift = (regs->adsr >> 10) & 0x1f;
+        stepval = (regs->adsr >> 8) & 0x3;
+        //step = 7 - step;
+        state->adsr_target = 0x7fff;
+        break;
+    }
+    case ADSR_DECAY:
+    {
+        s32 level = ((regs->adsr & 0xf) + 1) * 0x800;
+        state->adsr_target = level;
+        mode = 1;
+        dir = 1;
+        //step = -8;
+        shift = (regs->adsr >> 4) & 0xf;
+        break;
+    }
+    case ADSR_SUSTAIN:
+    {
+        shift = (regs->adsr >> 24) & 0x1f;
+        dir = (regs->adsr >> 30) & 0x1;
+        stepval = (regs->adsr >> 22) & 0x3;
+        //step = dir ? -8 + stepval : 7 - stepval;
+        mode = (regs->adsr >> 31);
+        break;
+    }
+    case ADSR_RELEASE:
+    {
+        dir = 1;
+        //step = -8;
+        shift = (regs->adsr >> 16) & 0x1f;
+        mode = (regs->adsr >> 21) & 0x1;
+        state->adsr_target = 0;
+        break;
+    }
+    default:
+        break;
+    }
+
+    s32 adsr_step = 7 - stepval;
+    if (dir)
+        adsr_step = ~adsr_step;
+
+    if (state->adsr_cycles > 0)
+    {
+        --state->adsr_cycles;
+    }
+
+    if (!state->adsr_cycles)
+    {
+        s32 adsr_cycles = 1 << MAX(0, shift - 11);
+        adsr_step = adsr_step << MAX(0, 11 - shift);
+        if (mode == MODE_EXPONENTIAL && dir == DIR_INCREASE && (regs->adsr_volume > 0x6000))
+        {
+            adsr_cycles *= 4;
+        }
+        if (mode == MODE_EXPONENTIAL && dir == DIR_DECREASE)
+        {
+            adsr_step = (adsr_step * regs->adsr_volume) >> 15;
+        }
+        state->adsr_cycles = adsr_cycles;
+        regs->adsr_volume = (s16)clamp(regs->adsr_volume + adsr_step, 0, 0x7fff);
+    }
+    
+    b8 target_reached = dir ? regs->adsr_volume <= state->adsr_target : regs->adsr_volume >= state->adsr_target;
+
+    if (state->stage != ADSR_SUSTAIN && target_reached) // TODO: remove
+    {
+        switch (state->stage)
+        {
+        case ADSR_ATTACK:
+            state->stage = ADSR_DECAY;
+            break;
+        case ADSR_DECAY:
+            state->stage = ADSR_SUSTAIN;
+            break;
+        case ADSR_RELEASE:
+            state->stage = ADSR_OFF;
+            break;
+        default:
+            break;
+        }
+        state->adsr_cycles = 0;
+    }
 }
 
 void spu_tick(u32 param)
@@ -284,40 +398,40 @@ void spu_tick(u32 param)
         g_spu.transfer_fifo_len = 0;
     }
 
-    s32 final_vol_left = 0;
-    s32 final_vol_right = 0;
+    s32 output_left = 0;
+    s32 output_right = 0;
 
     for (u32 i = 0; i < 24; ++i)
     {
-        struct voice_internal *internal = &g_spu.voice.internal[i];
+        struct voice_state *state = &g_spu.voice.states[i];
         struct voice_regs *regs = &g_spu.voice.data[i];
 
-        if (!internal->has_samples)
+        if (state->stage == ADSR_OFF)
+            continue;
+
+        if (!state->has_samples)
         {
             // save last samples from last block
-            internal->decoded_samples[0] = internal->decoded_samples[28];
-            internal->decoded_samples[1] = internal->decoded_samples[29];
-            internal->decoded_samples[2] = internal->decoded_samples[30];
+            state->decoded_samples[0] = state->decoded_samples[28];
+            state->decoded_samples[1] = state->decoded_samples[29];
+            state->decoded_samples[2] = state->decoded_samples[30];
 
-            u8 *data = g_spu.dram + (internal->current_addr << 3);
+            u8 *data = g_spu.dram + (state->current_addr << 3);
 
             u8 *adpcm_block = data;
             u8 shift = adpcm_block[0] & 0xf;
             if (shift > 12)
-            {
                 shift = 9;
-            }
+
             u8 amt = 12 - shift;
             u8 filter = (adpcm_block[0] >> 4) & 0x7;
             u8 flags = adpcm_block[1];
 
-            // loop start flag
-            if (flags & 0x4)
-            {
-                regs->repeat_addr = (u16)internal->current_addr;
-            }
+            if (flags & LOOP_START)
+                regs->repeat_addr = (u16)state->current_addr;
+
             // store flags for when we process them later
-            internal->block_flags = flags;
+            state->block_flags = flags;
 
             s32 pos_adpcm_table[] = {0, 60, 115, 98, 122};
             s32 neg_adpcm_table[] = {0, 0, -52, -55, -60};
@@ -325,20 +439,23 @@ void spu_tick(u32 param)
             s32 f0 = pos_adpcm_table[filter];
             s32 f1 = neg_adpcm_table[filter];
 
+            s16 older = state->decoded_samples[1];
+            s16 old = state->decoded_samples[2];
             for (int j = 0; j < 14; ++j)
             {
-                //s32 t0 = (s32)((u32)(*(adpcm_block + 2 + i) & 0xf) << 28) >> 28;
-                // first sample
-                s8 a0 = *(adpcm_block + 2 + j) & 0xf;
+                // first sample   
+                s8 a0 = adpcm_block[2 + j] & 0xf;
                 a0 <<= 4;
                 a0 >>= 4;
 
                 u32 t0 = a0;
-                s32 s0 = (u32)(t0 << amt) + ((internal->old * f0 + internal->older * f1 + 32) / 64);
+                s32 s0 = (u32)(t0 << amt) + ((old * f0 + older * f1 + 32) / 64);
                 s16 sample0 = (s16)clamp16(s0);
 
-                internal->older = internal->old;
-                internal->old = sample0;
+                //state->older = state->old;
+                //state->old = sample0;
+                older = old;
+                old = sample0;
 
                 // second sample
                 s8 a1 = (*(adpcm_block + 2 + j) >> 4) & 0xf;
@@ -346,37 +463,82 @@ void spu_tick(u32 param)
                 a1 >>= 4;
 
                 u32 t1 = a1;
-                s32 s1 = (t1 << amt) + ((internal->old * f0 + internal->older * f1 + 32) / 64);
+                s32 s1 = (t1 << amt) + ((old * f0 + older * f1 + 32) / 64);
                 s16 sample1 = (s16)clamp16(s1);
 
-                internal->older = internal->old;
-                internal->old = sample1;
+                //state->older = state->old;
+                //state->old = sample1;
+                older = old;
+                old = sample1;
 
-                internal->decoded_samples[3 + j * 2] = sample0;
-                internal->decoded_samples[3 + j * 2 + 1] = sample1;
+                state->decoded_samples[3 + j * 2] = sample0;
+                state->decoded_samples[3 + j * 2 + 1] = sample1;
             }
-            internal->has_samples = 1;
+            state->has_samples = true;
         }
         // gauss table index
-        u32 g = ((internal->pitch_counter >> 4) & 0xff);
+        u32 g = ((state->pitch_counter >> 4) & 0xff);
         // adpcm sample index
-        u32 s = ((internal->pitch_counter >> 12) & 0x1f) + 3;
+        u32 s = ((state->pitch_counter >> 12) & 0x1f) + 3;
 
-        s32 interp = ((gauss_table[0x0ff - g] * internal->decoded_samples[s - 3]) >> 15);
-        interp = interp + ((gauss_table[0x1ff - g] * internal->decoded_samples[s - 2]) >> 15);
-        interp = interp + ((gauss_table[0x100 + g] * internal->decoded_samples[s - 1]) >> 15);
-        interp = interp + ((gauss_table[0x000 + g] * internal->decoded_samples[s]) >> 15);
+        s32 interp      = ((gauss_table[0x0ff - g] * state->decoded_samples[s - 3]) >> 15);
+        interp = interp + ((gauss_table[0x1ff - g] * state->decoded_samples[s - 2]) >> 15);
+        interp = interp + ((gauss_table[0x100 + g] * state->decoded_samples[s - 1]) >> 15);
+        interp = interp + ((gauss_table[0x000 + g] * state->decoded_samples[s    ]) >> 15);
 
-        if (interp > 0x7fff || interp < -0x8000)
+        // update pitch counter
+        s32 step = regs->sample_rate;
+        if (g_spu.cnt.pmon & (1 << i) && (i > 0))
         {
+            s16 factor = state->amplitude;
+            factor += 0x8000;
+            step = sign_extend16_32(step);
+            step = (step * factor) >> 15;
+            step &= 0xffff;
             SY_ASSERT(0);
         }
+        if (step > 0x3fff)
+        {
+            step = 0x4000;
+        }
+        state->pitch_counter += step;
 
-        s32 volume = (interp * regs->adsr_volume) >> 15;
-        //volume = interp;
+        u32 sample_index = (state->pitch_counter >> 12) & 0x1f;
+        if (sample_index >= 28)
+        {
+            // pitch counter determines the 'sampling frequency', so the next block has to also follow the same frequency (which is why we subtract)
+            sample_index -= 28;
+            state->pitch_counter &= ~(0x1f << 12);
+            state->pitch_counter |= (sample_index << 12);
+            // NOTE: if were looping on a single block, setting this to 0 here means we re-decode the same block over and over
+            state->has_samples = false;
 
-        //s16 vol_left = voice_get_volume
+            // loop end flag sets endx and jumps
+            if (state->block_flags & LOOP_END)
+            {
+                state->current_addr = regs->repeat_addr;
+                g_spu.cnt.endx |= (1 << i);
+                if (!(state->block_flags & LOOP_REPEAT))
+                {
+                    state->stage = ADSR_RELEASE;
+                    regs->adsr_volume = 0;
+                    state->adsr_cycles = 0;
+                }
+            }
+            else
+            {
+                state->current_addr += 2;
+            }
+        }
 
+        update_adsr(regs, state);
+
+        // apply adsr volume
+        s32 level = (interp * regs->adsr_volume) >> 15;
+
+        state->amplitude = level; // set OUTx
+
+        // apply voice volume
         s32 volL = 0;
         s32 volR = 0;
 
@@ -402,139 +564,8 @@ void spu_tick(u32 param)
             volR = clamp((s32)(regs->volume_left & 0x7fff), -0x4000, 0x3fff) * 2;
         }
 
-        final_vol_left += (volume * volL) >> 15;
-        final_vol_right += (volume * volR) >> 15;
-
-        s32 level;
-        u8 mode;
-        s8 shift;
-        s8 stepval;
-        u8 dir;
-
-        switch (internal->state)
-        {
-        case ADSR_ATTACK:
-        {
-            dir = 0;
-            mode = (regs->adsr >> 15) & 0x1;
-            shift = (regs->adsr >> 10) & 0x1f;
-            stepval = 7 - ((regs->adsr >> 8) & 0x3);
-            internal->adsr_target = 0x7fff;
-            break;
-        }
-        case ADSR_DECAY:
-        {
-            level = ((regs->adsr & 0xf) + 1) * 0x800;
-            internal->adsr_target = level;
-            mode = 1;
-            dir = 1;
-            stepval = -8;
-            shift = (regs->adsr >> 4) & 0xf;
-            break;
-        }
-        case ADSR_SUSTAIN:
-        {
-            shift = (regs->adsr >> 24) & 0x1f;
-            dir = (regs->adsr >> 30) & 0x1;
-            stepval = dir ? -8 + ((regs->adsr >> 22) & 0x3) : 7 - ((regs->adsr >> 22) & 0x3);
-            mode = (regs->adsr >> 31);
-            break;
-        }
-        case ADSR_RELEASE:
-        {
-            dir = 1;
-            stepval = -8;
-            shift = (regs->adsr >> 16) & 0x1f;
-            mode = (regs->adsr >> 21) & 0x1;
-            internal->adsr_target = 0;
-            break;
-        }
-        }
-
-        // TODO: this could be off by one, not sure what exactly the behavior is (eg. adsr cycles gets set to 1, should next clock step? I think not)
-        if (internal->adsr_cycles > 0)
-        {
-            --internal->adsr_cycles;
-        }
-        else
-        {
-            s32 adsr_cycles = 1 << MAX(0, shift - 11);
-            s32 adsr_step = (s32)stepval << MAX(0, 11 - shift);
-            if (mode && !dir && (regs->adsr_volume > 0x6000))
-            {
-                adsr_cycles *= 4;
-            }
-            if (mode && dir)
-            {
-                adsr_step = (adsr_step * regs->adsr_volume) >> 15;
-            }
-            internal->adsr_cycles = adsr_cycles;
-            regs->adsr_volume = (s16)clamp(regs->adsr_volume + adsr_step, 0, 0x7fff);
-        }
-        // NOTE: adsr is adjusted in steps, must account for when a step exceeds the target
-        b8 target_reached = dir ? regs->adsr_volume <= internal->adsr_target : regs->adsr_volume >= internal->adsr_target;
-
-        if (internal->state != ADSR_SUSTAIN && target_reached)
-        {
-            switch (internal->state)
-            {
-            case ADSR_ATTACK:
-                internal->state = ADSR_DECAY;
-                break;
-            case ADSR_DECAY:
-                internal->state = ADSR_SUSTAIN;
-                break;
-            default:
-                break;
-            #if 0
-            case ADSR_RELEASE:
-                internal->state = ADSR_OFF;
-                break;
-            INVALID_CASE;
-            #endif
-            }
-            internal->adsr_cycles = 0;
-        }
-
-        // update pitch counter
-        s32 step = regs->sample_rate;
-        if (g_spu.cnt.pmon & (1 << i) && (i > 0))
-        {
-            s16 factor = internal->prev_amplitude;
-        }
-        if (step > 0x3fff)
-        {
-            step = 0x4000;
-        }
-        internal->pitch_counter += step;
-
-        u32 sample_index = (internal->pitch_counter >> 12) & 0x1f;
-        if (sample_index >= 28)
-        {
-            // pitch counter determines the 'sampling frequency', so the next block has to also follow the same frequency (which is why we subtract)
-            sample_index -= 28;
-            internal->pitch_counter &= ~(0x1f << 12);
-            internal->pitch_counter |= (sample_index << 12);
-            // NOTE: if were looping on a single block, setting this to 0 here means we re-decode the same block over and over
-            internal->has_samples = 0;
-
-            // loop end flag sets endx and jumps
-            if (internal->block_flags & 0x1)
-            {
-                internal->current_addr = regs->repeat_addr;
-                g_spu.cnt.endx |= (1 << i);
-                if (!(internal->block_flags & 0x2))
-                {
-                    internal->state = ADSR_RELEASE;
-                    regs->adsr_volume = 0;
-                    internal->adsr_cycles = 0;
-                }
-            }
-            else
-            {
-                internal->current_addr += 2;
-            }
-        }
+        output_left += (level * volL) >> 15;
+        output_right += (level * volR) >> 15;
     }
 
     if (g_spu.cnt.spucnt & 0x1 && g_cdrom.state == CDROM_STATE_PLAYING)
@@ -546,18 +577,10 @@ void spu_tick(u32 param)
         s16 right = ((raw_right * g_cdrom.vol_RR) >> 7) + ((raw_left * g_cdrom.vol_LR) >> 7);
         s16 cd_vol_left = (s16)((left * g_spu.cnt.cd_volume_left) >> 15);
         s16 cd_vol_right = (s16)((right * g_spu.cnt.cd_volume_right) >> 15);
-        final_vol_left += cd_vol_left;
-        final_vol_right += cd_vol_right;
+        output_left = clamp16(output_left + cd_vol_left);
+        output_right = clamp16(output_right + cd_vol_right);
         g_spu.sector_sample_index += 2;
     }
     
-    if (g_spu.audio_buffer)
-    {
-        f32 volume = audio_get_volume();
-        // each frame has a sample for both the left and right channel
-        u32 buffer_index = g_spu.frames_buffered * 2;
-        g_spu.audio_buffer[buffer_index] = clamp16(final_vol_left) * volume;
-        g_spu.audio_buffer[buffer_index + 1] = clamp16(final_vol_right) * volume;
-        ++g_spu.frames_buffered;
-    }
+    audio_buffer_write(output_left, output_right);
 }

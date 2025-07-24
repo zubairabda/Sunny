@@ -87,6 +87,7 @@ b8 cdrom_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
 
 b8 spu_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
 {
+    SY_ASSERT(from_ram);
     u32 addr = *paddr;
     u32 word;
     while (size--)

@@ -149,32 +149,6 @@ struct cpu_state
 
 extern struct cpu_state g_cpu;
 
-#define USEC_PER_CYCLE 1000000.0f / CPU_CLOCK
-
-inline u32 usec_to_cycles(u32 usec)
-{
-    f64 a = usec / USEC_PER_CYCLE;
-    return (u32)a;
-}
-
-inline u32 sign_extend8_32(u32 val)
-{
-    s8 temp = (s8)val;
-    return (u32)temp;
-}
-
-inline u32 sign_extend16_32(u32 val)
-{
-    s16 temp = (s16)val;
-    return (u32)temp;
-}
-
-inline u64 sign_extend32_64(u64 val)
-{
-    s32 temp = (s32)val;
-    return (u64)temp;
-}
-
 void cpu_init(void);
 u32 fetch_instruction(u32 pc);
 int execute_instructions(void);

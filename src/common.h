@@ -41,6 +41,24 @@ typedef s32         b32;
 
 #define SIGN_EXTEND32(bits, value) (((s32)(value) << (32 - (bits))) >> (32 - (bits)))
 
+inline u32 sign_extend8_32(u32 val)
+{
+    s8 temp = (s8)val;
+    return (u32)temp;
+}
+
+inline u32 sign_extend16_32(u32 val)
+{
+    s16 temp = (s16)val;
+    return (u32)temp;
+}
+
+inline u64 sign_extend32_64(u64 val)
+{
+    s32 temp = (s32)val;
+    return (u64)temp;
+}
+
 inline s32 clamp16(s32 val)
 {
     if (val > 32767)

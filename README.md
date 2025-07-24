@@ -6,6 +6,11 @@ Sunny is currently only supported on Windows, Use the batch file to build the pr
 
 Note that a valid BIOS file is required to run the application.
 
+## Run
+Press the 'M' key to bring up a debug menu.
+
+Images can be loaded directly using the menu, or specified on boot using a sunny.cfg config file
+
 ## TODO
 While many components require additional work/completion, Most of them are implemented, and
 Sunny is able to boot into a few games.

@@ -99,16 +99,7 @@ static inline void log_tty(void)
             u32 addr = g_cpu.registers[5] & 0x1fffffff;
 
             str = mem_read(addr);
-            #if 0
-            if (addr >= 0x1fc00000 && addr < 0x1fc80000)
-            {
-                str = (char *)(g_bios + (addr - 0x1fc00000));
-            }
-            else
-            {
-                SY_ASSERT(0);
-            }
-            #endif
+
             u32 size = g_cpu.registers[6];
             while (size--)
                 putchar(*str++);

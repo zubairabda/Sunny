@@ -1095,6 +1095,6 @@ static const char *cdrom_command_to_string(enum cdrom_command command)
     case ReadTOC:
         return "ReadTOC";
     default:
-        return NULL;
+        return "";
     }
 }
