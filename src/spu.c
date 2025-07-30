@@ -4,26 +4,7 @@
 #include "event.h"
 #include "debug.h"
 
-enum
-{
-    LOOP_END = 0x1,
-    LOOP_REPEAT = 0x2,
-    LOOP_START = 0x4
-};
-
-enum
-{
-    MODE_LINEAR = 0,
-    MODE_EXPONENTIAL = 1
-};
-
-enum
-{
-    DIR_INCREASE = 0,
-    DIR_DECREASE = 1
-};
-
-static s16 gauss_table[] = 
+static s16 gauss_table[512] = 
 {
     -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001,
     -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001, -0x001,
@@ -91,200 +72,134 @@ static s16 gauss_table[] =
     0x5997, 0x599E, 0x59A4, 0x59A9, 0x59AD, 0x59B0, 0x59B2, 0x59B3
 };
 
+static s16 fir_coefficients[39] = 
+{
+    -0x001, 0x0000, 0x0002, 0x0000, -0x00A, 0x0000, 0x0023, 0x0000,
+    -0x067, 0x0000, 0x010A, 0x0000, -0x268, 0x0000, 0x0534, 0x0000,
+    -0xB90, 0x0000, 0x2806, 0x4000, 0x2806, 0x0000, -0xB90, 0x0000,
+    0x0534, 0x0000, -0x268, 0x0000, 0x010A, 0x0000, -0x067, 0x0000,
+    0x0023, 0x0000, -0x00A, 0x0000, 0x0002, 0x0000, -0x001,
+};
+
+enum
+{
+    LOOP_END = 0x1,
+    LOOP_REPEAT = 0x2,
+    LOOP_START = 0x4
+};
+
+enum
+{
+    MODE_LINEAR = 0,
+    MODE_EXPONENTIAL = 1
+};
+
+enum
+{
+    DIR_INCREASE = 0,
+    DIR_DECREASE = 1
+};
+
 struct spu_state g_spu;
 
 void spu_reset(void)
 {
-    //memset(&g_spu.voice, 0, sizeof(struct spu_voice));
     u8 *dram = g_spu.dram;
     memset(&g_spu, 0, sizeof(struct spu_state));
-    g_spu.dram = dram;
-    g_spu.cnt.endx = 0x00ffffff;
+    g_spu.dram = dram; // TODO: lets not do this
+    g_spu.regs.control.endx = 0x00ffffff;
 }
 
-u16 spu_read(u32 offset)
+u32 spu_read(u32 offset)
 {
-    u16 result = 0;
-    if (offset < 0x180)
-    {
-        result = g_spu.voice.regs[(offset & 0x1ff) >> 1];
-    }
-    else if (offset < 0x1c0)
-    {
-        result = U16FromPtr(((u8 *)&g_spu.cnt) + (offset & 0x3f));
-    }
-    else if (offset < 0x200)
-    {
-        result = g_spu.reverb.regs[(offset & 0x3f) >> 1];
-    }
-    else if (offset < 0x260)
-    {
-        debug_log("SPU read internal voice regs\n");
-        //result = g_spu.voice.internal.
-    }
-
-    return result;
+    if (offset > 0x200)
+        return 0;
+    u8 *data = ((u8 *)&g_spu.regs) + offset;
+    return U32FromPtr(data);
 }
 
-void spu_write(u32 offset, u32 value)
+static int spu_handle_write(u32 offset, u32 value)
 {
-    if (offset < 0x180)
+    switch (offset)
     {
-        // NOTE: still not clear on the behavior when ADSR volume is written to
-        g_spu.voice.regs[(offset & 0x1ff) >> 1] = value;
-    }
-    else if (offset < 0x1c0)
-    {
-        switch (offset & 0x3f) // from D80
+    case 0x188:
+    case 0x18a:
+        // KON
+        value <<= ((offset & 0x2) << 3);
+        
+        for (u32 i = 0; i < 24; ++i)
         {
-        case 0x0:
-            g_spu.cnt.main_volume_left = value;
-            break;
-        case 0x2:
-            g_spu.cnt.main_volume_right = value;
-            break;
-        case 0x4:
-            g_spu.cnt.reverb_volume_left = value;
-            break;
-        case 0x6:
-            g_spu.cnt.reverb_volume_right = value;
-            break;
-        case 0x8:
-        case 0xa:
-            // KON
-            // if this is a 16 bit write, determine which halfword were writing to
-            value <<= ((offset & 0x2) << 3);
-            
-            for (u32 i = 0; i < 24; ++i)
+            u32 pos = 1 << i;
+            if (value & pos)
             {
-                u32 pos = 1 << i;
-                if (value & pos)
-                {
-                    //debug_log("KON: %d\n", i);
-                    g_spu.voice.states[i].stage = ADSR_ATTACK;
-                    g_spu.voice.data[i].adsr_volume = 0;
-                    g_spu.voice.data[i].repeat_addr = g_spu.voice.data[i].start_addr;
-                    g_spu.voice.states[i].current_addr = g_spu.voice.data[i].start_addr;
-                    g_spu.voice.states[i].pitch_counter = 0;
-                    g_spu.voice.states[i].has_samples = false;
-                    g_spu.voice.states[i].adsr_cycles = 0;
-                }
+                g_spu.voice_data[i].stage = ADSR_ATTACK;
+                g_spu.regs.voices[i].adsr_volume = 0;
+                g_spu.regs.voices[i].repeat_addr = g_spu.regs.voices[i].start_addr;
+                g_spu.voice_data[i].current_addr = g_spu.regs.voices[i].start_addr;
+                g_spu.voice_data[i].pitch_counter = 0;
+                g_spu.voice_data[i].has_samples = false;
+                g_spu.voice_data[i].adsr_cycles = 0;
             }
-            g_spu.cnt.endx &= ~(value & 0x00ffffff);
-            break;
-        case 0xc:
-        case 0xe:
-            // KOFF
-            value <<= ((offset & 0x2) << 3);
-            
-            for (u32 i = 0; i < 24; ++i)
-            {
-                u32 pos = 1 << i;
-                if (value & pos)
-                {
-                    //debug_log("voice %u -> KEY OFF\n", i);
-                    g_spu.voice.states[i].adsr_cycles = 0;
-                    g_spu.voice.states[i].stage = ADSR_RELEASE;
-                }
-            }
-            g_spu.cnt.endx |= (value & 0x00ffffff);
-            break;
-        case 0x10:
-        case 0x12:
-            // PMON
-            value <<= ((offset & 0x2) << 3);
-            g_spu.cnt.pmon = 0;
-            for (u32 i = 0; i < 24; ++i)
-            {
-                if (value & (1 << i))
-                {
-                    g_spu.cnt.pmon |= (1 << i);
-                }
-            }
-            break;
-        case 0x14:
-        case 0x16:
-            // NON
-            break;
-        case 0x18:
-        case 0x1a:
-            // EON
-            break;
-        case 0x1c:
-        case 0x1e:
-            // ENDX
-            //g_spu.cnt.endx = value;
-            debug_log("SPU: attempted to write %xh to ENDX\n", value);
-            break;
-        case 0x20:
-            // garbage?
-            break;
-        case 0x22:
-            g_spu.cnt.reverb_work_start_addr = value;
-            break;
-        case 0x24:
-            g_spu.cnt.irq_addr = value;
-            break;
-        case 0x26:
-            g_spu.cnt.data_transfer_addr = value;
-            g_spu.current_transfer_addr = value << 3;
-            break;
-        case 0x28:
-            // TODO: were not implementing SPUSTAT.10, wonder how far that'll get us
-            SY_ASSERT(g_spu.transfer_fifo_len < ARRAYCOUNT(g_spu.transfer_fifo));
-            g_spu.transfer_fifo[g_spu.transfer_fifo_len++] = value; // read behavior?
-            break;
-        case 0x2a:
-            g_spu.cnt.spucnt = value;
-    #if 0
-            g_spu.cnt.spustat &= ~(0x5f);
-            g_spu.cnt.spustat |= (g_spu.cnt.spucnt & 0x1f);
-            g_spu.cnt.spustat |= (g_spu.cnt.spucnt << 2) & 0x40;
-    #endif
-            break;
-        case 0x2c:
-            SY_ASSERT(value == 4);
-            g_spu.cnt.transfer_control = value;
-            break;
-        case 0x30:
-            g_spu.cnt.cd_volume_left = value;
-            break;
-        case 0x32:
-            g_spu.cnt.cd_volume_right = value;
-            break;
-        case 0x34:
-            // extern vol left
-            break;
-        case 0x36:
-            // extern vol right
-            break;
-        case 0x38:
-            // current vol left
-            break;
-        case 0x3a:
-            // current vol right
-            break;
-        case 0x3c:
-            // unknown
-            break;
-        case 0x3e:
-            // unknown
-            break;
-        INVALID_CASE;
         }
+        g_spu.regs.control.endx &= ~(value & 0x00ffffff);
+        break;
+    case 0x18c:
+    case 0x18e:
+        // KOFF
+        value <<= ((offset & 0x2) << 3);
+        
+        for (u32 i = 0; i < 24; ++i)
+        {
+            u32 pos = 1 << i;
+            if (value & pos)
+            {
+                g_spu.voice_data[i].adsr_cycles = 0;
+                g_spu.voice_data[i].stage = ADSR_RELEASE;
+            }
+        }
+        g_spu.regs.control.endx |= (value & 0x00ffffff);
+        break;
+    case 0x1a2:
+        g_spu.regs.control.reverb_work_start_addr = value;
+        g_spu.current_reverb_addr = value << 3;
+        break;
+    case 0x1a6:
+        g_spu.regs.control.data_transfer_addr = value;
+        g_spu.current_transfer_addr = value << 3;
+        break;
+    case 0x1a8:
+        SY_ASSERT(g_spu.transfer_fifo_len < ARRAYCOUNT(g_spu.transfer_fifo));
+        g_spu.transfer_fifo[g_spu.transfer_fifo_len++] = value; // read behavior?
+        break;
+    default:
+        return 0;
     }
-    else if (offset < 0x200)
-    {
-        g_spu.reverb.regs[(offset & 0x3f) >> 1] = value;
-    }
-    else if (offset < 0x260)
-    {
-        debug_log("SPU write internal voice regs\n");
-    }
-    //debug_log("SPU write to: %08x <- %u\n", offset + 0x1f801c00, value);
+    return 1;
 }
 
-static void update_adsr(struct voice_regs *regs, struct voice_state *state)
+void spu_write32(u32 offset, u32 value)
+{
+    if (spu_handle_write(offset, value))
+        return;
+    if (offset > 0x200)
+        return;
+
+    u8 *data = ((u8 *)&g_spu.regs) + offset;
+    U32FromPtr(data) = value;
+}
+
+void spu_write16(u32 offset, u32 value)
+{
+    if (spu_handle_write(offset, value))
+        return;
+    if (offset > 0x200)
+        return;
+
+    u8 *data = ((u8 *)&g_spu.regs) + offset;
+    U16FromPtr(data) = value;
+}
+
+static void update_adsr(struct spu_voice *regs, struct voice_internal *state)
 {
     u8 mode = 0; // 0 - linear, 1 - exponential
     s8 shift = 0;
@@ -383,12 +298,183 @@ static void update_adsr(struct voice_regs *regs, struct voice_state *state)
     }
 }
 
+static inline s16 *reverb_load(u32 base, u32 addr, u32 offset)
+{
+    u32 len = 0x80000 - base;
+    u32 relative = (addr + offset - base) % len;
+    u32 result = (base + relative) & 0x7fffe;
+    SY_ASSERT(result >= base && result <= 0x7fffe);
+    return (s16 *)(g_spu.dram + result);
+}
+
+static inline s16 load_reverb(u32 base, u32 addr, u32 offset)
+{
+    u32 len = 0x80000 - base;
+    u32 relative = (addr + offset - base) % len;
+    u32 result = (base + relative) & 0x7fffe;
+    return *(s16 *)(g_spu.dram + result);
+}
+
+static inline void write_reverb(u32 base, u32 addr, u32 offset, s16 value)
+{
+    u32 len = 0x80000 - base;
+    u32 relative = (addr + offset - base) % len;
+    u32 result = (base + relative) & 0x7fffe;
+    *(s16 *)(g_spu.dram + result) = value;
+}
+
+static inline s32 apply_volume(s32 level, s16 volume)
+{
+    return ((level * (s32)volume) >> 15);
+}
+
+static void push_fir_sample(s32 *delay_line, s32 data)
+{
+    // delay line is fir stage + 1 to hold the new sample
+    delay_line[0] = data;
+}
+
+static void apply_fir_filter(spu_sample *delay_line, s32 left, s32 right, spu_sample *output)
+{
+    // TODO: clean up
+    s32 sum_l = (left * fir_coefficients[0]) >> 15;
+    s32 sum_r = (right * fir_coefficients[0]) >> 15;
+
+    for (int i = 1, z = 0; i < 39; ++i, ++z)
+    {
+        sum_l += (delay_line[z].left * fir_coefficients[i]) >> 15;
+        sum_r += (delay_line[z].right * fir_coefficients[i]) >> 15;
+    }
+
+    // shift delay elements
+    for (int i = 37; i > 0; --i)
+    {
+        delay_line[i] = delay_line[i - 1];
+    }
+    delay_line[0].left = left;
+    delay_line[0].right = right;
+
+    //output->left = clamp16(sum_l);
+    //output->right = clamp16(sum_r);
+    SY_ASSERT(sum_l >= -0x8000 && sum_l <= 0x7fff); // TODO: remove
+    SY_ASSERT(sum_r >= -0x8000 && sum_r <= 0x7fff);
+    output->left = sum_l;
+    output->right = sum_r;
+}
+
+static void output_reverb(s32 left_in, s32 right_in, s32 *left_out, s32 *right_out)
+{
+    struct spu_reverb *reverb = &g_spu.regs.reverb;
+
+    s32 Lin = apply_volume(left_in, reverb->vLIN);
+    s32 Rin = apply_volume(right_in, reverb->vRIN);
+    
+    u32 mBASE = g_spu.regs.control.reverb_work_start_addr << 3;
+    u32 BufferAddress = g_spu.current_reverb_addr;
+
+    u32 LSAME = (u32)reverb->mLSAME << 3;
+    u32 RSAME = (u32)reverb->mRSAME << 3;
+
+    s16 *mLSAME = reverb_load(mBASE, BufferAddress, LSAME);
+    s16 *mRSAME = reverb_load(mBASE, BufferAddress, RSAME);
+    s16 *dLSAME = reverb_load(mBASE, BufferAddress, (u32)reverb->dLSAME << 3);
+    s16 *dRSAME = reverb_load(mBASE, BufferAddress, (u32)reverb->dRSAME << 3);
+
+    s16 delayL = *reverb_load(mBASE, BufferAddress, LSAME - 2);
+    s16 delayR = *reverb_load(mBASE, BufferAddress, RSAME - 2);
+
+    // same side reflection
+    *mLSAME = (s16)clamp16(apply_volume((Lin + apply_volume(dLSAME[0], reverb->vWALL) - delayL), reverb->vIIR) + delayL);
+    *mRSAME = (s16)clamp16(apply_volume((Rin + apply_volume(dRSAME[0], reverb->vWALL) - delayR), reverb->vIIR) + delayR);
+
+    u32 LDIFF = (u32)reverb->mLDIFF << 3;
+    u32 RDIFF = (u32)reverb->mRDIFF << 3;
+
+    s16 *mLDIFF = reverb_load(mBASE, BufferAddress, (u32)reverb->mLDIFF << 3);
+    s16 *mRDIFF = reverb_load(mBASE, BufferAddress, (u32)reverb->mRDIFF << 3);
+    s16 *dLDIFF = reverb_load(mBASE, BufferAddress, (u32)reverb->dLDIFF << 3);
+    s16 *dRDIFF = reverb_load(mBASE, BufferAddress, (u32)reverb->dRDIFF << 3);
+
+    s16 delayLD = *reverb_load(mBASE, BufferAddress, LDIFF - 2);
+    s16 delayRD = *reverb_load(mBASE, BufferAddress, RDIFF - 2);
+
+    // different side reflection
+    *mLDIFF = (s16)clamp16(apply_volume((Lin + apply_volume(dRDIFF[0], reverb->vWALL) - delayLD), reverb->vIIR) + delayLD);
+    *mRDIFF = (s16)clamp16(apply_volume((Rin + apply_volume(dLDIFF[0], reverb->vWALL) - delayRD), reverb->vIIR) + delayRD);
+
+    s16 vCOMB1 = reverb->vCOMB1;
+    s16 vCOMB2 = reverb->vCOMB2;
+    s16 vCOMB3 = reverb->vCOMB3;
+    s16 vCOMB4 = reverb->vCOMB4;
+
+    s16 *mLCOMB1 = reverb_load(mBASE, BufferAddress, (u32)reverb->mLCOMB1 << 3);
+    s16 *mLCOMB2 = reverb_load(mBASE, BufferAddress, (u32)reverb->mLCOMB2 << 3);
+    s16 *mLCOMB3 = reverb_load(mBASE, BufferAddress, (u32)reverb->mLCOMB3 << 3);
+    s16 *mLCOMB4 = reverb_load(mBASE, BufferAddress, (u32)reverb->mLCOMB4 << 3);
+
+    s16 *mRCOMB1 = reverb_load(mBASE, BufferAddress, (u32)reverb->mRCOMB1 << 3);
+    s16 *mRCOMB2 = reverb_load(mBASE, BufferAddress, (u32)reverb->mRCOMB2 << 3);
+    s16 *mRCOMB3 = reverb_load(mBASE, BufferAddress, (u32)reverb->mRCOMB3 << 3);
+    s16 *mRCOMB4 = reverb_load(mBASE, BufferAddress, (u32)reverb->mRCOMB4 << 3);
+
+    // early echo
+    s32 Lout = clamp16(apply_volume(vCOMB1, mLCOMB1[0]) + apply_volume(vCOMB2, mLCOMB2[0]) + apply_volume(vCOMB3, mLCOMB3[0]) + apply_volume(vCOMB4, mLCOMB4[0]));
+    s32 Rout = clamp16(apply_volume(vCOMB1, mRCOMB1[0]) + apply_volume(vCOMB2, mRCOMB2[0]) + apply_volume(vCOMB3, mRCOMB3[0]) + apply_volume(vCOMB4, mRCOMB4[0]));
+#if 1
+    // late reverb APF1
+    u32 LAPF1 = (u32)reverb->mLAPF1 << 3;
+    u32 RAPF1 = (u32)reverb->mRAPF1 << 3;
+    u32 dAPF1 = (u32)reverb->dAPF1 << 3;
+
+    s16 *dLAPF1 = reverb_load(mBASE, BufferAddress, LAPF1 - dAPF1);
+    s16 *dRAPF1 = reverb_load(mBASE, BufferAddress, RAPF1 - dAPF1);
+    s16 *mLAPF1 = reverb_load(mBASE, BufferAddress, LAPF1);
+    s16 *mRAPF1 = reverb_load(mBASE, BufferAddress, RAPF1);
+    
+    Lout = clamp16(Lout - apply_volume(reverb->vAPF1, dLAPF1[0]));
+    *mLAPF1 = Lout;
+    Lout = clamp16(apply_volume(Lout, reverb->vAPF1) + dLAPF1[0]);
+
+    Rout = clamp16(Rout - apply_volume(reverb->vAPF1, dRAPF1[0]));
+    *mRAPF1 = Rout;
+    Rout = clamp16(apply_volume(Rout, reverb->vAPF1) + dRAPF1[0]);
+
+    // late reverb APF2
+    u32 LAPF2 = (u32)reverb->mLAPF2 << 3;
+    u32 RAPF2 = (u32)reverb->mRAPF2 << 3;
+    u32 dAPF2 = (u32)reverb->dAPF2 << 3;
+
+    s16 *dLAPF2 = reverb_load(mBASE, BufferAddress, LAPF2 - dAPF2);
+    s16 *dRAPF2 = reverb_load(mBASE, BufferAddress, RAPF2 - dAPF2);
+    s16 *mLAPF2 = reverb_load(mBASE, BufferAddress, LAPF2);
+    s16 *mRAPF2 = reverb_load(mBASE, BufferAddress, RAPF2);
+    
+    Lout = clamp16(Lout - apply_volume(reverb->vAPF2, dLAPF2[0]));
+    *mLAPF2 = Lout;
+    Lout = clamp16(apply_volume(Lout, reverb->vAPF2) + dLAPF2[0]);
+
+    Rout = clamp16(Rout - apply_volume(reverb->vAPF2, dRAPF2[0]));
+    *mRAPF2 = Rout;
+    Rout = clamp16(apply_volume(Rout, reverb->vAPF2) + dRAPF2[0]);
+#endif
+    Lout = apply_volume(Lout, g_spu.regs.control.reverb_volume_left);
+    Rout = apply_volume(Rout, g_spu.regs.control.reverb_volume_right);
+
+    SY_ASSERT(Lout >= -0x8000 && Lout <= 0x7fff);
+    SY_ASSERT(Rout >= -0x8000 && Rout <= 0x7fff);
+
+    g_spu.current_reverb_addr = MAX(mBASE, (BufferAddress + 2) & 0x7fffe);
+
+    *left_out = Lout;
+    *right_out = Rout;
+}
+
 void spu_tick(u32 param)
 {
     // not sure if we need to emulate this, but spustat applies its changes delayed, im assuming to the next tick
-    g_spu.cnt.spustat &= ~(0x5f);
-    g_spu.cnt.spustat |= (g_spu.cnt.spucnt & 0x1f);
-    g_spu.cnt.spustat |= (g_spu.cnt.spucnt << 2) & 0x40;
+    g_spu.regs.control.spustat &= ~(0x5f);
+    g_spu.regs.control.spustat |= (g_spu.regs.control.spustat & 0x1f);
+    g_spu.regs.control.spustat |= (g_spu.regs.control.spustat << 2) & 0x40;
     // pending transfers also happen on the next tick
     if (g_spu.transfer_fifo_len)
     {
@@ -398,13 +484,16 @@ void spu_tick(u32 param)
         g_spu.transfer_fifo_len = 0;
     }
 
-    s32 output_left = 0;
-    s32 output_right = 0;
+    s32 mixed_left = 0;
+    s32 mixed_right = 0;
 
+    s32 reverb_input_left = 0;
+    s32 reverb_input_right = 0;
+    
     for (u32 i = 0; i < 24; ++i)
     {
-        struct voice_state *state = &g_spu.voice.states[i];
-        struct voice_regs *regs = &g_spu.voice.data[i];
+        struct voice_internal *state = &g_spu.voice_data[i];
+        struct spu_voice *regs = &g_spu.regs.voices[i];
 
         if (state->stage == ADSR_OFF)
             continue;
@@ -488,9 +577,9 @@ void spu_tick(u32 param)
 
         // update pitch counter
         s32 step = regs->sample_rate;
-        if (g_spu.cnt.pmon & (1 << i) && (i > 0))
+        if (g_spu.regs.control.pmon & (1 << i) && (i > 0))
         {
-            s16 factor = state->amplitude;
+            s16 factor = g_spu.voice_data[i - 1].amplitude;
             factor += 0x8000;
             step = sign_extend16_32(step);
             step = (step * factor) >> 15;
@@ -517,7 +606,7 @@ void spu_tick(u32 param)
             if (state->block_flags & LOOP_END)
             {
                 state->current_addr = regs->repeat_addr;
-                g_spu.cnt.endx |= (1 << i);
+                g_spu.regs.control.endx |= (1 << i);
                 if (!(state->block_flags & LOOP_REPEAT))
                 {
                     state->stage = ADSR_RELEASE;
@@ -536,51 +625,111 @@ void spu_tick(u32 param)
         // apply adsr volume
         s32 level = (interp * regs->adsr_volume) >> 15;
 
-        state->amplitude = level; // set OUTx
+        state->amplitude = level; // OUTx
 
         // apply voice volume
-        s32 volL = 0;
-        s32 volR = 0;
+        s16 volL = regs->volume_left;
+        s16 volR = regs->volume_right;
 
-        if (regs->volume_left & 0x8000)
-        {
-            // sweep mode
+        // TODO: sweep
+        if (volL & 0x8000)
             SY_ASSERT(0);
-        }
         else
-        {
-            // fixed volume mode
-            volL = clamp((s32)(regs->volume_left & 0x7fff), -0x4000, 0x3fff) * 2;
-        }
+            volL <<= 1;
 
-        if (regs->volume_right & 0x8000)
-        {
-            // sweep mode
+        if (volR & 0x8000)
             SY_ASSERT(0);
-        }
         else
-        {
-            // fixed volume mode
-            volR = clamp((s32)(regs->volume_left & 0x7fff), -0x4000, 0x3fff) * 2;
-        }
+            volR <<= 1;
 
-        output_left += (level * volL) >> 15;
-        output_right += (level * volR) >> 15;
+        s32 voice_output_left = apply_volume(level, volL);
+        s32 voice_output_right = apply_volume(level, volR);
+
+        mixed_left += voice_output_left;
+        mixed_right += voice_output_right;
+
+        if (g_spu.regs.control.reverb_mode_enable & (1 << i))
+        {
+            reverb_input_left += voice_output_left;
+            reverb_input_right += voice_output_right;
+        }
     }
 
-    if (g_spu.cnt.spucnt & 0x1 && g_cdrom.state == CDROM_STATE_PLAYING)
+    if (g_spu.regs.control.spucnt & 0x1 && g_cdrom.state == CDROM_STATE_PLAYING)
     {
         s16 *samples = (s16 *)g_cdrom.newest_sector.data;
         s16 raw_left = samples[g_spu.sector_sample_index];
         s16 raw_right = samples[g_spu.sector_sample_index + 1];
         s16 left = ((raw_left * g_cdrom.vol_LL) >> 7) + ((raw_right * g_cdrom.vol_RL) >> 7);
         s16 right = ((raw_right * g_cdrom.vol_RR) >> 7) + ((raw_left * g_cdrom.vol_LR) >> 7);
-        s16 cd_vol_left = (s16)((left * g_spu.cnt.cd_volume_left) >> 15);
-        s16 cd_vol_right = (s16)((right * g_spu.cnt.cd_volume_right) >> 15);
-        output_left = clamp16(output_left + cd_vol_left);
-        output_right = clamp16(output_right + cd_vol_right);
+        s32 cd_vol_left = apply_volume(left, g_spu.regs.control.cd_volume_left);
+        s32 cd_vol_right = apply_volume(right, g_spu.regs.control.cd_volume_right);
+        mixed_left += cd_vol_left;
+        mixed_right += cd_vol_right;
+        // TODO: reverb input
         g_spu.sector_sample_index += 2;
     }
+
+    if ((g_spu.regs.control.spucnt >> 7) & 0x1)
+    {
+        s32 reverb_out_right;
+        s32 reverb_out_left;
+        // NOTE: we are pushing and processing both inputs at once for now
+        spu_sample downsample;
+        apply_fir_filter(&g_spu.input_filter[0], reverb_input_left, reverb_input_right, &downsample);
+        reverb_input_left = downsample.left;
+        reverb_input_right = downsample.right;
+
+        spu_sample upsample;
+        if (g_spu.reverb_index)
+        {
+            // process right and output?
+            output_reverb(reverb_input_left, reverb_input_right, &reverb_out_left, &reverb_out_right);
+            apply_fir_filter(&g_spu.output_filter[0], reverb_out_left, reverb_out_right, &upsample);
+        }
+        else
+        {
+            // process left (push zeros for upsample)
+            apply_fir_filter(&g_spu.output_filter[0], 0, 0, &upsample);
+        }
+
+        upsample.left <<= 1;
+        upsample.right <<= 1;
+
+        // TODO: remove
+        SY_ASSERT(upsample.left >= -0x8000 && upsample.left <= 0x7fff);
+        SY_ASSERT(upsample.right >= -0x8000 && upsample.right <= 0x7fff);
+
+        reverb_out_left = upsample.left;
+        reverb_out_right = upsample.right;
+
+        g_spu.reverb_index = !g_spu.reverb_index;
+        
+        mixed_left += reverb_out_left;
+        mixed_right += reverb_out_right;
+    }
+
+    mixed_left = clamp16(mixed_left);
+    mixed_right = clamp16(mixed_right);
+
+    // apply master volume
+    s16 main_vol_left = g_spu.regs.control.main_volume_left;
+    s16 main_vol_right = g_spu.regs.control.main_volume_right;
+
+    // TODO: sweep
+    if (main_vol_left & 0x8000)
+        SY_ASSERT(0);
+    else
+        main_vol_left <<= 1;
     
-    audio_buffer_write(output_left, output_right);
+    if (main_vol_right & 0x8000)
+        SY_ASSERT(0);
+    else
+        main_vol_right <<= 1;
+
+    
+    mixed_left = apply_volume(mixed_left, main_vol_left);
+    mixed_right = apply_volume(mixed_right, main_vol_right);
+
+    audio_buffer_write(mixed_left, mixed_right);
 }

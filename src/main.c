@@ -88,7 +88,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
 static inline const char *spu_voice_state_to_str(int voice)
 {
-    switch (g_spu.voice.states[voice].stage)
+    switch (g_spu.voice_data[voice].stage)
     {
     case ADSR_OFF:
         return "Off";
@@ -286,7 +286,7 @@ void update_debug_ui(u32 width, u32 height)
         char buf[256];
         for (int i = 0; i < 24; ++i)
         {
-            snprintf(buf, sizeof(buf), "Voice #%-4d: %-10s | ADSR: %-8d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.voice.data[i].adsr_volume, g_spu.cnt.endx & (1 << i) ? "true" : "false");
+            snprintf(buf, sizeof(buf), "Voice #%-4d: %-10s | ADSR: %-8d | ENDX: %s", i, spu_voice_state_to_str(i), g_spu.regs.voices[i].adsr_volume, g_spu.regs.control.endx & (1 << i) ? "true" : "false");
             debug_ui_label(buf);
         }
         debug_ui_end_window();

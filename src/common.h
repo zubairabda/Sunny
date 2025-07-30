@@ -61,10 +61,10 @@ inline u64 sign_extend32_64(u64 val)
 
 inline s32 clamp16(s32 val)
 {
-    if (val > 32767)
-        val = 32767;
-    else if (val < -32768)
-        val = -32768;
+    if (val > 0x7fff)
+        val = 0x7fff;
+    else if (val < -0x8000)
+        val = -0x8000;
     return val;
 }
 

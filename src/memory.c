@@ -149,7 +149,7 @@ static void io_write32(u32 addr, u32 value)
         }
         else if (addr >= 0x1f801c00 && addr < 0x1f801e00)
         {
-            spu_write(addr & 0x3ff, value);
+            spu_write32(addr & 0x3ff, value);
         }
         else
         {
@@ -176,7 +176,7 @@ static void io_write16(u32 addr, u32 value)
         }
         else if (addr >= 0x1f801c00 && addr < 0x1f801e00)
         {
-            spu_write(addr & 0x3ff, value);
+            spu_write16(addr & 0x3ff, value);
         }
         else if (addr >= 0x1f801040 && addr < 0x1f801050)
         {
