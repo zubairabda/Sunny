@@ -202,7 +202,7 @@ static void io_write8(u32 addr, u32 value)
         }
         else if (addr >= 0x1f801800 && addr < 0x1f801804)
         {
-            cdrom_store(addr & 0x3, value);
+            cdrom_write(addr & 0x3, value);
         }
         else if (addr >= 0x1f801040 && addr < 0x1f801050)
         {

@@ -334,25 +334,31 @@ static void push_fir_sample(s32 *delay_line, s32 data)
     delay_line[0] = data;
 }
 
-static void apply_fir_filter(spu_sample *delay_line, s32 left, s32 right, spu_sample *output)
+static void apply_fir_filter(struct fir_filter *filter, s32 left, s32 right, spu_sample *output)
 {
-    // TODO: clean up
-    s32 sum_l = (left * fir_coefficients[0]) >> 15;
-    s32 sum_r = (right * fir_coefficients[0]) >> 15;
+    // TODO: check this
+    // input new sample
+    filter->buffer[filter->index].left = left;
+    filter->buffer[filter->index].right = right;
 
-    for (int i = 1, z = 0; i < 39; ++i, ++z)
-    {
-        sum_l += (delay_line[z].left * fir_coefficients[i]) >> 15;
-        sum_r += (delay_line[z].right * fir_coefficients[i]) >> 15;
-    }
+    // shift elements
+    ++filter->index;
+    if (filter->index > 38)
+        filter->index = 0;
 
-    // shift delay elements
-    for (int i = 37; i > 0; --i)
+    int index = filter->index;
+
+    s32 sum_l = 0;
+    s32 sum_r = 0;
+
+    for (int i = 0; i < 39; ++i)
     {
-        delay_line[i] = delay_line[i - 1];
+        --index;
+        if (index < 0)
+            index = 38;
+        sum_l += (filter->buffer[index].left * fir_coefficients[i]) >> 15;
+        sum_r += (filter->buffer[index].right * fir_coefficients[i]) >> 15;
     }
-    delay_line[0].left = left;
-    delay_line[0].right = right;
 
     //output->left = clamp16(sum_l);
     //output->right = clamp16(sum_r);
@@ -657,7 +663,7 @@ void spu_tick(u32 param)
 
     if (g_spu.regs.control.spucnt & 0x1 && g_cdrom.state == CDROM_STATE_PLAYING)
     {
-        s16 *samples = (s16 *)g_cdrom.newest_sector.data;
+        s16 *samples = (s16 *)g_cdrom.sector_buffer[g_cdrom.sector_index];
         s16 raw_left = samples[g_spu.sector_sample_index];
         s16 raw_right = samples[g_spu.sector_sample_index + 1];
         s16 left = ((raw_left * g_cdrom.vol_LL) >> 7) + ((raw_right * g_cdrom.vol_RL) >> 7);
@@ -676,7 +682,7 @@ void spu_tick(u32 param)
         s32 reverb_out_left;
         // NOTE: we are pushing and processing both inputs at once for now
         spu_sample downsample;
-        apply_fir_filter(&g_spu.input_filter[0], reverb_input_left, reverb_input_right, &downsample);
+        apply_fir_filter(&g_spu.input_filter, reverb_input_left, reverb_input_right, &downsample);
         reverb_input_left = downsample.left;
         reverb_input_right = downsample.right;
 
@@ -685,12 +691,12 @@ void spu_tick(u32 param)
         {
             // process right and output?
             output_reverb(reverb_input_left, reverb_input_right, &reverb_out_left, &reverb_out_right);
-            apply_fir_filter(&g_spu.output_filter[0], reverb_out_left, reverb_out_right, &upsample);
+            apply_fir_filter(&g_spu.output_filter, reverb_out_left, reverb_out_right, &upsample);
         }
         else
         {
             // process left (push zeros for upsample)
-            apply_fir_filter(&g_spu.output_filter[0], 0, 0, &upsample);
+            apply_fir_filter(&g_spu.output_filter, 0, 0, &upsample);
         }
 
         upsample.left <<= 1;

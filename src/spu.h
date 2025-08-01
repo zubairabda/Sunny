@@ -137,6 +137,12 @@ typedef struct
     s32 right;
 } spu_sample;
 
+struct fir_filter
+{
+    spu_sample buffer[39];
+    int index;
+};
+
 struct spu_state
 {
     struct spu_registers regs;
@@ -151,8 +157,8 @@ struct spu_state
     u32 current_reverb_addr;
     b8 reverb_index;
 
-    spu_sample input_filter[38];
-    spu_sample output_filter[38];
+    struct fir_filter input_filter;
+    struct fir_filter output_filter;
 
     u8 *dram;
 };

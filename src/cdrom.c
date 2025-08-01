@@ -18,9 +18,7 @@ static u8 dec_to_bcd_table[] =
     0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99,
 };
 
-#define DISK_SECTOR_SIZE 2352
-
-enum cdrstat_flags
+enum
 {
     CDR_STAT_ERROR   = (1 << 0),
     CDR_STAT_MOTOR   = (1 << 1),
@@ -32,7 +30,7 @@ enum cdrstat_flags
     CDR_STAT_PLAYING = (1 << 7)
 };
 
-enum cdrmode_flags
+enum
 {
     CDR_MODE_CDDA      = (1 << 0),
     CDR_MODE_AUTOPAUSE = (1 << 1),
@@ -88,7 +86,70 @@ enum cdrom_command
 
 struct cdrom_context g_cdrom;
 
-static const char *cdrom_command_to_string(enum cdrom_command command);
+static const char *cdrom_cmd_to_string(enum cdrom_command command)
+{
+    switch (command)
+    {
+    case Getstat:
+        return "Getstat";
+    case Setloc:
+        return "Setloc";
+    case Play:
+        return "Play";
+    case Forward:
+        return "Forward";
+    case Backward:
+        return "Backward";
+    case ReadN:
+        return "ReadN";
+    case MotorOn:
+        return "MotorOn";
+    case Stop:
+        return "Stop";
+    case Pause:
+        return "Pause";
+    case Init:
+        return "Init";
+    case Mute:
+        return "Mute";
+    case Demute:
+        return "Demute";
+    case Setfilter:
+        return "Setfilter";
+    case Setmode:
+        return "Setmode";
+    case Getparam:
+        return "Getparam";
+    case GetlocL:
+        return "GetlocL";
+    case GetlocP:
+        return "GetlocP";
+    case SetSession:
+        return "SetSession";
+    case GetTN:
+        return "GetTN";
+    case GetTD:
+        return "GetTD";
+    case SeekL:
+        return "SeekL";
+    case SeekP:
+        return "SeekP";
+    case Test:
+        return "Test";
+    case GetID:
+        return "GetID";
+    case ReadS:
+        return "ReadS";
+    case Reset:
+        return "Reset";
+    case GetQ:
+        return "GetQ";
+    case ReadTOC:
+        return "ReadTOC";
+    default:
+        return "";
+    }
+}
 
 void cdrom_reset(void)
 {
@@ -157,22 +218,20 @@ static u32 cdrom_read_next_sector(void)
     u32 next_int;
     // TODO: is the sector buffered upon ack or BFRD?
     // TODO: cancel read event upon stop/pause
-    struct cdrom_sector *sector = &g_cdrom.newest_sector;
-    sector->pos = g_cdrom.loc;
-    u8 *buffer = sector->data;
+    u8 *sector = g_cdrom.sector_buffer[g_cdrom.sector_index];
 
     // preload next sector
-    if (read_disk_data(g_cdrom.disk, g_cdrom.loc, buffer))
+    if (read_disk_sector(g_cdrom.disk, g_cdrom.loc, sector))
     {
-        u32 lba = g_cdrom.loc / 2352;
+        u32 lba = g_cdrom.loc;
         MSF pos = lba_to_msf(lba);
         debug_log("[CDROM] Reading sector %d:%d:%d\n", pos.m, pos.s, pos.f);
 
         // TODO: print sector
         char sync[12] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
-        if (memcmp(buffer, sync, 12) == 0)
+        if (memcmp(sector, sync, 12) == 0)
         {
-            g_cdrom.loc += 2352;
+            ++g_cdrom.loc;
             next_int = g_cdrom.mode & CDR_MODE_SPEED ? READ_2X_DELAY : READ_DELAY;
             //g_cdrom.state = CDROM_STATE_READING;
         }
@@ -199,18 +258,17 @@ static u32 g_track_end = 0;
 static u32 cdrom_play_next_sector(void)
 {
     u32 next_int = 0;
-    struct cdrom_sector *sector = &g_cdrom.newest_sector;
-    sector->pos = g_cdrom.loc;
-    if (read_disk_data(g_cdrom.disk, g_cdrom.loc, sector->data))
+    u8 *sector = g_cdrom.sector_buffer[g_cdrom.sector_index];
+    if (read_disk_sector(g_cdrom.disk, g_cdrom.loc, sector))
     {
-        g_cdrom.loc += 2352;
+        ++g_cdrom.loc;
         g_spu.sector_sample_index = 0;
-        // TODO: pull this into the read_disk_data function
+        // TODO: pull this into the read_disk_sector function
         char sync[12] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
-        if (memcmp(sector->data, sync, 12) == 0)
+        if (memcmp(sector, sync, 12) == 0)
         {
             debug_warn("[CDROM] Data sector during Play, returning silence...\n");
-            memset(sector->data, 0, 2352); // TODO: temp
+            memset(sector, 0, 2352); // TODO: temp
         }
         next_int = g_cdrom.mode & CDR_MODE_SPEED ? READ_2X_DELAY : READ_DELAY;
     }
@@ -239,7 +297,7 @@ static u8 cdrom_get_current_track(void)
     for (u32 i = 0; i < disk->track_count; ++i)
     {
         struct disk_track *track = &disk->tracks[i];
-        if (loc >= track->offset && loc < (track->offset + track->size))
+        if (loc >= track->lba && loc < (track->lba + track->len))
         {
             return (u8)(i + 1);
         }
@@ -275,10 +333,10 @@ static void cdrom_play_handler(u32 param)
             g_cdrom.response_fifo[2] = 1; // TODO: index
             // relative time within the track is returned if sector is 10h,30h,50h,70h
             MSF pos;
-            u32 absolute_lba = g_cdrom.loc / 2352;
+            u32 absolute_lba = g_cdrom.loc;
             if (pos.f & 0x10)
             {
-                u32 track_start_lba = current_track->offset / 2352;
+                u32 track_start_lba = current_track->lba;
                 pos = lba_to_msf(absolute_lba - track_start_lba);
                 pos.s |= 0x80;
             }
@@ -319,12 +377,12 @@ static void cdrom_read_handler(u32 param)
         }
         else
         {
-            MSF pos = lba_to_msf(g_cdrom.newest_sector.pos / 2352);
+            MSF pos = lba_to_msf(g_cdrom.loc - 1);
             debug_log("[CDROM] Copied Sector %d:%d:%d\n", pos.m, pos.s, pos.f);
             g_cdrom.interrupt_flag = 1;
             g_cdrom.response_fifo_count = 1;
             g_cdrom.response_fifo[0] = cdrom_get_stat();
-            g_cdrom.buffered_sector = g_cdrom.newest_sector;
+            g_cdrom.sector_index = !g_cdrom.sector_index;
         }
     }
 
@@ -447,9 +505,7 @@ static void cdrom_command(u32 command)
         
         u32 lba = (((bcd_to_decimal(amm) * 60) + bcd_to_decimal(ass)) * 75 + bcd_to_decimal(asect)) - 150;
 
-        u32 offset = lba * 2352;
-
-        g_cdrom.seek_target = offset;
+        g_cdrom.seek_target = lba;
         g_cdrom.seek_pending = true;
 
         g_cdrom.first_response.fifo[0] = cdrom_get_stat() | CDR_STAT_MOTOR;
@@ -475,8 +531,8 @@ static void cdrom_command(u32 command)
         if (g_cdrom.param_fifo_count && track)
         {
             struct disk_track *starting_track = &g_cdrom.disk->tracks[track - 1];
-            g_cdrom.loc = starting_track->offset;
-            g_track_end = starting_track->offset + starting_track->size;
+            g_cdrom.loc = starting_track->lba;
+            g_track_end = starting_track->lba + starting_track->len;
         }
         else
         {
@@ -486,7 +542,7 @@ static void cdrom_command(u32 command)
                 g_cdrom.loc = g_cdrom.seek_target;
             }
             struct disk_track *starting_track = &g_cdrom.disk->tracks[cdrom_get_current_track() - 1];
-            g_track_end = starting_track->offset + starting_track->size;
+            g_track_end = starting_track->lba + starting_track->len;
         }
 
         u32 next_int = cdrom_play_next_sector();
@@ -516,7 +572,7 @@ static void cdrom_command(u32 command)
 
         remove_event(g_cdrom.read_event_id); // cancel reads
 
-        g_cdrom.loc = 150 * 2352;
+        g_cdrom.loc = 150;
 
         g_cdrom.state = CDROM_STATE_STOPPED;
         g_cdrom.response_pending = true;
@@ -697,16 +753,16 @@ static void cdrom_command(u32 command)
 
         if (track_no == 0)
         {
+            // index 0 returns the end of the last track
             struct disk_track *track = &disk->tracks[disk->track_count - 1];
-            u32 offset = track->offset + track->size; // index 0 returns the end of the last track
-            u32 lba = offset / 2352;
+            u32 lba = track->lba + track->len;
             pos = lba_to_msf(lba);
         }
         else
         {
             struct disk_track *track = &disk->tracks[track_no - 1];
             // TODO: just use lbas for everything
-            u32 lba = (track->offset / 2352) + (track->pregap / 2352);
+            u32 lba = track->lba + track->pregap;
             pos = lba_to_msf(lba);
         }
 
@@ -882,8 +938,8 @@ u8 cdrom_read(u32 offset)
     {
         if (g_cdrom.data_fifo_end)
         {
-            struct cdrom_sector *sector = &g_cdrom.buffered_sector;
-            result = sector->data[g_cdrom.data_fifo_index++];
+            u8 *sector = g_cdrom.sector_buffer[!g_cdrom.sector_index];
+            result = sector[g_cdrom.data_fifo_index++];
             if (g_cdrom.data_fifo_index >= g_cdrom.data_fifo_end)
             {
                 g_cdrom.status.DRQSTS = false;
@@ -912,7 +968,7 @@ u8 cdrom_read(u32 offset)
     return result;
 }
 
-void cdrom_store(u32 offset, u8 value)
+void cdrom_write(u32 offset, u8 value)
 {
     u8 reg = offset + (g_cdrom.status.index) * 4;
     switch (reg)
@@ -924,7 +980,7 @@ void cdrom_store(u32 offset, u8 value)
         g_cdrom.status.index = value;
         break;
     case 1:
-        debug_log("[CDROM] send command <- %s\n", cdrom_command_to_string((enum cdrom_command)value));
+        debug_log("[CDROM] send command <- %s\n", cdrom_cmd_to_string((enum cdrom_command)value));
         SY_ASSERT(!g_cdrom.status.BUSYSTS);
         // TODO: INTs must be ack'd before command is sent
         g_cdrom.status.BUSYSTS = true;
@@ -965,7 +1021,7 @@ void cdrom_store(u32 offset, u8 value)
     case 5:
         debug_log("[CDROM] sound map data out\n");
         break;
-    case 6: // interrupt en
+    case 6: // interrupt enable
         g_cdrom.interrupt_enable = value & 0x1f;
         debug_log("[CDROM] set interrupt enable register: %02x\n", value);
         break;
@@ -1031,70 +1087,5 @@ void cdrom_store(u32 offset, u8 value)
         debug_log("[CDROM] audio volume apply changes\n");
         break;
     INVALID_CASE;
-    }
-}
-
-static const char *cdrom_command_to_string(enum cdrom_command command)
-{
-    switch (command)
-    {
-    case Getstat:
-        return "Getstat";
-    case Setloc:
-        return "Setloc";
-    case Play:
-        return "Play";
-    case Forward:
-        return "Forward";
-    case Backward:
-        return "Backward";
-    case ReadN:
-        return "ReadN";
-    case MotorOn:
-        return "MotorOn";
-    case Stop:
-        return "Stop";
-    case Pause:
-        return "Pause";
-    case Init:
-        return "Init";
-    case Mute:
-        return "Mute";
-    case Demute:
-        return "Demute";
-    case Setfilter:
-        return "Setfilter";
-    case Setmode:
-        return "Setmode";
-    case Getparam:
-        return "Getparam";
-    case GetlocL:
-        return "GetlocL";
-    case GetlocP:
-        return "GetlocP";
-    case SetSession:
-        return "SetSession";
-    case GetTN:
-        return "GetTN";
-    case GetTD:
-        return "GetTD";
-    case SeekL:
-        return "SeekL";
-    case SeekP:
-        return "SeekP";
-    case Test:
-        return "Test";
-    case GetID:
-        return "GetID";
-    case ReadS:
-        return "ReadS";
-    case Reset:
-        return "Reset";
-    case GetQ:
-        return "GetQ";
-    case ReadTOC:
-        return "ReadTOC";
-    default:
-        return "";
     }
 }

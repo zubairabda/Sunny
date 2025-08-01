@@ -203,13 +203,6 @@ static void parser_skip_line(struct cue_parser *parser)
         ++parser->at;
 }
 
-struct file_table_entry
-{
-    const char *name;
-    u32 length;
-    platform_file file;
-};
-
 static b8 parse_cue_file(struct cue_parser *parser, cue_string *file_path)
 {
     char c;
@@ -281,7 +274,7 @@ static b8 parse_index(struct cue_parser *parser, s32 *out_index)
     return false;
 }
 
-static b8 parse_msf(struct cue_parser *parser, s32 *offset)
+static b8 parse_msf(struct cue_parser *parser, s32 *out_lba)
 {
     char c;
     while ((c = parser->at[0]))
@@ -307,7 +300,7 @@ static b8 parse_msf(struct cue_parser *parser, s32 *offset)
             if (!(res[0] & res[1] & res[2]))
                 return false;
 
-            *offset = (((mm * 60) + ss) * 75 + ff) * 2352; // TODO: change to lba
+            *out_lba = (((mm * 60) + ss) * 75 + ff);
 
             return true;
         }
@@ -429,7 +422,6 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
                 parser_error(&parser, "Error: TRACK command must be under a FILE command\n");
                 break;
             }
-            // TODO: check that index 1 exists per track
 
             context = CUE_CONTEXT_TRACK;
 
@@ -492,7 +484,6 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
                 break;
             }
 
-            // TODO: if only index 1 is present, we should assume no pregap
             s32 prev_track_index = current_track_index;
             if (current_track_index < 0)
             {
@@ -594,8 +585,8 @@ disk_image *open_disk(const char *path, psx_image_type type)
             return NULL;
         }
         result->tracks[0].file = &result->files[0];
-        result->tracks[0].size = platform_get_file_size(&result->files[0]);
-        result->tracks[0].offset = 0;
+        result->tracks[0].len = platform_get_file_size(&result->files[0]) / DISK_SECTOR_SIZE;
+        result->tracks[0].lba = 0;
         break;
     }
     case CUE:
@@ -619,9 +610,9 @@ disk_image *open_disk(const char *path, psx_image_type type)
                 file_path[dir_index + 1] = '\0';
             }
 
-            result = malloc(sizeof(disk_image));
-            result->tracks = malloc(sizeof(struct disk_track) * data->track_count);
-            result->files = malloc(sizeof(platform_file) * data->file_count);
+            result = calloc(1, sizeof(disk_image));
+            result->tracks = calloc(data->track_count, sizeof(struct disk_track));
+            result->files = calloc(data->file_count, sizeof(platform_file));
             for (u32 i = 0; i < data->file_count; ++i)
             {
                 strcat(file_path, data->files[i]);
@@ -630,30 +621,31 @@ disk_image *open_disk(const char *path, psx_image_type type)
                     close_disk(result); // TODO:
                     return NULL;
                 }
+                // reset string to contain dir name
                 file_path[dir_index + 1] = '\0';
             }
+
             u32 track_offset = 0;
-            //u32 prev_track_offset = 0;
+
             for (u32 i = 0; i < data->track_count; ++i)
             {
                 platform_file *file = &result->files[data->tracks[i].file_index];
                 result->tracks[i].file = file;
-                u32 file_size = (u32)platform_get_file_size(file);
+                u32 file_size = safe_truncate32(platform_get_file_size(file));
                 result->tracks[i].pregap = data->tracks[i].pregap;
                 // if this is the last track within a file, the size is calculated differently
                 if (data->tracks[i].flags & CUE_TRACK_FLAG_LAST_TRACK)
                 {
-                    result->tracks[i].size = file_size - data->tracks[i].file_offset;
+                    result->tracks[i].len = (file_size / DISK_SECTOR_SIZE) - data->tracks[i].file_offset;
                 }
                 else
                 {
-                    result->tracks[i].size = data->tracks[i + 1].file_offset - data->tracks[i].file_offset;
+                    result->tracks[i].len = data->tracks[i + 1].file_offset - data->tracks[i].file_offset;
                 }
-                result->tracks[i].offset = track_offset;
-
+                result->tracks[i].lba = track_offset;
                 //prev_track_offset = data->tracks[i].file_offset;
-                track_offset += result->tracks[i].size;
-                printf("Track #%2d, offset: %d, size: %d\n", (i + 1), result->tracks[i].offset, result->tracks[i].size);
+                track_offset += result->tracks[i].len;
+                printf("Track #%2d, lba: %d, len: %d\n", (i + 1), result->tracks[i].lba, result->tracks[i].len);
             }
             result->file_count = data->file_count;
             result->track_count = data->track_count;
@@ -679,17 +671,16 @@ void close_disk(disk_image *disk)
     free(disk);
 }
 
-b8 read_disk_data(disk_image *disk, u32 offset, void *buffer)
+b8 read_disk_sector(disk_image *disk, u32 lba, void *buffer)
 {
-    u32 size = 0;
     for (u32 i = 0; i < disk->track_count; ++i)
     {
-        u32 src = size;
-        size += disk->tracks[i].size;
-        // TODO: not sure if reads at offset == size are allowed?
-        if (size > offset)
+        struct disk_track *track = &disk->tracks[i];
+        //if (lba < (disk->tracks[i].lba + disk->tracks[i].len))
+        if (lba >= track->lba && lba < (track->lba + track->len))
         {
-            platform_read_file(disk->tracks[i].file, (offset - src), buffer, 2352);
+            u32 offset = (lba - track->lba) * DISK_SECTOR_SIZE;
+            platform_read_file(track->file, offset, buffer, DISK_SECTOR_SIZE);
             return true;
         }
     }

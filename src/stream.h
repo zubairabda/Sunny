@@ -3,7 +3,7 @@
 
 #include "platform/platform.h"
 
-#define CDROM_SECTOR_SIZE 2352
+#define DISK_SECTOR_SIZE 0x930
 
 struct file_dat
 {
@@ -22,8 +22,10 @@ typedef enum
 struct disk_track
 {
     platform_file *file;
-    u32 size;
-    u32 offset;
+    //u32 size;
+    //u32 offset;
+    u32 lba;
+    u32 len;
     u32 pregap;
     u32 reserved;
 };
@@ -110,7 +112,7 @@ b8 write_file(struct file_dat *file, char *out);
 disk_image *open_disk(const char *path, psx_image_type type);
 void close_disk(disk_image *disk);
 
-b8 read_disk_data(disk_image *disk, u32 offset, void *buffer);
+b8 read_disk_sector(disk_image *disk, u32 lba, void *buffer);
 
 void write_bmp(int width, int height, void *data, const char *path);
 void write_wav_file(void *sample_data, u32 size_in_bytes, const char *path);

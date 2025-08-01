@@ -64,13 +64,13 @@ b8 cdrom_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
         u32 sz_bytes = size * 4;
 
         SY_ASSERT(sz_bytes <= fifo_len);
-        
-        struct cdrom_sector *sector = &g_cdrom.buffered_sector;
+    
+        u8 *sector = g_cdrom.sector_buffer[!g_cdrom.sector_index];
         //u32 left = size;
         while (size--)
         {
             u32 *dst = (u32 *)(g_ram + addr);
-            u32 *src = (u32 *)&sector->data[g_cdrom.data_fifo_index];
+            u32 *src = (u32 *)&sector[g_cdrom.data_fifo_index];
             *dst = *src;
             g_cdrom.data_fifo_index += 4;
             addr += step;

@@ -85,8 +85,8 @@ struct cdrom_context
     u32 seek_target;
     u32 loc;
     disk_image *disk;
-    struct cdrom_sector newest_sector;
-    struct cdrom_sector buffered_sector;
+    u8 sector_index; // sector ring buffer contains the previously read (buffered) sector and the newest sector, index points to the newest sector
+    u8 sector_buffer[2][2352];
 };
 
 extern struct cdrom_context g_cdrom;
@@ -94,6 +94,6 @@ extern struct cdrom_context g_cdrom;
 void cdrom_reset(void);
 void cdrom_load_disk(disk_image *disk);
 u8 cdrom_read(u32 offset);
-void cdrom_store(u32 offset, u8 value);
+void cdrom_write(u32 offset, u8 value);
 
 #endif /* CDROM_H */
