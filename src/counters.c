@@ -1,6 +1,5 @@
 #include "counters.h"
 #include "gpu.h"
-#include "event.h"
 #include "debug.h"
 #include "cpu.h"
 
@@ -223,7 +222,7 @@ static void timer_interrupt(u32 timer_index)
 {
     // TODO: currently timer interrupts break the shell
     g_cpu.i_stat |= ((u32)INTERRUPT_TIMER0) << timer_index;
-    g_counters[timer_index].interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
+    g_counters[timer_index].interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
 }
 
 void counters_store(u32 offset, u32 value)
@@ -270,8 +269,8 @@ void counters_store(u32 offset, u32 value)
         // check bit 4-5 for IRQ mode
         if (counter->mode.value & (0x3 << 4) && timer_index == 2) 
         {
-            remove_event(counter->interrupt_event_id);
-            counter->interrupt_event_id = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
+            remove_event(counter->interrupt_event);
+            counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
         }
 
         break;

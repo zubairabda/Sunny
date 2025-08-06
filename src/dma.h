@@ -77,7 +77,7 @@ struct dma_state
     u32 interrupt;
     struct dma_transfer transfers[CH_COUNT];
     s32 active_channel;
-    u64 event_id;
+    u64 event;
 };
 
 extern struct dma_state g_dma;

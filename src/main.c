@@ -159,6 +159,20 @@ void update_debug_ui(u32 width, u32 height)
         if (debug_ui_button("DMA"))
             show_dma = true;
 
+        if (debug_ui_button("Record"))
+        {
+            if (g_debug.recording)
+            {
+                g_debug.recording = false;
+                write_wav_file(g_debug.sound_buffer, g_debug.sound_buffer_len * 2, "output.wav");
+            }
+            else
+            {
+                g_debug.recording = true;
+                g_debug.sound_buffer_len = 0;
+            }
+        }
+
         debug_ui_end_window();
     }
 
@@ -482,7 +496,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     current_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(conout, current_mode);
 #endif
-    //g_debug.sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    g_debug.sound_buffer = VirtualAlloc(0, MEGABYTES(16), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
     char *class_name = "SunnyWindowClass";
     WNDCLASSA wc = {0};

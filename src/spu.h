@@ -148,17 +148,19 @@ struct spu_state
     struct spu_registers regs;
     struct voice_internal voice_data[24];
 
-    u32 sector_sample_index;
-
-    u8 transfer_fifo_len;
-    u16 transfer_fifo[32];
-
     u32 current_transfer_addr;
     u32 current_reverb_addr;
     b8 reverb_index;
 
     struct fir_filter input_filter;
     struct fir_filter output_filter;
+
+    u16 transfer_fifo[32];
+    u8 transfer_fifo_len;
+
+    s32 cd_buffer_index;
+    s32 cd_buffer_length;
+    s16 cd_buffer[8192];
 
     u8 *dram;
 };

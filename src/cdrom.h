@@ -45,7 +45,7 @@ struct cdrom_context
     cdrom_status status;
     u8 interrupt_enable;
     u8 interrupt_flag;
-
+    b8 is_xa_sector;
     enum cdrom_state state;
     u16 response_fifo_current;
     u16 response_fifo_count;
@@ -59,9 +59,9 @@ struct cdrom_context
     struct cdrom_response queued_response;
     u32 response_delay_cycles;
     u64 timestamp;
-    u64 response_event_id;
-    u64 first_resp_event_id; // TODO: remove
-    u64 read_event_id; // TODO: rename
+    u64 response_event;
+    u64 first_resp_event; // TODO: remove
+    u64 read_event;
     u16 data_fifo_end;
     u16 data_fifo_index;
     u16 param_fifo_count;
@@ -71,22 +71,26 @@ struct cdrom_context
     u8 pending_vol_LR;
     u8 pending_vol_RR;
     u8 pending_vol_RL;
-
     u8 vol_LL;
     u8 vol_LR;
     u8 vol_RR;
     u8 vol_RL;
 
-    u16 sector_size;
+    u32 track_end; // for autopause
+    u32 sector_size;
     u8 sector_offset;
     b8 pending_speed_switch_delay;
-    u8 next_sector_index;
+    b8 should_pause;
     b8 read_error;
     u32 seek_target;
     u32 loc;
     disk_image *disk;
     u8 sector_index; // sector ring buffer contains the previously read (buffered) sector and the newest sector, index points to the newest sector
     u8 sector_buffer[2][2352];
+
+    s16 xa_prev_left[2];
+    s16 xa_prev_right[2];
+    s16 xa_decode_buffer[4032];
 };
 
 extern struct cdrom_context g_cdrom;

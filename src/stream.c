@@ -585,8 +585,8 @@ disk_image *open_disk(const char *path, psx_image_type type)
             return NULL;
         }
         result->tracks[0].file = &result->files[0];
-        result->tracks[0].len = platform_get_file_size(&result->files[0]) / DISK_SECTOR_SIZE;
-        result->tracks[0].lba = 0;
+        result->tracks[0].end = platform_get_file_size(&result->files[0]) / DISK_SECTOR_SIZE;
+        result->tracks[0].start = 0;
         break;
     }
     case CUE:
@@ -633,19 +633,21 @@ disk_image *open_disk(const char *path, psx_image_type type)
                 result->tracks[i].file = file;
                 u32 file_size = safe_truncate32(platform_get_file_size(file));
                 result->tracks[i].pregap = data->tracks[i].pregap;
+                u32 track_length = 0;
                 // if this is the last track within a file, the size is calculated differently
                 if (data->tracks[i].flags & CUE_TRACK_FLAG_LAST_TRACK)
                 {
-                    result->tracks[i].len = (file_size / DISK_SECTOR_SIZE) - data->tracks[i].file_offset;
+                    track_length = (file_size / DISK_SECTOR_SIZE) - data->tracks[i].file_offset;
                 }
                 else
                 {
-                    result->tracks[i].len = data->tracks[i + 1].file_offset - data->tracks[i].file_offset;
+                    track_length = data->tracks[i + 1].file_offset - data->tracks[i].file_offset;
                 }
-                result->tracks[i].lba = track_offset;
+                result->tracks[i].start = track_offset;
+                result->tracks[i].end = track_offset + track_length;
                 //prev_track_offset = data->tracks[i].file_offset;
-                track_offset += result->tracks[i].len;
-                printf("Track #%2d, lba: %d, len: %d\n", (i + 1), result->tracks[i].lba, result->tracks[i].len);
+                track_offset += track_length;
+                printf("Track #%2d, start: %d, end: %d, len: %d\n", (i + 1), result->tracks[i].start, result->tracks[i].end, track_length);
             }
             result->file_count = data->file_count;
             result->track_count = data->track_count;
@@ -677,9 +679,9 @@ b8 read_disk_sector(disk_image *disk, u32 lba, void *buffer)
     {
         struct disk_track *track = &disk->tracks[i];
         //if (lba < (disk->tracks[i].lba + disk->tracks[i].len))
-        if (lba >= track->lba && lba < (track->lba + track->len))
+        if (lba >= track->start && lba < track->end)
         {
-            u32 offset = (lba - track->lba) * DISK_SECTOR_SIZE;
+            u32 offset = (lba - track->start) * DISK_SECTOR_SIZE;
             platform_read_file(track->file, offset, buffer, DISK_SECTOR_SIZE);
             return true;
         }

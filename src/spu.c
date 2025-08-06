@@ -475,6 +475,12 @@ static void output_reverb(s32 left_in, s32 right_in, s32 *left_out, s32 *right_o
     *right_out = Rout;
 }
 
+static inline s16 read_cd_buffer(void)
+{
+    s16 result = g_spu.cd_buffer[g_spu.cd_buffer_index++];
+    return result;
+}
+
 void spu_tick(u32 param)
 {
     // not sure if we need to emulate this, but spustat applies its changes delayed, im assuming to the next tick
@@ -547,8 +553,6 @@ void spu_tick(u32 param)
                 s32 s0 = (u32)(t0 << amt) + ((old * f0 + older * f1 + 32) / 64);
                 s16 sample0 = (s16)clamp16(s0);
 
-                //state->older = state->old;
-                //state->old = sample0;
                 older = old;
                 old = sample0;
 
@@ -561,8 +565,6 @@ void spu_tick(u32 param)
                 s32 s1 = (t1 << amt) + ((old * f0 + older * f1 + 32) / 64);
                 s16 sample1 = (s16)clamp16(s1);
 
-                //state->older = state->old;
-                //state->old = sample1;
                 older = old;
                 old = sample1;
 
@@ -661,19 +663,29 @@ void spu_tick(u32 param)
         }
     }
 
-    if (g_spu.regs.control.spucnt & 0x1 && g_cdrom.state == CDROM_STATE_PLAYING)
+    if (g_spu.regs.control.spucnt & 0x1)
     {
-        s16 *samples = (s16 *)g_cdrom.sector_buffer[g_cdrom.sector_index];
-        s16 raw_left = samples[g_spu.sector_sample_index];
-        s16 raw_right = samples[g_spu.sector_sample_index + 1];
-        s16 left = ((raw_left * g_cdrom.vol_LL) >> 7) + ((raw_right * g_cdrom.vol_RL) >> 7);
-        s16 right = ((raw_right * g_cdrom.vol_RR) >> 7) + ((raw_left * g_cdrom.vol_LR) >> 7);
-        s32 cd_vol_left = apply_volume(left, g_spu.regs.control.cd_volume_left);
-        s32 cd_vol_right = apply_volume(right, g_spu.regs.control.cd_volume_right);
-        mixed_left += cd_vol_left;
-        mixed_right += cd_vol_right;
-        // TODO: reverb input
-        g_spu.sector_sample_index += 2;
+        if (g_spu.cd_buffer_index < g_spu.cd_buffer_length)
+        {
+            SY_ASSERT((g_spu.cd_buffer_length & 0x1) == 0);
+            s16 raw_left = read_cd_buffer();
+            s16 raw_right = read_cd_buffer();
+            //g_spu.cd_buffer_length -= 2;
+            s32 left = clamp16(((raw_left * g_cdrom.vol_LL) >> 7) + ((raw_right * g_cdrom.vol_RL) >> 7));
+            s32 right = clamp16(((raw_right * g_cdrom.vol_RR) >> 7) + ((raw_left * g_cdrom.vol_LR) >> 7));
+
+            s32 cd_vol_left = apply_volume(left, g_spu.regs.control.cd_volume_left);
+            s32 cd_vol_right = apply_volume(right, g_spu.regs.control.cd_volume_right);
+
+            mixed_left += cd_vol_left;
+            mixed_right += cd_vol_right;
+
+            if (g_spu.regs.control.spucnt & 0x4)
+            {
+                reverb_input_left += cd_vol_left;
+                reverb_input_right += cd_vol_right;
+            }
+        }
     }
 
     if ((g_spu.regs.control.spucnt >> 7) & 0x1)

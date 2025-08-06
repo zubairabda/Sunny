@@ -5,6 +5,17 @@
 
 typedef void (*event_callback)(u32 param);
 
+typedef struct tick_event
+{
+    struct tick_event *next;
+    struct tick_event *prev;
+    event_callback callback;
+    u32 param;
+    s32 period;
+    u64 system_cycles_at_event;
+    u64 id;
+} tick_event;
+
 extern u64 g_cycles_elapsed;
 extern u64 g_target_cycles;
 
@@ -13,7 +24,7 @@ void scheduler_reset(void);
 
 void remove_event(u64 id);
 u64 schedule_event(event_callback callback, u32 param, s32 cycles_until_event, s32 period);
+tick_event *get_event(u64 id);
 void tick_events(void);
-u64 get_tick_count(void);
 
 #endif /* EVENT_H */

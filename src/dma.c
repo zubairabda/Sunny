@@ -5,8 +5,8 @@
 #include "cdrom.h"
 #include "mdec.h"
 #include "debug.h"
-#include "memory.h"
 #include "event.h"
+#include "memory.h"
 
 struct dma_state g_dma;
 
@@ -254,13 +254,13 @@ static void dma_handle_next_transfer(u32 channel)
                 dma_set_interrupt(channel);
 
                 g_dma.active_channel = -1;
-                g_dma.event_id = 0;
+                g_dma.event = 0;
                 transfer->in_progress = false;
 
                 s32 next_channel = dma_select_channel();
                 if (next_channel >= 0)
                 {
-                    g_dma.event_id = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                    g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
                 }
                 return;
             }
@@ -269,7 +269,7 @@ static void dma_handle_next_transfer(u32 channel)
                 break;
         }
 
-        g_dma.event_id = schedule_event(dma_handle_next_transfer, channel, 20, 0);
+        g_dma.event = schedule_event(dma_handle_next_transfer, channel, 20, 0);
         return;
     }
     }
@@ -282,7 +282,7 @@ static void dma_handle_next_transfer(u32 channel)
         {
             //debug_log("[DMA] scheduling next block in %u ticks\n", next_run);
             port->madr = transfer->current_addr; // update MADR every slice, also probably needed when interrupted by a higher priority channel
-            g_dma.event_id = schedule_event(dma_handle_next_transfer, channel, next_run, 0);
+            g_dma.event = schedule_event(dma_handle_next_transfer, channel, next_run, 0);
         }
         else
         {
@@ -292,13 +292,13 @@ static void dma_handle_next_transfer(u32 channel)
             dma_set_interrupt(channel);
 
             g_dma.active_channel = -1;
-            g_dma.event_id = 0;
+            g_dma.event = 0;
             transfer->in_progress = false;
 
             s32 next_channel = dma_select_channel();
             if (next_channel >= 0)
             {
-                g_dma.event_id = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
             }
         }
     }
@@ -347,13 +347,13 @@ static void dma_start_transfer(u32 channel)
     SY_ASSERT(selected_channel >= 0);
     if (selected_channel == g_dma.active_channel)
     {
-        SY_ASSERT(g_dma.event_id);
+        SY_ASSERT(g_dma.event);
         return;
     }
-    else if (g_dma.event_id)
+    else if (g_dma.event)
     {
-        remove_event(g_dma.event_id);
-        g_dma.event_id = 0;
+        remove_event(g_dma.event);
+        g_dma.event = 0;
     }
     dma_handle_next_transfer(selected_channel);
 }
@@ -435,17 +435,17 @@ void dma_write(u32 offset, u32 value)
             {
                 debug_warn("[DMA] stop transfer for channel %u\n", channel);
                 g_dma.transfers[channel].in_progress = false;
-                if (g_dma.event_id)
+                if (g_dma.event)
                 {
-                    remove_event(g_dma.event_id);
+                    remove_event(g_dma.event);
+                    g_dma.event = 0;
                     // since the next channel to transfer relies on the current channel to re-select a channel,
                     // we need to do it here
-                    g_dma.event_id = 0;
                     g_dma.active_channel = -1;
                     s32 next_channel = dma_select_channel();
                     if (next_channel >= 0)
                     {
-                        g_dma.event_id = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                        g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
                     }
                 }
             }

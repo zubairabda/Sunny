@@ -213,11 +213,160 @@ static inline u8 decimal_to_bcd(u8 dec)
     return dec_to_bcd_table[dec];
 }
 
+// ref: for zigzag interpolation across XA-ADPCM samples
+static s16 zigzag_tables[7][29] = 
+{
+    {
+        0x0000,  0x0000, 0x0000,  0x0000,  0x0000, -0x0002,  0x000A, -0x0022,
+        0x0041, -0x0054, 0x0034,  0x0009, -0x010A,  0x0400, -0x0A78,  0x234C,
+        0x6794, -0x1780, 0x0BCD, -0x0623,  0x0350, -0x016D,  0x006B,  0x000A,
+        -0x0010,  0x0011, -0x0008,  0x0003, -0x0001
+    },
+    {
+        0x0000,  0x0000, 0x0000, -0x0002, 0x0000, 0x0003, -0x0013, 0x003C,
+        -0x004B,  0x00A2, -0x00E3, 0x0132, -0x0043, -0x0267, 0x0C9D, 0x74BB,
+        -0x11B4, 0x09B8, -0x05BF, 0x0372, -0x01A8, 0x00A6, -0x001B, 0x0005,
+        0x0006, -0x0008, 0x0003, -0x0001, 0x0000
+    },
+    {
+        0x0000, 0x0000, -0x0001, 0x0003, -0x0002, -0x0005, 0x001F, -0x004A,
+        0x00B3, -0x0192, 0x02B1, -0x039E, 0x04F8, -0x05A6, 0x7939, -0x05A6,
+        0x04F8, -0x039E, 0x02B1, -0x0192, 0x00B3, -0x004A, 0x001F, -0x0005,
+        -0x0002, 0x0003,-0x0001, 0x0000, 0x0000
+    },
+    {
+        0x0000, -0x0001, 0x0003, -0x0008, 0x0006, 0x0005, -0x001B, 0x00A6,
+        -0x01A8, 0x0372, -0x05BF, 0x09B8, -0x11B4, 0x74BB, 0x0C9D, -0x0267,
+        -0x0043, 0x0132, -0x00E3, 0x00A2, -0x004B, 0x003C, -0x0013, 0x0003,
+        0x0000, -0x0002, 0x0000, 0x0000, 0x0000
+    },
+    {
+        -0x0001, 0x0003, -0x0008, 0x0011, -0x0010, 0x000A, 0x006B, -0x016D,
+        0x0350, -0x0623, 0x0BCD, -0x1780, 0x6794, 0x234C, -0x0A78, 0x0400,
+        -0x010A, 0x0009, 0x0034, -0x0054, 0x0041, -0x0022, 0x000A, -0x0001,
+        0x0000, 0x0001, 0x0000, 0x0000, 0x0000
+    },
+    {
+        0x0002, -0x0008, 0x0010, -0x0023, 0x002B, 0x001A, -0x00EB, 0x027B,
+        -0x0548, 0x0AFA, -0x16FA, 0x53E0, 0x3C07, -0x1249, 0x080E, -0x0347,
+        0x015B, -0x0044, -0x0017, 0x0046, -0x0023, 0x0011, -0x0005, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000
+    },
+    {
+        -0x0005, 0x0011, -0x0023, 0x0046, -0x0017, -0x0044, 0x015B, -0x0347,
+        0x080E, -0x1249, 0x3C07, 0x53E0, -0x16FA, 0x0AFA, -0x0548, 0x027B,
+        -0x00EB, 0x001A, 0x002B, -0x0023, 0x0010, -0x0008, 0x0002, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000
+    }
+};
+
+static void decode_28_nibbles(u8 *src, int blk, int nibble, s16 *dest, s16 *prev)
+{
+    u8 header = src[4 + blk * 2 + nibble];
+    u8 shift = 12 - (header & 0xf);
+    u8 filter = (header >> 4) & 0x3;
+    // XA only support filters 0-3
+    int pos_adpcm_table[] = {0, 60, 115, 98};
+    int neg_adpcm_table[] = {0, 0, -52, -55};
+    int f0 = pos_adpcm_table[filter];
+    int f1 = neg_adpcm_table[filter];
+
+    for (int j = 0; j < 28; ++j)
+    {
+        s32 t = ((src[16 + blk + j * 4] >> (nibble * 4)) & 0xf);
+        t <<= 28;
+        t >>= 28;
+        s32 s = (t << shift) + ((prev[0] * f0 + prev[1] * f1 + 32) / 64);
+        s16 result = (s16)clamp16(s);
+        dest[j * 2] = result;
+        prev[1] = prev[0];
+        prev[0] = result;
+    }
+}
+
+static inline void push_cd_buffer(s16 sample)
+{
+    g_spu.cd_buffer[g_spu.cd_buffer_length++] = sample;
+}
+
+// TODO: remove
+static int sixstep = 6;
+static int p = 0;
+static s16 zigzag_buffer[2][32];
+
+static inline s16 zigzag_interpolate(int p, int channel, s16 *table)
+{
+    int sum = 0;
+    for (int i = 0; i < 29; ++i)
+    {
+        sum += (((s32)zigzag_buffer[channel][(p - i) & 0x1f] * (s32)table[i]) >> 15);
+    }
+    return (s16)clamp16(sum);
+}
+
+static void decode_xa_adpcm(u8 *data, u8 coding_info)
+{
+    b8 is_stereo = coding_info & 0x1;
+    b8 is_halfrate = (coding_info >> 2) & 0x1;
+    b8 is_8bit = (coding_info >> 4) & 0x1;
+    SY_ASSERT(!is_8bit);
+    g_spu.cd_buffer_index = 0;
+    g_spu.cd_buffer_length = 0;
+    s16 *dst = &g_cdrom.xa_decode_buffer[0];
+    u8 *src = data;
+
+    // for each 128-byte portion
+    for (int i = 0; i < 0x12; ++i)
+    {
+        if (is_stereo)
+        {
+            for (int j = 0; j < 4; ++j)
+            {
+                //u8 header = at[4 + j * 2];
+                //xa_decode_stereo_samples(at, header, j);
+                s16 *dst_left = dst;
+                s16 *dst_right = dst_left + 1;
+                decode_28_nibbles(src, j, 0, dst_left, g_cdrom.xa_prev_left);
+                decode_28_nibbles(src, j, 1, dst_right, g_cdrom.xa_prev_right);
+                dst += 56;
+                //g_spu.cd_buffer_length += 56;
+            }
+        }
+        else
+        {
+            SY_ASSERT(0);
+        }
+        src += 128;
+    }
+
+    int count = is_stereo ? 2016 : 4032;
+    for (int i = 0; i < count; ++i)
+    {
+        if (is_stereo)
+        {
+            zigzag_buffer[0][p & 0x1f] = g_cdrom.xa_decode_buffer[i * 2];
+            zigzag_buffer[1][p & 0x1f] = g_cdrom.xa_decode_buffer[i * 2 + 1];
+
+            ++p;
+            --sixstep;
+
+            if (sixstep == 0)
+            {
+                sixstep = 6;
+                for (int table = 0; table < 7; ++table)
+                {
+                    push_cd_buffer(zigzag_interpolate(p, 0, zigzag_tables[table]));
+                    push_cd_buffer(zigzag_interpolate(p, 1, zigzag_tables[table]));
+                }
+                
+            }
+        }
+    }
+}
+
 static u32 cdrom_read_next_sector(void)
 {
-    u32 next_int;
-    // TODO: is the sector buffered upon ack or BFRD?
-    // TODO: cancel read event upon stop/pause
+    u32 next_int = 0;
     u8 *sector = g_cdrom.sector_buffer[g_cdrom.sector_index];
 
     // preload next sector
@@ -226,49 +375,67 @@ static u32 cdrom_read_next_sector(void)
         u32 lba = g_cdrom.loc;
         MSF pos = lba_to_msf(lba);
         debug_log("[CDROM] Reading sector %d:%d:%d\n", pos.m, pos.s, pos.f);
-
-        // TODO: print sector
+        printf("Reading sector %d:%d:%d\n", pos.m, pos.s, pos.f); // TODO: remove
+        g_cdrom.is_xa_sector = false;
         char sync[12] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
         if (memcmp(sector, sync, 12) == 0)
         {
             ++g_cdrom.loc;
-            next_int = g_cdrom.mode & CDR_MODE_SPEED ? READ_2X_DELAY : READ_DELAY;
-            //g_cdrom.state = CDROM_STATE_READING;
+            //next_int = g_cdrom.mode & CDR_MODE_SPEED ? READ_2X_DELAY : READ_DELAY;
+            // ref: if xa-adpcm and/or xa-filter is enabled, INT1 is only generated for non-xa sectors
+            u8 flags = g_cdrom.mode & (CDR_MODE_XAADPCM | CDR_MODE_XAFILTER);
+            if (flags)
+            {                
+                u8 *at = sector + 12 + 4; // skip sync and header bytes
+                u8 file = at[0];
+                u8 channel = at[1];
+                u8 submode = at[2];
+                u8 coding_info = at[3];
+                    
+                // I actually don't even know if this is a valid way to check for XA-ADPCM sectors
+                if (submode & 0x4)
+                {
+                    g_cdrom.is_xa_sector = true; // lets us know in read_handler to not set INT1
+                    // we will only decode the XA if it is being sent to the SPU
+                    if (flags & CDR_MODE_XAADPCM)
+                    {
+                        printf("Decoding XA sector at %d:%d:%d\n", pos.m, pos.s, pos.f);
+                        at += 4 + 4; // skip subheader and its copy
+                        decode_xa_adpcm(at, coding_info);
+                    }
+                }
+            }
         }
         else
         {
             g_cdrom.read_error = true;
-            g_cdrom.state = CDROM_STATE_IDLE;
             next_int = CYCLES_PER_USEC * 4000000;
         }
     }
     else
     {
         g_cdrom.read_error = true;
-        g_cdrom.state = CDROM_STATE_IDLE;
         next_int = CYCLES_PER_USEC * 600000;
     }
 
     return next_int;
 }
 
-static b8 g_should_pause = false; // TODO: remove
-static u32 g_track_end = 0;
-
 static u32 cdrom_play_next_sector(void)
 {
     u32 next_int = 0;
-    u8 *sector = g_cdrom.sector_buffer[g_cdrom.sector_index];
-    if (read_disk_sector(g_cdrom.disk, g_cdrom.loc, sector))
+    //u8 *sector = g_cdrom.sector_buffer[g_cdrom.sector_index];
+    u8 *buffer = (u8 *)g_spu.cd_buffer;
+    if (read_disk_sector(g_cdrom.disk, g_cdrom.loc, buffer))
     {
         ++g_cdrom.loc;
-        g_spu.sector_sample_index = 0;
-        // TODO: pull this into the read_disk_sector function
+        g_spu.cd_buffer_index = 0;
+        g_spu.cd_buffer_length = DISK_SECTOR_SIZE;
         char sync[12] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
-        if (memcmp(sector, sync, 12) == 0)
+        if (memcmp(buffer, sync, 12) == 0)
         {
             debug_warn("[CDROM] Data sector during Play, returning silence...\n");
-            memset(sector, 0, 2352); // TODO: temp
+            memset(buffer, 0, 2352); // TODO: temp
         }
         next_int = g_cdrom.mode & CDR_MODE_SPEED ? READ_2X_DELAY : READ_DELAY;
     }
@@ -280,9 +447,9 @@ static u32 cdrom_play_next_sector(void)
 
     if (g_cdrom.mode & CDR_MODE_AUTOPAUSE)
     {
-        if (g_cdrom.loc >= g_track_end)
+        if (g_cdrom.loc >= g_cdrom.track_end)
         {
-            g_should_pause = true;
+            g_cdrom.should_pause = true;
         }
     }
 
@@ -297,7 +464,7 @@ static u8 cdrom_get_current_track(void)
     for (u32 i = 0; i < disk->track_count; ++i)
     {
         struct disk_track *track = &disk->tracks[i];
-        if (loc >= track->lba && loc < (track->lba + track->len))
+        if (loc >= track->start && loc < track->end)
         {
             return (u8)(i + 1);
         }
@@ -308,14 +475,17 @@ static u8 cdrom_get_current_track(void)
 
 static void cdrom_play_handler(u32 param)
 {
+    // NOTE: I think I will merge the read and play functions, but I am still
+    // thinking of the architecture I want to go for here, as I may fully commit
+    // to having the _next_sector() functions return an 'error_time', where 0 means success
     if ((g_cdrom.interrupt_flag & 0x7) == 0 && (g_cdrom.mode & CDR_MODE_REPORT))
     {
         g_cdrom.status.RSLRRDY = true;
         debug_log("[CDROM] Report interrupt fired\n");
         set_interrupt(INTERRUPT_CDROM);
-        if (g_should_pause)
+        if (g_cdrom.should_pause)
         {
-            g_should_pause = false;
+            g_cdrom.should_pause = false;
             g_cdrom.state = CDROM_STATE_STOPPED;
             g_cdrom.interrupt_flag = 4;
             g_cdrom.response_fifo_count = 1;
@@ -336,7 +506,7 @@ static void cdrom_play_handler(u32 param)
             u32 absolute_lba = g_cdrom.loc;
             if (pos.f & 0x10)
             {
-                u32 track_start_lba = current_track->lba;
+                u32 track_start_lba = current_track->start;
                 pos = lba_to_msf(absolute_lba - track_start_lba);
                 pos.s |= 0x80;
             }
@@ -349,19 +519,22 @@ static void cdrom_play_handler(u32 param)
             g_cdrom.response_fifo[5] = decimal_to_bcd(pos.f);
             g_cdrom.response_fifo[6] = 0;
             g_cdrom.response_fifo[7] = 0;
+            //g_cdrom.sector_index = !g_cdrom.sector_index; // NOTE: not sure how sectors are buffered with audio
         }
     }
 
+    // TODO: add in same scheduler logic from read... or merge these functions eventually
     if (g_cdrom.state == CDROM_STATE_PLAYING)
     {
         u32 next_int = cdrom_play_next_sector();
-        g_cdrom.read_event_id = schedule_event(cdrom_play_handler, 0, next_int, 0);
+        g_cdrom.read_event = schedule_event(cdrom_play_handler, 0, next_int, 0);
     }
 }
 
 static void cdrom_read_handler(u32 param)
 {
-    if ((g_cdrom.interrupt_flag & 0x7) == 0)
+    SY_ASSERT((g_cdrom.interrupt_flag & 0x7) == 0); // TODO: remove
+    if ((g_cdrom.interrupt_flag & 0x7) == 0 && !g_cdrom.is_xa_sector)
     {
         g_cdrom.status.RSLRRDY = true;
         debug_log("[CDROM] Read response interrupt fired\n");
@@ -385,17 +558,38 @@ static void cdrom_read_handler(u32 param)
             g_cdrom.sector_index = !g_cdrom.sector_index;
         }
     }
-
-    if (g_cdrom.state == CDROM_STATE_READING) // TODO: remove
+#if 0
+    if (g_cdrom.state == CDROM_STATE_READING)
     {
         u32 next_int = cdrom_read_next_sector();
-        g_cdrom.read_event_id = schedule_event(cdrom_read_handler, 0, next_int, 0);
+        g_cdrom.read_event = schedule_event(cdrom_read_handler, 0, next_int, 0);
     }
+#else
+    // NOTE: this is a very jank way to consistently handle read events on time, as previously
+    // reads were scheduled without taking into account the cycles missed. This resulted in the SPU running
+    // out of CD samples too quickly, before the CDROM had a chance to refill the buffer, with a 'pop' sound
+    // whenever there was a sudden zero sample (if the read event was behind by a few ticks).
+    // This seems to have resolved the issue, but most of this code and the event code is not pretty...
+    if (g_cdrom.read_error)
+    {
+        remove_event(g_cdrom.read_event);
+    }
+    else
+    {
+        // if there was an error, schedule an event to happen in 'error time' and cancel reading
+        u32 next_int = cdrom_read_next_sector();
+        if (next_int)
+        {
+            remove_event(g_cdrom.read_event);
+            g_cdrom.read_event = schedule_event(cdrom_read_handler, 0, next_int, 0);
+        }
+    }
+#endif
 }
 
 static void cdrom_response_event(u32 param)
 {
-    g_cdrom.response_event_id = 0;
+    g_cdrom.response_event = 0;
     g_cdrom.status.RSLRRDY = true;
 
     debug_log("[CDROM] Second response interrupt fired\n");
@@ -410,7 +604,7 @@ static void cdrom_response_event(u32 param)
 
 static void cdrom_first_response_event(u32 param)
 {
-    g_cdrom.first_resp_event_id = 0;
+    g_cdrom.first_resp_event = 0;
     g_cdrom.status.RSLRRDY = true;
     debug_log("[CDROM] First response interrupt fired\n");
     set_interrupt(INTERRUPT_CDROM);
@@ -451,8 +645,10 @@ static void cdrom_begin_read(void)
 
     g_cdrom.read_error = false;
 
-    u32 next_int = cdrom_read_next_sector();
-    g_cdrom.read_event_id = schedule_event(cdrom_read_handler, 0, next_int + delay, 0);
+    u32 rate = g_cdrom.mode & CDR_MODE_SPEED ? READ_2X_DELAY : READ_DELAY;
+    u32 error_time = cdrom_read_next_sector();
+    u32 next_int = error_time ? error_time : rate;
+    g_cdrom.read_event = schedule_event(cdrom_read_handler, 0, next_int + delay, rate);
 }
 
 static void cdrom_command(u32 command)
@@ -461,8 +657,8 @@ static void cdrom_command(u32 command)
     g_cdrom.status.BUSYSTS = false;
     g_cdrom.command_pending = false;
     g_cdrom.response_pending = false;
-    remove_event(g_cdrom.first_resp_event_id);
-    g_cdrom.first_resp_event_id = 0;
+    remove_event(g_cdrom.first_resp_event);
+    g_cdrom.first_resp_event = 0;
 
     enum cdrom_command cmd = (enum cdrom_command)command;
     switch (cmd)
@@ -531,8 +727,8 @@ static void cdrom_command(u32 command)
         if (g_cdrom.param_fifo_count && track)
         {
             struct disk_track *starting_track = &g_cdrom.disk->tracks[track - 1];
-            g_cdrom.loc = starting_track->lba;
-            g_track_end = starting_track->lba + starting_track->len;
+            g_cdrom.loc = starting_track->start;
+            g_cdrom.track_end = starting_track->end;
         }
         else
         {
@@ -542,11 +738,11 @@ static void cdrom_command(u32 command)
                 g_cdrom.loc = g_cdrom.seek_target;
             }
             struct disk_track *starting_track = &g_cdrom.disk->tracks[cdrom_get_current_track() - 1];
-            g_track_end = starting_track->lba + starting_track->len;
+            g_cdrom.track_end = starting_track->end;
         }
 
         u32 next_int = cdrom_play_next_sector();
-        g_cdrom.read_event_id = schedule_event(cdrom_play_handler, 0, next_int, 0);
+        g_cdrom.read_event = schedule_event(cdrom_play_handler, 0, next_int, 0);
 
         break;
     }
@@ -570,7 +766,8 @@ static void cdrom_command(u32 command)
         g_cdrom.first_response.count = 1;
         g_cdrom.first_response.cause = 3;
 
-        remove_event(g_cdrom.read_event_id); // cancel reads
+        remove_event(g_cdrom.read_event); // cancel reads
+        g_cdrom.read_event = 0;
 
         g_cdrom.loc = 150;
 
@@ -603,7 +800,8 @@ static void cdrom_command(u32 command)
         }
 
         g_cdrom.state = CDROM_STATE_IDLE;
-        remove_event(g_cdrom.read_event_id); // cancel reads
+        remove_event(g_cdrom.read_event); // cancel reads
+        g_cdrom.read_event = 0;
 
         g_cdrom.response_pending = true;
         g_cdrom.queued_response.cause = 0x2;
@@ -632,7 +830,8 @@ static void cdrom_command(u32 command)
         g_cdrom.first_response.count = 1;
         g_cdrom.first_response.cause = 3;
 
-        remove_event(g_cdrom.read_event_id); // cancel reads
+        remove_event(g_cdrom.read_event); // cancel reads
+        g_cdrom.read_event = 0;
 
         g_cdrom.state = CDROM_STATE_IDLE;
         g_cdrom.response_pending = true;
@@ -755,14 +954,12 @@ static void cdrom_command(u32 command)
         {
             // index 0 returns the end of the last track
             struct disk_track *track = &disk->tracks[disk->track_count - 1];
-            u32 lba = track->lba + track->len;
-            pos = lba_to_msf(lba);
+            pos = lba_to_msf(track->end);
         }
         else
         {
             struct disk_track *track = &disk->tracks[track_no - 1];
-            // TODO: just use lbas for everything
-            u32 lba = track->lba + track->pregap;
+            u32 lba = track->start + track->pregap;
             pos = lba_to_msf(lba);
         }
 
@@ -875,10 +1072,10 @@ static void cdrom_command(u32 command)
     }
     
     // if there was a pending response from a previous command, drop it
-    if (g_cdrom.response_event_id)
+    if (g_cdrom.response_event)
     {
-        remove_event(g_cdrom.response_event_id);
-        g_cdrom.response_event_id = 0;
+        remove_event(g_cdrom.response_event);
+        g_cdrom.response_event = 0;
     }
 
     // empty the parameter fifo
@@ -916,16 +1113,12 @@ u8 cdrom_read(u32 offset)
     }
     case 1:
     {
-        // TODO: clear to zero every reset?
         u8 value = g_cdrom.response_fifo[g_cdrom.response_fifo_current++];
         g_cdrom.response_fifo_current &= 0xf;
         result = value;
         if (g_cdrom.response_fifo_current == g_cdrom.response_fifo_count)
         {
             g_cdrom.status.RSLRRDY = false;
-            //g_cdrom.response_fifo_count = 0;
-            //g_cdrom.response_fifo_current = 0;
-            //debug_log("[CDROM] read last response byte\n");
         }
         else if (g_cdrom.response_fifo_current > g_cdrom.response_fifo_count)
         {
@@ -1026,8 +1219,7 @@ void cdrom_write(u32 offset, u8 value)
         debug_log("[CDROM] set interrupt enable register: %02x\n", value);
         break;
     case 7: // interrupt flag reg
-        // NOTE: response interrupts are queued
-        // NOTE: spec says after acknowledge, pending cmd is sent and response fifo is cleared
+        // ref: after acknowledge, pending cmd is sent and response fifo is cleared
         g_cdrom.interrupt_flag &= ~(value & 0x1f);
         if (value & 0x7)
         {
@@ -1037,7 +1229,7 @@ void cdrom_write(u32 offset, u8 value)
             if (g_cdrom.command_pending)
             {
                 g_cdrom.command_pending = false;
-                g_cdrom.first_resp_event_id = schedule_event(cdrom_first_response_event, 0, 15000, 0);
+                g_cdrom.first_resp_event = schedule_event(cdrom_first_response_event, 0, 15000, 0);
             }
             else if (g_cdrom.response_pending)
             {
@@ -1048,7 +1240,7 @@ void cdrom_write(u32 offset, u8 value)
                 {
                     g_cdrom.response_delay_cycles = 15000;
                 }
-                g_cdrom.response_event_id = schedule_event(cdrom_response_event, 0, g_cdrom.response_delay_cycles, 0);
+                g_cdrom.response_event = schedule_event(cdrom_response_event, 0, g_cdrom.response_delay_cycles, 0);
             }
             g_cdrom.response_fifo_current = 0;
         }

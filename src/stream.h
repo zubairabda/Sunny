@@ -24,8 +24,8 @@ struct disk_track
     platform_file *file;
     //u32 size;
     //u32 offset;
-    u32 lba;
-    u32 len;
+    u32 start;
+    u32 end;
     u32 pregap;
     u32 reserved;
 };

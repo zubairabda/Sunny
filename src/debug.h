@@ -22,6 +22,7 @@ struct debug_state
     int last_char;
     int log_level;
     u32 log_mask;
+    b8 recording;
     u16 *sound_buffer;
     u32 sound_buffer_len;
     b8 breakpoints_enabled;
