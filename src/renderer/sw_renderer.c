@@ -215,83 +215,81 @@ static void update_display(void)
 {
 #if defined(SY_PLATFORM_WIN32)
     win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
+    int window_width = renderer->window_width;
+    int window_height = renderer->window_height;
+    if (window_height == 0 || window_width == 0)
+        return;
 #if 1
-    int width = renderer->window_width;
-    int height = renderer->window_height;
-#if 0
     int src_x = g_gpu.vram_display_x;
     int src_y = g_gpu.vram_display_y;
     int src_w = (g_gpu.horizontal_display_x2 - g_gpu.horizontal_display_x1) / g_gpu.dot_div;
     int src_h = g_gpu.vertical_display_y2 - g_gpu.vertical_display_y1;
     if ((g_gpu.stat.value >> 22) & 0x1)
     {
+        SY_ASSERT(g_gpu.stat.vertical_res);
         src_h <<= 1;
     }
-    StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, src_x, src_y, src_w, src_h, SRCCOPY);
+
+    int disp_w, disp_h;
+    if (g_gpu.stat.horizontal_res_2)
+    {
+        disp_w = 368;
+    }
+    else
+    {
+        switch (g_gpu.stat.horizontal_res_1)
+        {
+        case 0:
+            disp_w = 256;
+            break;
+        case 1:
+            disp_w = 320;
+            break;
+        case 2:
+            disp_w = 512;
+            break;
+        case 3:
+            disp_w = 640;
+            break;
+        }
+    }
+
+    if (g_gpu.stat.vertical_res)
+        disp_h = 480;
+    else
+        disp_h = 240;
+
+    f32 ratio = disp_w / (f32)disp_h;
+    f32 desired_width = window_height * ratio;
+    f32 desired_height = window_width / ratio;
+    int screen_w, screen_h;
+    if (desired_width > window_width)
+    {
+        screen_w = window_width;
+        screen_h = roundf(desired_height);
+    }
+    else
+    {
+        screen_w = roundf(desired_width);
+        screen_h = window_height;
+    }
+
+    int screen_x = (window_width - screen_w) / 2;
+    int screen_y = (window_height - screen_h) / 2;
+
+    
+    StretchBlt(renderer->fullscreen_dc, screen_x, screen_y, screen_w, screen_h, renderer->vram_dc, src_x, src_y, src_w, src_h, SRCCOPY);
 #else
     StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);
 #endif
 
-    draw_debug_ui(renderer->fullscreen_data, width, height);
+    draw_debug_ui(renderer->fullscreen_data, window_width, window_height);
 
     HDC window_dc = GetDC(renderer->window);
-#if 0
-    if (width == VRAM_WIDTH && height == VRAM_HEIGHT)
-    {
-        for (int i = 0; i < (VRAM_SIZE >> 1); ++i)
-        {
-            vram_texture[i] = swizzle_16_32(vram[i]);
-        }
-    }
-    else
-    {
-        // Nearest-neighbor interpolation
-        float f_x = VRAM_WIDTH / (float)width;
-        float f_y = VRAM_HEIGHT / (float)height;
 
-        int y_pos, x_pos;
-
-        for (int y = 0; y < height; ++y)
-        {
-            y_pos = (int)(f_y * y);
-
-            int dst_row = width * y;
-            int src_row = VRAM_WIDTH * y_pos;
-
-            for (int x = 0; x < width; ++x)
-            {
-                x_pos = (int)(f_x * x);
-
-                vram_texture[x + dst_row] = swizzle_16_32(vram[x_pos + src_row]);
-            }
-        }
-    }
-
-    // blit the ui texture
-    for (int y = 0; y < height; ++y)
-    {
-        int dst_row = width * y;
-
-        for (int x = 0; x < width; ++x)
-        {
-            u32 pixel = pixels[x + dst_row];
-            if (pixel)
-            {
-                vram_texture[x + dst_row] = pixel;
-            }
-        }
-    }
-
-    BitBlt(window_dc, 0, 0, width, height, renderer->vram_dc, 0, 0, SRCCOPY);
-#endif
-
-    BitBlt(window_dc, 0, 0, width, height, renderer->fullscreen_dc, 0, 0, SRCCOPY);
+    BitBlt(window_dc, 0, 0, window_width, window_height, renderer->fullscreen_dc, 0, 0, SRCCOPY);
 
     ReleaseDC(renderer->window, window_dc);
-#else
-    InvalidateRect(renderer->window, NULL, FALSE);
-    UpdateWindow(renderer->window);
-#endif
 #endif
 }
 

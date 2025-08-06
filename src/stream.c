@@ -678,7 +678,6 @@ b8 read_disk_sector(disk_image *disk, u32 lba, void *buffer)
     for (u32 i = 0; i < disk->track_count; ++i)
     {
         struct disk_track *track = &disk->tracks[i];
-        //if (lba < (disk->tracks[i].lba + disk->tracks[i].len))
         if (lba >= track->start && lba < track->end)
         {
             u32 offset = (lba - track->start) * DISK_SECTOR_SIZE;

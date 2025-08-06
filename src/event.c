@@ -104,6 +104,7 @@ void tick_events(void)
         if (g_cycles_elapsed >= current->system_cycles_at_event)
         {
             current->callback(current->param);
+            // TODO: handle if an event with a period is removed during its callback (cdrom)
             // remove event from the list
             current->next->prev = current->prev;
             current->prev->next = current->next;
