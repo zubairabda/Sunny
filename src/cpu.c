@@ -359,7 +359,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                debug_warn("Unhandled load to data cache\n");
+                //debug_warn("Unhandled load to data cache\n");
                 break;
             }
             new_load.index = ins.rt;
@@ -371,7 +371,7 @@ int execute_instructions(void)
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
             {
-                debug_warn("Unhandled load to data cache\n");
+                //debug_warn("Unhandled load to data cache\n");
                 break;
             }
             new_load.index = ins.rt;
@@ -400,7 +400,7 @@ int execute_instructions(void)
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
             {
-                debug_warn("Unhandled store to data cache\n");
+                //debug_warn("Unhandled store to data cache\n");
                 break;
             }
             store8(vaddr, g_cpu.registers[ins.rt]);
@@ -417,7 +417,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                debug_warn("Unhandled store to data cache\n");
+                //debug_warn("Unhandled store to data cache\n");
                 break;
             }
             store16(vaddr, g_cpu.registers[ins.rt]);
@@ -486,7 +486,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                debug_warn("Unhandled store to data cache\n");
+                //debug_warn("Unhandled store to data cache\n");
                 break;
             }
             store32(vaddr, g_cpu.registers[ins.rt]);
@@ -608,7 +608,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled load to data cache\n");
+                //debug_warn("Unhandled load to data cache\n");
                 break;
             }
             g_cpu.cop2[ins.rt] = load32(vaddr);

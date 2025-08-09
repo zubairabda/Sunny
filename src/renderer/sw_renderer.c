@@ -222,7 +222,9 @@ static void update_display(void)
 #if 1
     int src_x = g_gpu.vram_display_x;
     int src_y = g_gpu.vram_display_y;
-    int src_w = (g_gpu.horizontal_display_x2 - g_gpu.horizontal_display_x1) / g_gpu.dot_div;
+    // ref: displayed pixels is rounded to multiple of 4
+    // TODO: this can be cached
+    int src_w = (((g_gpu.horizontal_display_x2 - g_gpu.horizontal_display_x1) / g_gpu.dot_div) + 2) & ~0x3;
     int src_h = g_gpu.vertical_display_y2 - g_gpu.vertical_display_y1;
     if ((g_gpu.stat.value >> 22) & 0x1)
     {
@@ -277,7 +279,8 @@ static void update_display(void)
     int screen_x = (window_width - screen_w) / 2;
     int screen_y = (window_height - screen_h) / 2;
 
-    
+    memset(renderer->fullscreen_data, 0, (window_width * window_height * 4));
+
     StretchBlt(renderer->fullscreen_dc, screen_x, screen_y, screen_w, screen_h, renderer->vram_dc, src_x, src_y, src_w, src_h, SRCCOPY);
 #else
     StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);

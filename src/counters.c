@@ -77,7 +77,8 @@ static void tick_counter(u32 index)
         {
             if (counter->mode.sync_enable)
             {
-
+                // TODO:
+                counter->value += 1;
             }
             else
             {

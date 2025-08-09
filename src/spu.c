@@ -307,31 +307,9 @@ static inline s16 *reverb_load(u32 base, u32 addr, u32 offset)
     return (s16 *)(g_spu.dram + result);
 }
 
-static inline s16 load_reverb(u32 base, u32 addr, u32 offset)
-{
-    u32 len = 0x80000 - base;
-    u32 relative = (addr + offset - base) % len;
-    u32 result = (base + relative) & 0x7fffe;
-    return *(s16 *)(g_spu.dram + result);
-}
-
-static inline void write_reverb(u32 base, u32 addr, u32 offset, s16 value)
-{
-    u32 len = 0x80000 - base;
-    u32 relative = (addr + offset - base) % len;
-    u32 result = (base + relative) & 0x7fffe;
-    *(s16 *)(g_spu.dram + result) = value;
-}
-
 static inline s32 apply_volume(s32 level, s16 volume)
 {
     return ((level * (s32)volume) >> 15);
-}
-
-static void push_fir_sample(s32 *delay_line, s32 data)
-{
-    // delay line is fir stage + 1 to hold the new sample
-    delay_line[0] = data;
 }
 
 static void apply_fir_filter(struct fir_filter *filter, s32 left, s32 right, spu_sample *output)
@@ -465,9 +443,6 @@ static void output_reverb(s32 left_in, s32 right_in, s32 *left_out, s32 *right_o
 #endif
     Lout = apply_volume(Lout, g_spu.regs.control.reverb_volume_left);
     Rout = apply_volume(Rout, g_spu.regs.control.reverb_volume_right);
-
-    SY_ASSERT(Lout >= -0x8000 && Lout <= 0x7fff);
-    SY_ASSERT(Rout >= -0x8000 && Rout <= 0x7fff);
 
     g_spu.current_reverb_addr = MAX(mBASE, (BufferAddress + 2) & 0x7fffe);
 

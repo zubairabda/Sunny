@@ -322,8 +322,6 @@ static void decode_xa_adpcm(u8 *data, u8 coding_info)
         {
             for (int j = 0; j < 4; ++j)
             {
-                //u8 header = at[4 + j * 2];
-                //xa_decode_stereo_samples(at, header, j);
                 s16 *dst_left = dst;
                 s16 *dst_right = dst_left + 1;
                 decode_28_nibbles(src, j, 0, dst_left, g_cdrom.xa_prev_left);
@@ -375,7 +373,6 @@ static u32 cdrom_read_next_sector(void)
         u32 lba = g_cdrom.loc;
         MSF pos = lba_to_msf(lba);
         debug_log("[CDROM] Reading sector %d:%d:%d\n", pos.m, pos.s, pos.f);
-        printf("Reading sector %d:%d:%d\n", pos.m, pos.s, pos.f); // TODO: remove
         g_cdrom.is_xa_sector = false;
         char sync[12] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
         if (memcmp(sector, sync, 12) == 0)
@@ -399,7 +396,6 @@ static u32 cdrom_read_next_sector(void)
                     // we will only decode the XA if it is being sent to the SPU
                     if (flags & CDR_MODE_XAADPCM)
                     {
-                        printf("Decoding XA sector at %d:%d:%d\n", pos.m, pos.s, pos.f);
                         at += 4 + 4; // skip subheader and its copy
                         decode_xa_adpcm(at, coding_info);
                     }
@@ -546,7 +542,7 @@ static void cdrom_read_handler(u32 param)
             g_cdrom.response_fifo_count = 2;
             g_cdrom.state = CDROM_STATE_IDLE;
             g_cdrom.response_fifo[0] = cdrom_get_stat() | CDR_STAT_SEEKERR;
-            g_cdrom.response_fifo[1] = 0x4; // seek failed
+            g_cdrom.response_fifo[1] = 0x4; // TODO: error bytes
         }
         else
         {
@@ -576,12 +572,12 @@ static void cdrom_read_handler(u32 param)
     }
     else
     {
-        // if there was an error, schedule an event to happen in 'error time' and cancel reading
-        u32 next_int = cdrom_read_next_sector();
-        if (next_int)
+        // if the next sector causes a read error, schedule an event to happen in 'error time' and cancel reading
+        u32 error_time = cdrom_read_next_sector();
+        if (error_time)
         {
             remove_event(g_cdrom.read_event);
-            g_cdrom.read_event = schedule_event(cdrom_read_handler, 0, next_int, 0);
+            g_cdrom.read_event = schedule_event(cdrom_read_handler, 0, error_time, 0);
         }
     }
 #endif
@@ -670,6 +666,7 @@ static void cdrom_command(u32 command)
             cdrom_queue_error(0x20);
             break;
         }
+        // TODO: implement shell-open bit reset behavior
         g_cdrom.first_response.fifo[0] = cdrom_get_stat();
         g_cdrom.first_response.count = 1;
         g_cdrom.first_response.cause = 3;
@@ -1002,6 +999,7 @@ static void cdrom_command(u32 command)
         break;
     }
     case SeekL:
+    case SeekP: // TODO: temp
     {
         if (g_cdrom.param_fifo_count)
         {
@@ -1027,12 +1025,12 @@ static void cdrom_command(u32 command)
             delay = INT_DELAY;
         }
 
-        g_cdrom.state = CDROM_STATE_SEEKING;
         g_cdrom.response_pending = true;
         g_cdrom.response_delay_cycles = delay;
         g_cdrom.queued_response.cause = 2;
         g_cdrom.queued_response.fifo[0] = cdrom_get_stat();
         g_cdrom.queued_response.count = 1;
+        g_cdrom.state = CDROM_STATE_SEEKING; // NOTE: there seems to be a delay before the seek bit is set
         break;
     }
     case GetID:

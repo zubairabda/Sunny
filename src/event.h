@@ -14,6 +14,9 @@ typedef struct tick_event
     s32 period;
     u64 system_cycles_at_event;
     u64 id;
+    b8 active;
+    u8 pad[3];
+    u32 next_run;
 } tick_event;
 
 extern u64 g_cycles_elapsed;

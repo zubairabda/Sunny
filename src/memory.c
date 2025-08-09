@@ -44,7 +44,7 @@ static u32 io_read32(u32 addr)
     case 0x1f801810:
         return gpuread();
     case 0x1f801814:
-        return g_gpu.stat.value & ~(1 << 19);
+        return g_gpu.stat.value;
     case 0x1f801820:
         return mdec_read();
     case 0x1f801824:

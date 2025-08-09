@@ -40,7 +40,15 @@ void remove_event(u64 id)
     {
         if (current->id == id)
         {
-            event_dealloc(current);
+            // if the event is currently not being processed, set the period to 0 to effectively cancel the event
+            if (!current->active)
+            {
+                event_dealloc(current);
+            }
+            else
+            {
+                current->period = 0;
+            }
             return;
         }
         current = current->next;
@@ -76,6 +84,7 @@ u64 schedule_event(event_callback callback, u32 param, s32 cycles_until_event, s
     event->id = ++id_count;
     event->param = param;
     event->period = period;
+    event->active = false;
     
     insert_event(event);
 
@@ -103,9 +112,10 @@ void tick_events(void)
     {
         if (g_cycles_elapsed >= current->system_cycles_at_event)
         {
+            current->active = true;
             current->callback(current->param);
-            // TODO: handle if an event with a period is removed during its callback (cdrom)
-            // remove event from the list
+            current->active = false;
+
             current->next->prev = current->prev;
             current->prev->next = current->next;
             if (current->period)

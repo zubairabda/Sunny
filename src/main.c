@@ -509,7 +509,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     DWORD dwStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 
-    RECT desired_rect = {0, 0, VRAM_WIDTH, VRAM_HEIGHT};
+    RECT desired_rect = {0, 0, 640, 480};
     AdjustWindowRectEx(&desired_rect, dwStyle, FALSE, 0);
 
     HWND hwnd = CreateWindowExA(0, class_name, "Sunny", dwStyle, CW_USEDEFAULT, CW_USEDEFAULT,
