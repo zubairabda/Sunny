@@ -79,7 +79,8 @@ enum debug_ui_textbox_flags
     TEXTBOX_FLAG_RESET_ON_EDIT = 0x1
 };
 
-void debug_ui_init(struct memory_arena *arena);
+void debug_ui_init(void);
+void debug_ui_shutdown(void);
 
 void debug_ui_begin(u32 screen_w, u32 screen_h);
 void debug_ui_end(void);

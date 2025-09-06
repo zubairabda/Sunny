@@ -131,7 +131,7 @@ struct spu_registers
 
 _STATIC_ASSERT(sizeof(struct spu_registers) == 512);
 
-typedef struct
+typedef struct spu_sample
 {
     s32 left;
     s32 right;
@@ -172,6 +172,6 @@ void spu_reset(void);
 u32 spu_read(u32 offset);
 void spu_write16(u32 offset, u32 value);
 void spu_write32(u32 offset, u32 value);
-void spu_tick(u32 param);
+void spu_tick(u32 param, s32 ticks_late);
 
 #endif /* SPU_H */

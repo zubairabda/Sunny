@@ -50,14 +50,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         if (wParam == 'M')
             show_menu = !show_menu;
     case WM_KEYUP:
-        if (wParam < 128)
-        {
-            if (g_sio.devices[0])
-            {
-                struct keyboard_pad *kbd = (struct keyboard_pad *)g_sio.devices[0];
-                kbd->keystates[wParam] = !((u32)lParam >> 31);
-            }
-        }
+        g_keystates[wParam] = !((u32)lParam >> 31);
         break;
     case WM_MOUSEMOVE:
     {
@@ -86,7 +79,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     return result;
 }
 
-static inline const char *spu_voice_state_to_str(int voice)
+static const char *spu_voice_state_to_str(int voice)
 {
     switch (g_spu.voice_data[voice].stage)
     {
@@ -111,20 +104,197 @@ static b8 show_files = false;
 static b8 show_dma = false;
 static rect2 bounds = {0};
 static char current_dir[MAX_PATH];
+static u32 drive_mask;
 static char textbuf[16];
 
 static void pause_button(void)
 {
     if (debug_ui_button("Pause"))
     {
-        if (g_state == SYSTEM_STATE_PAUSED)
-            g_state = SYSTEM_STATE_RUNNING;
-        else if (g_state == SYSTEM_STATE_RUNNING)
-            g_state = SYSTEM_STATE_PAUSED;
+        if (g_psx.state == SYSTEM_STATE_PAUSED)
+            g_psx.state = SYSTEM_STATE_RUNNING;
+        else if (g_psx.state == SYSTEM_STATE_RUNNING)
+            g_psx.state = SYSTEM_STATE_PAUSED;
     }
 }
 
-void update_debug_ui(u32 width, u32 height)
+static void file_browser_window(u32 width, u32 height)
+{
+    int panel_w = 0.65f * width;
+    int panel_h = 0.65f * height;
+    int panel_x = (width - panel_w) / 2;
+    int panel_y = (height - panel_h) / 2;
+
+    debug_ui_set_window_rect("Image Select", r2(panel_x, panel_y, panel_w, panel_h));
+    if (debug_ui_begin_window("Image Select", 0, &show_files))
+    {
+        char path[MAX_PATH];
+
+        char *dir = current_dir;
+        u32 dir_len = 0;
+        if (current_dir[0] == '\0')
+        {
+            dir_len = GetCurrentDirectoryA(MAX_PATH, dir);
+            SY_ASSERT(dir_len <= (MAX_PATH - 3));
+            // we are probably given an absolute path, but we'll do an extra check here anyway
+            if (dir_len >= 3 && is_alpha(dir[0]) && dir[1] == ':')
+            {
+                // add the * wildcard, only adding a backslash if the dir doesn't end in one (which is possible if the current dir is the root drive)
+                char *p = dir + dir_len;
+                if (path[dir_len - 1] != '\\')
+                {
+                    *p++ = '\\';
+                }
+                else
+                {
+                    --dir_len;
+                }
+                *p++ = '*';
+                *p = '\0';
+            }
+            else
+            {
+                SY_ASSERT(0);
+            }
+        }
+        else
+        {
+            dir_len = (u32)strlen(dir) - 2;
+        }
+
+        debug_ui_begin_group("Files");
+
+        if (debug_ui_button("../"))
+        {
+            u32 len = dir_len;
+            char *p = dir + len;
+            b8 found = false;
+
+            SY_ASSERT(*p == '\\');
+            while (len--)
+            {
+                char *c = dir + len;
+                if (*c == '\\')
+                {
+                    dir[len + 1] = '*';
+                    dir[len + 2] = '\0';
+                    dir_len = len;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                // on Windows, list the logical drives, since there is no real 'root' dir
+                drive_mask = GetLogicalDrives();
+            }
+        }
+
+        b8 result = false;
+
+        if (drive_mask)
+        {
+            char name[4] = "?:\\";
+            for (int i = 0; i < 32; ++i)
+            {
+                if (drive_mask & (1 << i))
+                {
+                    name[0] = 'A' + i;
+                    if (debug_ui_button(name))
+                    {
+                        strcpy(dir, name);
+                        char *p = dir + 3;
+                        *p++ = '*';
+                        *p++ = '\0';
+                        drive_mask = 0;
+                    }
+                }
+            }
+            goto exit;
+        }
+
+        WIN32_FIND_DATAA data;
+        HANDLE find = FindFirstFileA(dir, &data);
+        if (find == INVALID_HANDLE_VALUE)
+            goto exit;
+        do
+        {
+            char name[MAX_PATH];
+            b8 is_dir = false;
+            int file_type = -1;
+            const char *file;
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            {
+                if ((strcmp(data.cFileName, ".") == 0) || (strcmp(data.cFileName, "..") == 0))
+                    continue;
+                is_dir = true;
+                snprintf(name, ARRAYCOUNT(name), "%s/", data.cFileName);
+                file = &name[0];
+            }
+            else 
+            {
+                s32 file_type_index = -1;
+                const char *file_ext[] = {".exe", ".bin", ".cue"};
+                for (u32 i = 0; i < ARRAYCOUNT(file_ext); ++i)
+                {
+                    if (string_ends_with_ignore_case(data.cFileName, file_ext[i]))
+                    {
+                        file_type_index = i;
+                        break;
+                    }
+                }
+
+                if (file_type_index < 0)
+                    continue;
+                file = &data.cFileName[0];
+            }
+            
+            if (debug_ui_button(file))
+            {
+                if (is_dir)
+                {
+                    // append folder to path
+                    char *p = dir + dir_len + 1;
+                    snprintf(p, MAX_PATH - dir_len - 2, "%s\\*", data.cFileName);
+                    dir_len = strlen(dir) - 2;
+                }
+                else
+                {   
+                    u32 path_len = dir_len + 1;
+                    SY_ASSERT((path_len + strlen(data.cFileName)) < MAX_PATH);
+                    memcpy(path, dir, path_len);
+                    strcpy(path + path_len, data.cFileName);
+                    result = true;
+                    break;
+                }
+            }
+        } while (FindNextFileA(find, &data) != FALSE);
+        FindClose(find);
+exit:
+        debug_ui_end_group();
+
+        if (result)
+        {
+            show_files = false;
+            if (psx_can_boot())
+            {
+                if (psx_load_image(path))
+                {
+                    g_psx.state = SYSTEM_STATE_RUNNING;
+                }
+                else
+                {
+                    printf("Error loading file: %s\n", path);
+                }
+            }
+        }
+
+        debug_ui_end_window();
+    }
+}
+
+static void update_debug_ui(u32 width, u32 height)
 {
     debug_ui_begin(width, height);
 
@@ -146,7 +316,7 @@ void update_debug_ui(u32 width, u32 height)
             if (psx_can_boot())
             {
                 psx_reset();
-                g_state = SYSTEM_STATE_RUNNING;
+                g_psx.state = SYSTEM_STATE_RUNNING;
             }
         }
 
@@ -190,7 +360,7 @@ void update_debug_ui(u32 width, u32 height)
         static u32 last_reg_values[32];
         if (debug_ui_button("Step Into"))
         {
-            if (g_state == SYSTEM_STATE_PAUSED)
+            if (g_psx.state == SYSTEM_STATE_PAUSED)
             {
                 memcpy(&last_reg_values[0], &g_cpu.registers[0], sizeof(u32) * 32);
                 psx_step();
@@ -221,7 +391,7 @@ void update_debug_ui(u32 width, u32 height)
         for (u8 i = 0; i < 32; ++i)
         {
             u32 reg = g_cpu.registers[i];
-            if (g_state == SYSTEM_STATE_PAUSED)
+            if (g_psx.state == SYSTEM_STATE_PAUSED)
                 debug_ui_color_labelf(last_reg_values[i] != reg ? 0x7575fa : 0xffffff, "%s %08X", register_names[i], reg);
             else
                 debug_ui_labelf("%s %08X", register_names[i], g_cpu.registers[i]);
@@ -306,132 +476,7 @@ void update_debug_ui(u32 width, u32 height)
         debug_ui_end_window();
     }
 
-    int panel_w = 0.65f * width;
-    int panel_h = 0.65f * height;
-    int panel_x = (width - panel_w) / 2;
-    int panel_y = (height - panel_h) / 2;
-
-    debug_ui_set_window_rect("Image Select", r2(panel_x, panel_y, panel_w, panel_h));
-    if (debug_ui_begin_window("Image Select", 0, &show_files))
-    {
-        char path[MAX_PATH];
-
-        char *dir = current_dir;
-        u32 dir_len = 0;
-        if (current_dir[0] == '\0')
-        {
-            dir_len = GetCurrentDirectoryA(MAX_PATH, dir);
-            SY_ASSERT(dir_len <= (MAX_PATH - 3) && (dir_len != 0));
-            char *p = dir + dir_len;
-            *p++ = '\\';
-            *p++ = '*';
-            *p = '\0';
-        }
-        else
-        {
-            dir_len = (u32)strlen(dir) - 2;
-        }
-
-        debug_ui_begin_group("Files");
-
-        if (debug_ui_button("../"))
-        {
-            u32 len = dir_len;
-            char *p = dir + len;
-            //--len;
-            SY_ASSERT(*p == '\\');
-            while (len--)
-            {
-                char *c = dir + len;
-                if (*c == '\\')
-                {
-                    dir[len + 1] = '*';
-                    dir[len + 2] = '\0';
-                    dir_len = len;
-                    break;
-                }
-            }
-        }
-
-        b8 result = false;
-
-        WIN32_FIND_DATAA data;
-        HANDLE find = FindFirstFileA(dir, &data);
-        SY_ASSERT(find != INVALID_HANDLE_VALUE);
-        do
-        {
-            char name[MAX_PATH];
-            b8 is_dir = false;
-            int file_type = -1;
-            const char *file;
-            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            {
-                if ((strcmp(data.cFileName, ".") == 0) || (strcmp(data.cFileName, "..") == 0))
-                    continue;
-                is_dir = true;
-                snprintf(name, ARRAYCOUNT(name), "%s/", data.cFileName);
-                file = &name[0];
-            }
-            else 
-            {
-                s32 file_type_index = -1;
-                const char *file_ext[] = {".exe", ".bin", ".cue"};
-                for (u32 i = 0; i < ARRAYCOUNT(file_ext); ++i)
-                {
-                    if (string_ends_with_ignore_case(data.cFileName, file_ext[i]))
-                    {
-                        file_type_index = i;
-                        break;
-                    }
-                }
-
-                if (file_type_index < 0)
-                    continue;
-                file = &data.cFileName[0];
-            }
-            
-            if (debug_ui_button(file))
-            {
-                if (is_dir)
-                {
-                    // append folder to path
-                    char *p = dir + dir_len + 1;
-                    snprintf(p, MAX_PATH - dir_len - 2, "%s\\*", data.cFileName);
-                    dir_len = strlen(dir) - 2;
-                }
-                else
-                {   
-                    u32 path_len = dir_len + 1;
-                    SY_ASSERT((path_len + strlen(data.cFileName)) < MAX_PATH);
-                    memcpy(path, dir, path_len);
-                    strcpy(path + path_len, data.cFileName);
-                    result = true;
-                    break;
-                }
-            }
-        } while (FindNextFileA(find, &data) != FALSE);
-        FindClose(find);
-
-        debug_ui_end_group();
-
-        if (result)
-        {
-            show_files = false;
-            if (psx_can_boot())
-            {
-                if (psx_load_image(path))
-                {
-                    g_state = SYSTEM_STATE_RUNNING;
-                }
-                else
-                {
-                    printf("Error loading file: %s\n", path);
-                }
-            }
-        }
-
-        debug_ui_end_window();
-    }
+    file_browser_window(width, height);
 
     if (debug_ui_begin_window("DMA", 0, &show_dma))
     {
@@ -520,14 +565,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         return -1;
     }
 
-    struct memory_arena arena = allocate_arena(MEGABYTES(16));
-
     load_config();
 
-    struct file_dat bios;
-    allocate_and_read_file(g_config.bios_path, 0, &bios);
+    psx_init();
 
-    psx_init(&arena, bios.memory);
+    g_psx.controllers[0] = malloc(sizeof(struct input_device_base));
+    g_psx.controllers[0]->type = INPUT_DEVICE_DIGITAL_PAD;
+    g_psx.controllers[0]->input_get_data = keyboard_get_digital_pad_input;
+
+    psx_load_bios(g_config.bios_path);
 
     platform_window window = {0};
     window.handle = hwnd;
@@ -538,14 +584,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     }
     g_renderer = (renderer_context *)platform_init_software_renderer(&window);
 
-    g_sio.devices[0] = push_arena(&arena, sizeof(struct keyboard_pad));
-    g_sio.devices[0]->type = INPUT_DEVICE_DIGITAL_PAD;
-    g_sio.devices[0]->input_get_data = keyboard_get_digital_pad_input;
-
     audio_init();
     audio_set_volume(0.5f);
 
-    debug_ui_init(&arena);
+    debug_ui_init();
     debug_ui_set_window_rect("Menu", r2(0, 0, 315, 200));
     debug_ui_set_window_rect("Voices", r2(100, 50, 500, 500));
     debug_ui_set_window_rect("Debugger", r2(0, 0, 600, 400));
@@ -556,12 +598,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     if (psx_can_boot())
     {
-        psx_load_image(g_config.boot_file);
-        g_state = SYSTEM_STATE_RUNNING;
+        if (g_config.boot_file[0])
+            psx_load_image(g_config.boot_file);
+        else
+            psx_reset();
+        g_psx.state = SYSTEM_STATE_RUNNING;
     }
 
     g_debug.breakpoints_enabled = true; // TODO: temp
-    g_debug.log_level = LOG_ERROR;
+    g_debug.log_level = LOG_DEBUG;
 
     while (g_running)
     {
@@ -579,7 +624,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
         update_debug_ui(window_w, window_h);
 
-        if (g_state == SYSTEM_STATE_RUNNING)
+        if (g_psx.state == SYSTEM_STATE_RUNNING)
         {
             emulate_from_audio();
         }
@@ -601,7 +646,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     g_renderer->shutdown();
 
-    free_arena(&arena);
+    free(g_psx.controllers[0]);
+
+    psx_shutdown();
+
+    debug_ui_shutdown();
 
     return 0;
 }

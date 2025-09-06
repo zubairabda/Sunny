@@ -94,7 +94,11 @@ static u8 io_read8(u32 addr)
     switch (addr)
     {
     default:
-        if (addr >= 0x1f801080 && addr < 0x1f8010f8)
+        if (addr >= 0x1f000000 && addr < 0x1f800000)
+        {
+            return 0xff; // exp 1 read
+        }
+        else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
         {
             u32 shift = (addr & 0x3) * 8;
             return (dma_read(addr & 0x7f) >> shift);
@@ -222,10 +226,6 @@ void *mem_read(u32 addr)
     if (addr < 0x800000)
     {
         result = g_ram + (addr & 0x1fffff);
-    }
-    else if (addr >= 0x1f000000 && addr < 0x1f800000)
-    {
-        debug_warn("Unhandled read from EXP 1\n");
     }
     else if (addr >= 0x1f800000 && addr < 0x1f800400)
     {

@@ -1,45 +1,41 @@
 #include "input.h"
 
-static inline b8 is_key_down(u8 *keys, u8 key)
-{
-    return keys[key];
-}
+u8 g_keystates[256];
 
-void keyboard_get_digital_pad_input(struct input_device_base *keyboard)
+void keyboard_get_digital_pad_input(struct input_device_base *device)
 {
-    struct keyboard_pad *kbd = (struct keyboard_pad *)keyboard;
     u16 buttons = 0;
 
-    if (kbd->keystates['I'])
+    if (g_keystates['I'])
         buttons |= PAD_TRIANGLE;
-    if (kbd->keystates['J'])
+    if (g_keystates['J'])
         buttons |= PAD_SQUARE;
-    if (kbd->keystates['K'])
+    if (g_keystates['K'])
         buttons |= PAD_CROSS;
-    if (kbd->keystates['L'])
+    if (g_keystates['L'])
         buttons |= PAD_CIRCLE;
-    if (kbd->keystates['W'])
+    if (g_keystates['W'])
         buttons |= PAD_UP;
-    if (kbd->keystates['A'])
+    if (g_keystates['A'])
         buttons |= PAD_LEFT;
-    if (kbd->keystates['S'])
+    if (g_keystates['S'])
         buttons |= PAD_DOWN;
-    if (kbd->keystates['D'])
+    if (g_keystates['D'])
         buttons |= PAD_RIGHT;
-    if (kbd->keystates['Q'])
+    if (g_keystates['Q'])
         buttons |= PAD_L1;
-    if (kbd->keystates['E'])
+    if (g_keystates['E'])
         buttons |= PAD_L2;
-    if (kbd->keystates['U'])
+    if (g_keystates['U'])
         buttons |= PAD_R2;
-    if (kbd->keystates['O'])
+    if (g_keystates['O'])
         buttons |= PAD_R1;
-    if (kbd->keystates['F'])
+    if (g_keystates['F'])
         buttons |= PAD_SELECT;
-    if (kbd->keystates['H'])
+    if (g_keystates['H'])
         buttons |= PAD_START;
 
     buttons = ~buttons;
-    kbd->base.data[0] = (u8)buttons;
-    kbd->base.data[1] = (u8)(buttons >> 8);
+    device->data[0] = (u8)buttons;
+    device->data[1] = (u8)(buttons >> 8);
 }

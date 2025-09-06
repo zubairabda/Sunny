@@ -104,10 +104,9 @@ struct spu_state g_spu;
 
 void spu_reset(void)
 {
-    u8 *dram = g_spu.dram;
     memset(&g_spu, 0, sizeof(struct spu_state));
-    g_spu.dram = dram; // TODO: lets not do this
     g_spu.regs.control.endx = 0x00ffffff;
+    schedule_event(spu_tick, 0, 768);
 }
 
 u32 spu_read(u32 offset)
@@ -456,7 +455,7 @@ static inline s16 read_cd_buffer(void)
     return result;
 }
 
-void spu_tick(u32 param)
+void spu_tick(u32 param, s32 ticks_late)
 {
     // not sure if we need to emulate this, but spustat applies its changes delayed, im assuming to the next tick
     g_spu.regs.control.spustat &= ~(0x5f);
@@ -725,4 +724,6 @@ void spu_tick(u32 param)
     mixed_right = apply_volume(mixed_right, main_vol_right);
 
     audio_buffer_write(mixed_left, mixed_right);
+
+    schedule_event(spu_tick, 0, 768 - ticks_late);
 }

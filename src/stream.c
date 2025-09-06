@@ -37,7 +37,7 @@ enum cue_context_type
     CUE_CONTEXT_TRACK
 };
 
-typedef struct
+typedef struct cue_string
 {
     const char *str;
     u64 length;
@@ -59,7 +59,7 @@ struct cue_track
     u32 flags;
 };
 
-typedef struct
+typedef struct cue_data
 {
     const char **files;
     u32 file_count;
@@ -578,6 +578,7 @@ disk_image *open_disk(const char *path, psx_image_type type)
     {
         result = malloc(sizeof(disk_image));
         result->track_count = 1;
+        result->file_count = 1;
         result->tracks = malloc(sizeof(struct disk_track));
         result->files = malloc(sizeof(platform_file));
         if (!platform_open_file(path, &result->files[0]))
@@ -675,18 +676,23 @@ void close_disk(disk_image *disk)
 
 b8 read_disk_sector(disk_image *disk, u32 lba, void *buffer)
 {
+    return read_disk_data(disk, lba, DISK_SECTOR_SIZE, buffer);
+}
+
+b8 read_disk_data(disk_image *disk, u32 lba, size_t size, void *buffer)
+{
     for (u32 i = 0; i < disk->track_count; ++i)
     {
         struct disk_track *track = &disk->tracks[i];
         if (lba >= track->start && lba < track->end)
         {
             u32 offset = (lba - track->start) * DISK_SECTOR_SIZE;
-            platform_read_file(track->file, offset, buffer, DISK_SECTOR_SIZE);
+            platform_read_file(track->file, offset, buffer, size);
             return true;
         }
     }
-    // out of bounds seek
-    return false;
+    // out of bounds read
+    return false;    
 }
 
 void write_bmp(int width, int height, void *data, const char *path)

@@ -3,7 +3,7 @@
 #include "debug/debug_ui.h"
 #include "debug/atlas.h"
 
-typedef struct
+typedef struct draw_params
 {
     u32 flags;
     u32 mode;
@@ -12,7 +12,7 @@ typedef struct
     vec2i clut;
 } draw_params;
 
-typedef struct
+typedef struct vertex
 {
     vec2i pos;
     vec2i uv;
@@ -296,6 +296,19 @@ static void update_display(void)
 #endif
 }
 
+void platform_shutdown_software_renderer(void)
+{
+#if defined(SY_PLATFORM_WIN32)
+    win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
+    DeleteObject(renderer->vram_bitmap);
+    DeleteObject(renderer->fullscreen_bitmap);
+    DeleteDC(renderer->vram_dc);
+    DeleteDC(renderer->fullscreen_dc);
+    free(renderer->sw.vram);
+    free(renderer);
+#endif
+}
+
 software_renderer *platform_init_software_renderer(platform_window *window)
 {
 #if defined(SY_PLATFORM_WIN32)
@@ -318,6 +331,7 @@ software_renderer *platform_init_software_renderer(platform_window *window)
     // actual vram data which draw commands write to
     void *vram = malloc(VRAM_SIZE);
     if (!vram) {
+        DeleteDC(result->vram_dc);
         free(result);
         return NULL;
     }
@@ -360,7 +374,7 @@ software_renderer *platform_init_software_renderer(platform_window *window)
     result->sw.base.present = renderer_stub_function;
     result->sw.base.handle_resize = handle_resize;
     result->sw.base.update_display = update_display;
-    result->sw.base.shutdown = renderer_stub_function;
+    result->sw.base.shutdown = platform_shutdown_software_renderer;
 
     return (software_renderer *)result;
 #endif

@@ -243,9 +243,9 @@ static inline void debug_ui_pop_root_panel(void)
     debug_ui_pop_panel();
 }
 
-void debug_ui_init(struct memory_arena *arena)
+void debug_ui_init(void)
 {
-    g_debug_ui.commands = push_arena(arena, KILOBYTES(512));
+    g_debug_ui.commands = malloc(KILOBYTES(512));
     SY_ASSERT(g_debug_ui.commands);
     struct debug_ui_panel *sentinel = &g_debug_ui.panels[0];
     sentinel->next = sentinel->prev = sentinel;
@@ -269,6 +269,11 @@ void debug_ui_init(struct memory_arena *arena)
     };
 
     g_debug_ui.style = style;
+}
+
+void debug_ui_shutdown(void)
+{
+    free(g_debug_ui.commands);
 }
 
 static vec2i advance_layout(s32 width, s32 height)

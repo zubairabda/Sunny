@@ -85,34 +85,359 @@ static inline void handle_interrupts(void)
     }
 }
 
-static inline void log_tty(void)
+static const char *bios_a0_function_str_table[] =
 {
+    "open",
+    "lseek",
+    "read",
+    "write",
+    "close",
+    "ioctl",
+    "exit",
+    "isatty",
+    "getc",
+    "putc",
+    "todigit",
+    "atof",
+    "strtoul",
+    "strtol",
+    "abs",
+    "labs",
+    "atoi",
+    "atol",
+    "atob",
+    "setjmp",
+    "longjmp",
+    "strcat",
+    "strncat",
+    "strcmp",
+    "strncmp",
+    "strcpy",
+    "strncpy",
+    "strlen",
+    "index",
+    "rindex",
+    "strchr",
+    "strrchr",
+    "strpbrk",
+    "strspn",
+    "strcspn",
+    "strtok",
+    "strstr",
+    "toupper",
+    "tolower",
+    "bcopy",
+    "bzero",
+    "bcmp",
+    "memcpy",
+    "memset",
+    "memmove",
+    "memcmp",
+    "memchr",
+    "rand",
+    "srand",
+    "qsort",
+    "strtod",
+    "malloc",
+    "free",
+    "lsearch",
+    "bsearch",
+    "calloc",
+    "realloc",
+    "InitHeap",
+    "_exit",
+    "getchar",
+    "putchar",
+    "gets",
+    "puts",
+    "printf",
+    "SystemErrorUnresolvedException",
+    "LoadTest",
+    "Load",
+    "Exec",
+    "FlushCache",
+    "init_a0_b0_c0_vectors",
+    "GPU_dw",
+    "gpu_send_dma",
+    "SendGP1Command",
+    "GPU_cw",
+    "GPU_cwp",
+    "send_gpu_linked_list",
+    "gpu_abort_dma",
+    "GetGPUStatus",
+    "gpu_sync",
+    "SystemError",
+    "SystemError",
+    "LoadExec",
+    "GetSysSp",
+    "SystemError",
+    "_96_init",
+    "_bu_init",
+    "_96_remove",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "dev_tty_init",
+    "dev_tty_open",
+    "dev_tty_in_out",
+    "dev_tty_ioctl",
+    "dev_cd_open",
+    "dev_cd_read",
+    "dev_cd_close",
+    "dev_cd_firstfile",
+    "dev_cd_nextfile",
+    "dev_cd_chdir",
+    "dev_card_open",
+    "dev_card_read",
+    "dev_card_write",
+    "dev_card_close",
+    "dev_card_firstfile",
+    "dev_card_nextfile",
+    "dev_card_erase",
+    "dev_card_undelete",
+    "dev_card_format",
+    "dev_card_rename",
+    "card_clear_error",
+    "_bu_init",
+    "_96_init",
+    "_96_remove",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "CdAsyncSeekL",
+    "return 0",
+    "return 0",
+    "return 0",
+    "CdAsyncGetStatus",
+    "return 0",
+    "CdAsyncReadSector",
+    "return 0",
+    "return 0",
+    "CdAsyncSetMode",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "CdromIoIrqFunc1",
+    "CdromDmaIrqFunc1",
+    "CdromIoIrqFunc2",
+    "CdromDmaIrqFunc2",
+    "CdromGetInt5errCode",
+    "CdInitSubFunc",
+    "AddCDROMDevice",
+    "AddMemCardDevice",
+    "AddDuartTtyDevice",
+    "add_nullcon_driver",
+    "SystemError",
+    "SystemError",
+    "SetConf",
+    "GetConf",
+    "SetCdromIrqAutoAbort",
+    "SetMem"
+};
+
+static const char *bios_b0_function_str_table[] =
+{
+    "alloc_kernel_memory",
+    "free_kernel_memory",
+    "init_timer",
+    "get_timer",
+    "enable_timer_irq",
+    "disable_timer_irq",
+    "restart_timer",
+    "DeliverEvent",
+    "OpenEvent",
+    "CloseEvent",
+    "WaitEvent",
+    "TestEvent",
+    "EnableEvent",
+    "DisableEvent",
+    "OpenTh",
+    "CloseTh",
+    "ChangeTh",
+    "jump_to_00000000h",
+    "InitPAD2",
+    "StartPAD2",
+    "StopPAD2",
+    "PAD_init2",
+    "PAD_dr",
+    "ReturnFromException",
+    "ResetEntryInt",
+    "HookEntryInt",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "UnDeliverEvent",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "SystemError",
+    "SystemError",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "jump_to_00000000h",
+    "open",
+    "lseek",
+    "read",
+    "write",
+    "close",
+    "ioctl",
+    "exit",
+    "isatty",
+    "getc",
+    "putc",
+    "getchar",
+    "putchar",
+    "gets",
+    "puts",
+    "cd",
+    "format",
+    "firstfile2",
+    "nextfile",
+    "rename",
+    "erase",
+    "undelete",
+    "AddDrv",
+    "DelDrv",
+    "PrintInstalledDevices"
+};
+
+static const char *bios_c0_function_str_table[] =
+{
+    "EnqueueTimerAndVblankIrqs",
+    "EnqueueSyscallHandler",
+    "SysEnqIntRP",
+    "SysDeqIntRP",
+    "get_free_EvCB_slot",
+    "get_free_TCB_slot",
+    "ExceptionHandler",
+    "InstallExceptionHandlers",
+    "SysInitMemory",
+    "SysInitKernelVariables",
+    "ChangeClearRCnt",
+    "SystemError",
+    "InitDefInt",
+    "SetIrqAutoAck",
+    "return 0",
+    "return 0",
+    "return 0",
+    "return 0",
+    "InstallDevices",
+    "FlushStdInOutPut",
+    "return 0",
+    "_cdevinput",
+    "_cdevscan",
+    "_circgetc",
+    "_circputc",
+    "_ioabort",
+    "set_card_find_mode",
+    "KernelRedirect",
+    "AdjustA0Table",
+    "get_card_find_mode"
+};
+
+static inline void hook_tty(void)
+{
+    int function = 0;
     if (g_cpu.pc == 0xb0)
     {
         switch (g_cpu.registers[9])
         {
         case 0x35:
-            if (g_cpu.registers[4] != 1)
-                break;
-
-            char* str;
-            u32 addr = g_cpu.registers[5] & 0x1fffffff;
-
-            str = mem_read(addr);
-
-            u32 size = g_cpu.registers[6];
-            while (size--)
-                putchar(*str++);
+            function = 1;
+            break;
+        case 0x3b:
+            function = 2;
             break;
         case 0x3d:
-            putchar(g_cpu.registers[4]);
+            function = 3;
+            break;
+        default:
+            if (g_cpu.registers[9] != 0xb)
+                //printf("%s\n", bios_b0_function_str_table[g_cpu.registers[9]]);
             break;
         }
     }
+    else if (g_cpu.pc == 0xa0)
+    {
+        switch (g_cpu.registers[9])
+        {
+        case 0x3:
+            function = 1;
+            break;
+        case 0x9:
+            function = 2;
+            break;
+        case 0x3c:
+            function = 3;
+            break;
+        default:
+            //printf("%s\n", bios_a0_function_str_table[g_cpu.registers[9]]);
+            break;
+        }
+    }
+    else if (g_cpu.pc == 0xc0)
+    {
+        //printf("%s\n", bios_c0_function_str_table[g_cpu.registers[9]]);
+    }
+
+    switch (function)
+    {
+    case 1:
+        // check if write() is to stdout
+        if (g_cpu.registers[4] != 1)
+            break;
+
+        char *str;
+        u32 addr = g_cpu.registers[5] & 0x1fffffff;
+
+        str = mem_read(addr);
+
+        u32 size = g_cpu.registers[6];
+        while (size--)
+            putchar(*str++);
+        break;
+    case 2:
+        break;
+    case 3:
+        putchar(g_cpu.registers[4]);
+        break;
+    case 4:
+        break;
+    default:
+        break;
+    }
+
 }
 
-void cpu_init(void)
+void cpu_reset(void)
 {
+    memset(&g_cpu, 0, sizeof(struct cpu_state));
     g_cpu.pc = 0xbfc00000;
     g_cpu.next_pc = 0xbfc00004;
     
@@ -182,15 +507,13 @@ int execute_instructions(void)
             return 0;
         }
 #endif
-        log_tty();
+        hook_tty();
 
         if (g_cpu.pc & 0x3) // NOTE: this seems to fix amidog exception tests but im not sure its needed
         {
             g_cpu.cop0[8] = g_cpu.pc;
             handle_exception(EXCEPTION_CODE_ADEL);
         }
-
-        //print_function_hooks(g_cpu.pc & 0x1fffffff);
 
         instruction ins = {.value = fetch_instruction(g_cpu.pc)};
         
@@ -270,7 +593,7 @@ int execute_instructions(void)
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled load to data cache\n");
+                //debug_warn("Store while isolate cache is set\n");
                 break;
             }
             s8 value = load8(vaddr);
@@ -289,6 +612,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
+                //debug_warn("Load while isolate cache is set\n");
                 break;
             }
             s16 value = (s16)load16(vaddr);
@@ -359,7 +683,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //debug_warn("Unhandled load to data cache\n");
+                //debug_warn("Load while isolate cache is set\n");
                 break;
             }
             new_load.index = ins.rt;
@@ -371,7 +695,7 @@ int execute_instructions(void)
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //debug_warn("Unhandled load to data cache\n");
+                //debug_warn("Load while isolate cache is set\n");
                 break;
             }
             new_load.index = ins.rt;
@@ -400,7 +724,7 @@ int execute_instructions(void)
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //debug_warn("Unhandled store to data cache\n");
+                //debug_warn("Store while isolate cache is set\n");
                 break;
             }
             store8(vaddr, g_cpu.registers[ins.rt]);
@@ -417,7 +741,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //debug_warn("Unhandled store to data cache\n");
+                //debug_warn("Store while isolate cache is set\n");
                 break;
             }
             store16(vaddr, g_cpu.registers[ins.rt]);
@@ -427,7 +751,10 @@ int execute_instructions(void)
         {
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
+            {
+                //debug_warn("Store while isolate cache is set\n");
                 break;
+            }
             u32 aligned = vaddr & ~0x3;
             u32 value = load32(aligned);
             u32 store;
@@ -453,7 +780,10 @@ int execute_instructions(void)
         {
             u32 vaddr = g_cpu.registers[ins.rs] + sign_extend16_32(immediate);
             if (g_cpu.cop0[12] & 0x10000)
+            {
+                //debug_warn("Store while isolate cache is set\n");
                 break;
+            }
             u32 aligned = vaddr & ~0x3;
             u32 value = load32(aligned);
             u32 write;
@@ -486,7 +816,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //debug_warn("Unhandled store to data cache\n");
+                //debug_warn("Store while isolate cache is set\n");
                 break;
             }
             store32(vaddr, g_cpu.registers[ins.rt]);
@@ -608,7 +938,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //debug_warn("Unhandled load to data cache\n");
+                //debug_warn("Load while isolate cache is set\n");
                 break;
             }
             g_cpu.cop2[ins.rt] = load32(vaddr);
@@ -627,7 +957,7 @@ int execute_instructions(void)
             }
             if (g_cpu.cop0[12] & 0x10000)
             {
-                //printf("Unhandled store to data cache\n");
+                //debug_warn("Store while isolate cache is set\n");
                 break;
             }
             store32(vaddr, g_cpu.cop2[ins.rt]);

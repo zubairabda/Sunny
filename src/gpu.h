@@ -78,17 +78,11 @@ struct gpu_state
     u32 read;
     GPUSTAT stat;
     // timings
-    u64 timestamp; // cpu cycles
-    u32 scanline_cycles; // video cycles
     u32 remainder_cycles;
     u32 hblanks;
     s32 dot_div;
     
     b8 allow_texture_disable;
-    b8 draw_area_changed;
-
-    u16 vertical_timing;
-    u16 horizontal_timing;
 
     u32 scanline;
     u32 copy_buffer_len;
@@ -115,23 +109,15 @@ struct gpu_state
     u16 horizontal_display_x2;
     u16 vertical_display_y1;
     u16 vertical_display_y2;
-
-    u64 video_cycles;
 };
 
 extern struct gpu_state g_gpu;
 
-#if 0
-inline u64 video_to_cpu_cycles(u64 video_cycles, u64 remainder)
-{
-    return ((video_cycles * 451584) + remainder) / 715909;
-}
-#else
 inline u64 video_to_cpu_cycles(u64 video_cycles)
 {
     return (video_cycles * 451584) / 715909;
 }
-#endif
+
 inline u64 cpu_to_video_cycles(u64 cpu_cycles, u64 remainder)
 {
     return (cpu_cycles * 715909) / 451584;
@@ -146,7 +132,6 @@ void gpu_reset(void);
 u32 gpuread(void);
 void execute_gp1_command(u32 command);
 void execute_gp0_command(u32 word);
-void gpu_scanline_complete(u32 param);
-void gpu_hsync(void);
+void gpu_scanline_complete(u32 param, s32 ticks_late);
 
 #endif /* GPU_H */

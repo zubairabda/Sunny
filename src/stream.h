@@ -30,7 +30,7 @@ struct disk_track
     u32 reserved;
 };
 
-typedef struct
+typedef struct disk_image
 {
     u32 track_count;
     u32 file_count;
@@ -38,7 +38,7 @@ typedef struct
     platform_file *files;
 } disk_image;
 
-typedef struct
+typedef struct MSF
 {
     u8 m;
     u8 s;
@@ -113,6 +113,7 @@ disk_image *open_disk(const char *path, psx_image_type type);
 void close_disk(disk_image *disk);
 
 b8 read_disk_sector(disk_image *disk, u32 lba, void *buffer);
+b8 read_disk_data(disk_image *disk, u32 lba, size_t size, void *buffer);
 
 void write_bmp(int width, int height, void *data, const char *path);
 void write_wav_file(void *sample_data, u32 size_in_bytes, const char *path);

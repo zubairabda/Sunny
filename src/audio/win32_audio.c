@@ -17,7 +17,7 @@ DEFINE_GUID(IID_IMMDeviceEnumerator, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xD
 
 DEFINE_GUID(CLSID_MMDeviceEnumerator, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
 
-typedef struct
+typedef struct win32_audio_impl
 {
     IAudioClient *client;
     IAudioRenderClient *render_client;
@@ -110,7 +110,7 @@ b32 emulate_from_audio(void)
     {
         if (!psx_run())
         {
-            g_state = SYSTEM_STATE_PAUSED;
+            g_psx.state = SYSTEM_STATE_PAUSED;
             break;
         }
     }

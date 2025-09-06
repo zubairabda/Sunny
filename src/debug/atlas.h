@@ -2059,7 +2059,7 @@ static unsigned char atlas[ATLAS_WIDTH * ATLAS_HEIGHT] = {
 static int font_space_width = 8;
 static int font_line_height = 15;
 
-typedef struct
+typedef struct atlas_glyph
 {
     int x;
     int y;

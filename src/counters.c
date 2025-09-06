@@ -7,44 +7,30 @@ struct root_counter g_counters[3];
 
 static inline void add_sysclk_ticks(struct root_counter *counter)
 {
-    u64 ticks = g_cycles_elapsed - counter->prev_cycle_count;
+    u64 ticks = g_cycles_elapsed - counter->begin_ticks;
     if (ticks > 0xffff)
     {
         ticks = 0xffff;
     }
     //u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->prev_cycle_count);
-    counter->prev_cycle_count = g_cycles_elapsed;
+    counter->begin_ticks = g_cycles_elapsed;
     counter->value += ticks;//ticks_to_add;
 }
 
-static void tick_counter(u32 index)
+void tick_counter(u32 index)
 {
     struct root_counter *counter = &g_counters[index];
 
-    if (index < 2)
-        gpu_hsync();
+    //if (index < 2)
+    //    gpu_hsync();
 
     switch (index)
     {
     case 0:
     {
-        //////////////////////////////////////////////
         if (counter->mode.clock_source & 0x1)
         {
-            // dotclock
-            if (counter->mode.sync_enable)
-            {
-                switch (counter->mode.sync_mode)
-                {
 
-                }
-            }
-            else
-            {
-                u32 ticks_to_add = (u32)g_gpu.video_cycles;
-                counter->value += ticks_to_add / g_gpu.dot_div;
-                g_gpu.video_cycles = 0;
-            }
         }
         else
         {
@@ -73,40 +59,67 @@ static void tick_counter(u32 index)
     }
     case 1:
     {
-        if (counter->mode.clock_source & 0x1)
+#if 1
+        u64 ticks_added = 0;
+        if (counter->mode.sync_enable)
         {
-            if (counter->mode.sync_enable)
+            switch (counter->mode.sync_mode)
             {
-                // TODO:
-                counter->value += 1;
+            case 0:
+            {
+                ticks_added = g_cycles_elapsed - counter->begin_ticks;
+                ticks_added -= counter->pause_ticks;
+                counter->pause_ticks = 0;
+                if (in_vblank())
+                {
+                    // pause ticks haven't been added yet since its not end of vblank, so add them here
+                    ticks_added -= g_cycles_elapsed - counter->timestamp;
+                    counter->timestamp = g_cycles_elapsed;
+                }
+                break;
             }
-            else
+            case 1:
             {
-                counter->value += g_gpu.hblanks;
-                g_gpu.hblanks = 0;
+                ticks_added = g_cycles_elapsed - counter->timestamp;
+                counter->timestamp = g_cycles_elapsed;
+                break;
+            }
+            case 2:
+            {
+                if (in_vblank())
+                {
+                    ticks_added = g_cycles_elapsed - counter->timestamp;
+                    counter->timestamp = g_cycles_elapsed;
+                }
+                break;
+            }
+            case 3:
+            {
+                if (counter->gate)
+                    ticks_added = g_cycles_elapsed - counter->begin_ticks;
+                break;
+            }
             }
         }
         else
         {
-            u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->prev_cycle_count);
-            counter->prev_cycle_count = g_cycles_elapsed;
-            counter->value += ticks_to_add;
-            counter->value -= counter->pause_ticks;
-            if (counter->mode.sync_enable)
-            {
-                if (counter->mode.sync_mode == 0)
-                {
-                    if (in_vblank())
-                    {
-                        // if the timer was in vblank, then we havent added the pause ticks yet
-                        counter->value -= safe_truncate32(g_cycles_elapsed - counter->timestamp);
-                        // need to set the timestamp again, otherwise pause ticks will still contain the pause ticks
-                        counter->timestamp = g_cycles_elapsed;
-                    }
-                }
-            }
-            counter->pause_ticks = 0;
+            ticks_added = g_cycles_elapsed - counter->begin_ticks;
         }
+
+        counter->begin_ticks = g_cycles_elapsed;
+
+        if (counter->mode.clock_source & 0x1)
+        {
+            // convert CPU cycles to hblanks (roughly)
+            ticks_added *= 715909;
+            ticks_added += counter->remainder;
+            u64 hblanks = ticks_added / (451584 * NTSC_VIDEO_CYCLES_PER_SCANLINE);
+            counter->remainder = ticks_added % (451584 * NTSC_VIDEO_CYCLES_PER_SCANLINE);
+            ticks_added = hblanks;
+        }
+
+        counter->value += safe_truncate32(ticks_added);
+#endif
         break;
     }
     case 2:
@@ -115,38 +128,33 @@ static void tick_counter(u32 index)
         {
             return;
         }
-        u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->prev_cycle_count);
+        u32 ticks_to_add = safe_truncate32(g_cycles_elapsed - counter->begin_ticks);
         if (counter->mode.clock_source & 0x2) // sysclk / 8
         {
             ticks_to_add += counter->remainder;
             counter->remainder = ticks_to_add & 0x7;
             ticks_to_add >>= 3;
         }
-        counter->prev_cycle_count = g_cycles_elapsed;
+        counter->begin_ticks = g_cycles_elapsed;
         counter->value += ticks_to_add;
         break;
     }
     INVALID_CASE;
     }
-#if 0
-    if (timer->clock_delay)
-    {
-        timer->clock_delay = 0;
-        --timer->value;
-    }
-#endif
+
     if (counter->value >= counter->target)
     {
         counter->mode.reached_target = 1;
         if (counter->mode.reset_after_target && counter->value > counter->target)
         {
             // if the timer resets by reaching the target value, it will stay at 0 for 2 cycles
-            u32 wrap_count = (counter->value + 1) / (counter->target + 2);
+            //u32 wrap_count = (counter->value + 1) / (counter->target + 2);
+            //u32 wrap_count = counter->value / (counter->target + 1);
 
             counter->value %= (counter->target + 1);
             
-            if (counter->value > 0)
-                counter->value -= wrap_count;
+            //if (counter->value > 0)
+            //    counter->value -= wrap_count;
         }
     }
     if (counter->value >= 0xffff)
@@ -154,6 +162,74 @@ static void tick_counter(u32 index)
         counter->mode.reached_overflow = 1;
     }
     counter->value &= 0xffff;
+}
+
+static s32 get_timer_ticks_until_interrupt(u32 timer_index)
+{
+    struct root_counter *counter = &g_counters[timer_index];
+    switch (timer_index)
+    {
+    case 2:
+    {
+        if (!counter->mode.sync_enable || counter->mode.sync_mode == 1 || counter->mode.sync_mode == 2)
+        {
+            s32 tick_count = 0;
+
+            if (counter->mode.irq_on_target)
+            {
+                tick_count = ((0x10000 - counter->value) + counter->target) & 0xffff;
+                if (!tick_count)
+                    tick_count = counter->target + 1; // tick count being 0 means were at the target already, next int in target + 1
+            }
+            else if (counter->mode.irq_on_max)
+            {
+                tick_count = 0xffff - counter->value;
+                if (!tick_count)
+                    tick_count = 0x10000;
+            }
+            
+            if (counter->mode.clock_source & 0x2)
+            {
+                tick_count <<= 3;
+            }
+
+            return tick_count;
+        }
+        else
+            SY_ASSERT(0);
+        break;
+    }
+    default:
+        break;
+    }
+    return 0;
+}
+
+static void timer_interrupt(u32 timer_index, s32 ticks_late)
+{
+    struct root_counter *counter = &g_counters[timer_index];
+    tick_counter(timer_index);
+
+    if (counter->mode.irq_repeat_mode)
+    {
+        if (counter->mode.irq_toggle_mode)
+        {
+            counter->mode.irq ^= 1;
+        }
+        else
+        {
+            counter->mode.irq = 0; // TODO: temp
+        }
+
+        counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
+    }
+    else
+    {
+        counter->mode.irq = 0;
+    }
+
+    if (counter->mode.irq == 0)
+        g_cpu.i_stat |= (u32)INTERRUPT_TIMER0 << timer_index;
 }
 
 u32 counters_read(u32 offset)
@@ -166,12 +242,14 @@ u32 counters_read(u32 offset)
     switch (timer_offset)
     {
     case 0x0:
-    {
+        //SY_ASSERT(timer_index != 0);
         tick_counter(timer_index);
         result = counter->value;
-    }   break;
+        //printf("read timer %d value: %d\n", timer_index, result);
+        break;
     case 0x4:
         tick_counter(timer_index);
+        counter->mode.irq = 1; // NOTE: temp hack
         result = counter->mode.value;
         counter->mode.reached_target = 0;
         counter->mode.reached_overflow = 0;
@@ -185,52 +263,10 @@ u32 counters_read(u32 offset)
     return result;
 }
 
-static u32 get_timer_ticks_until_interrupt(u32 timer_index)
-{
-    struct root_counter *counter = &g_counters[timer_index];
-    switch (timer_index)
-    {
-    case 2:
-    {
-        if (!counter->mode.sync_enable || counter->mode.sync_mode == 1 || counter->mode.sync_mode == 2)
-        {
-            u32 tick_count = 0;
-            if (counter->mode.irq_on_target)
-            {
-                tick_count = counter->target;
-            }
-            else if (counter->mode.irq_on_overflow)
-            {
-                tick_count = 0xffff;
-            }
-            
-            if (counter->mode.clock_source & 0x2)
-            {
-                tick_count <<= 3;
-            }
-
-            return tick_count;
-        }
-        break;
-    }
-    default:
-        break;
-    }
-    return 0;
-}
-
-static void timer_interrupt(u32 timer_index)
-{
-    // TODO: currently timer interrupts break the shell
-    g_cpu.i_stat |= ((u32)INTERRUPT_TIMER0) << timer_index;
-    g_counters[timer_index].interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
-}
-
 void counters_store(u32 offset, u32 value)
 {
     u32 timer_offset = offset & 0xf;
     u32 timer_index = (offset >> 4) & 0x3;
-    //debug_log("TIMER %u STORE <- %u\n", timer_index, value);
     SY_ASSERT(timer_index < 3);
 
     struct root_counter *counter = &g_counters[timer_index];
@@ -239,45 +275,45 @@ void counters_store(u32 offset, u32 value)
     switch (timer_offset)
     {
     case 0x0:
-        tick_counter(timer_index);
         counter->value = value & 0xffff;
-        if (value > counter->target)
+        if (counter->interrupt_event)
         {
-            // NOTE: hmm, don't think there are any tests for this
-            counter->is_write_above_target = 1;
+            remove_event(counter->interrupt_event);
+            counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
         }
-        //counter->clock_delay = 1;
-        // NOTE: there is also an overflow check delay, but we won't handle that for now
+        //printf("set timer %d value: %d\n", timer_index, counter->value);
         break;
     case 0x4:
         // timer mode register
+        //printf("set timer %d mode: %d\n", timer_index, value & 0x3ff);
         if (timer_index < 2)
         {
-            gpu_hsync();
+            //gpu_hsync();
             //timer->sync_ticks = psx->gpu->scanline_cycles;
         }
 
-        u32 old_value = counter->mode.value;
         counter->mode.value = value & 0x3ff; // bit 10 11 12 are readonly
         counter->mode.irq = 1;
         //counter->clock_delay = 1;
         counter->value = 0;
-        counter->prev_cycle_count = g_cycles_elapsed;
-        counter->sync = false;
+        counter->begin_ticks = g_cycles_elapsed;
         counter->pause_ticks = 0;
         counter->timestamp = g_cycles_elapsed; // TODO: remove?
         counter->remainder = 0;
+        counter->gate = false;
+        remove_event(counter->interrupt_event);
+        counter->interrupt_event = 0;
         // check bit 4-5 for IRQ mode
-        if (counter->mode.value & (0x3 << 4) && timer_index == 2) 
+        if (counter->mode.value & (0x3 << 4)) 
         {
-            remove_event(counter->interrupt_event);
-            counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index), 0);
+            SY_ASSERT(timer_index == 2);
+            counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
         }
-
         break;
     case 0x8:
         // TODO: tick timer here?
         counter->target = value & 0xffff;
+        //printf("set timer %d target: %d\n", timer_index, counter->target);
         break;
     INVALID_CASE;
     }

@@ -20,7 +20,8 @@ typedef enum config_token_type
     NUMBER,
     IDENTIFIER,
     EQUALS,
-    NEWLINE
+    NEWLINE,
+    END
 } config_token_type;
 
 typedef struct config_token
@@ -134,7 +135,8 @@ static config_token next_token(config_parser *parser)
         }
     }
     parser->done = true;
-    return parser->token;
+    config_token result = {.type = END, .length = 1, .value = parser->at};
+    return result;
 }
 
 static b8 expect_token(config_parser *parser, config_token_type type)
@@ -248,7 +250,7 @@ static struct config_table *parse_config(const char *contents)
     config_parser parser = {.at = contents};
     parser.hash_table = malloc(sizeof(struct config_table) * MAX_CONFIG_TABLES);
     
-    while (!parser.done)
+    do
     {
         config_token token = next_token(&parser);
 
@@ -294,15 +296,15 @@ static struct config_table *parse_config(const char *contents)
             break;
         }
         case NEWLINE:
-        {
+        case END:
             break;
-        }
         default:
             printf("unexpected token: '%.*s'\n", token.length, token.value);
             parser.done = true;
             break;
         }
     }
+    while (!parser.done);
 
     return parser.hash_table;
 
@@ -341,7 +343,10 @@ b8 load_config(void)
     {
         struct config_table *table = parse_config(file.memory);
         if (!table)
+        {
+            free(file.memory);
             return false;
+        }
 
         struct config_table *settings = get_table(table, "settings");
         if (settings)
@@ -360,6 +365,23 @@ b8 load_config(void)
                 else if (key_equals(entry, "software_rendering"))
                 {
                     config_get_bool(entry, &g_config.software_rendering);
+                }
+            }
+        }
+
+        struct config_table *ports[2];
+        ports[0] = get_table(table, "port1");
+        if (ports[0])
+        {
+            for (u32 i = 0; i < ports[0]->table_length; ++i)
+            {
+                struct config_table_entry *entry = &settings->entries[i];
+                if (key_equals(entry, "type"))
+                {
+                    if (string_equals_ignore_case(entry->value, "analog", entry->value_len))
+                    {
+                        g_config.controls[0].type = 0;
+                    }
                 }
             }
         }

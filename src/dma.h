@@ -82,7 +82,7 @@ struct dma_state
 
 extern struct dma_state g_dma;
 
-void dma_init(void);
+void dma_reset(void);
 u32 dma_read(u32 offset);
 void dma_write(u32 offset, u32 value);
 

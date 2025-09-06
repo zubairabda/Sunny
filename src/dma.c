@@ -175,7 +175,7 @@ static s32 dma_select_channel(void)
     return selected;
 }
 
-static void dma_handle_next_transfer(u32 channel)
+static void dma_handle_next_transfer(u32 channel, s32 ticks_late)
 {
     struct dma_port *port = &g_dma.ports[channel];
     struct dma_transfer *transfer = &g_dma.transfers[channel];
@@ -260,7 +260,7 @@ static void dma_handle_next_transfer(u32 channel)
                 s32 next_channel = dma_select_channel();
                 if (next_channel >= 0)
                 {
-                    g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                    g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0);
                 }
                 return;
             }
@@ -269,7 +269,7 @@ static void dma_handle_next_transfer(u32 channel)
                 break;
         }
 
-        g_dma.event = schedule_event(dma_handle_next_transfer, channel, 20, 0);
+        g_dma.event = schedule_event(dma_handle_next_transfer, channel, 20);
         return;
     }
     }
@@ -282,7 +282,7 @@ static void dma_handle_next_transfer(u32 channel)
         {
             //debug_log("[DMA] scheduling next block in %u ticks\n", next_run);
             port->madr = transfer->current_addr; // update MADR every slice, also probably needed when interrupted by a higher priority channel
-            g_dma.event = schedule_event(dma_handle_next_transfer, channel, next_run, 0);
+            g_dma.event = schedule_event(dma_handle_next_transfer, channel, next_run);
         }
         else
         {
@@ -298,7 +298,7 @@ static void dma_handle_next_transfer(u32 channel)
             s32 next_channel = dma_select_channel();
             if (next_channel >= 0)
             {
-                g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0);
             }
         }
     }
@@ -355,10 +355,10 @@ static void dma_start_transfer(u32 channel)
         remove_event(g_dma.event);
         g_dma.event = 0;
     }
-    dma_handle_next_transfer(selected_channel);
+    dma_handle_next_transfer(selected_channel, 0);
 }
 
-void dma_init(void)
+void dma_reset(void)
 {
     memset(&g_dma, 0, sizeof(struct dma_state));
     g_dma.control = 0x07654321; // inital value of control register
@@ -445,7 +445,7 @@ void dma_write(u32 offset, u32 value)
                     s32 next_channel = dma_select_channel();
                     if (next_channel >= 0)
                     {
-                        g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0, 0);
+                        g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0);
                     }
                 }
             }

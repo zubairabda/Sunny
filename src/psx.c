@@ -4,13 +4,14 @@
 #include "gpu.h"
 #include "counters.h"
 #include "cdrom.h"
-#include "sio.h"
 #include "dma.h"
 #include "spu.h"
 #include "memory.h"
 #include "debug.h"
 
-enum system_state g_state;
+psx_state g_psx;
+
+static struct memory_arena s_arena;
 
 b8 psx_load_exe(platform_file *file)
 {
@@ -77,8 +78,10 @@ b8 psx_load_image(const char *path)
     disk_image *disk = open_disk(path, type);
     if (disk)
     {
+        if (g_psx.disk != NULL)
+            close_disk(g_psx.disk);
+        g_psx.disk = disk;
         psx_reset();
-        cdrom_load_disk(disk);
         return true;
     }
     else
@@ -87,52 +90,60 @@ b8 psx_load_image(const char *path)
     }
 }
 
+b8 psx_load_bios(const char *path)
+{
+    if (g_bios != NULL)
+    {
+        free(g_bios);
+        g_bios = NULL;
+    }
+
+    struct file_dat file = {0};
+    if (allocate_and_read_file(path, 0, &file))
+    {
+        g_bios = file.memory;
+        return true;
+    }
+
+    return false;
+}
+
+void psx_init(void)
+{
+    s_arena = allocate_arena(MEGABYTES(16));
+}
+
 void psx_reset(void)
 {
-    cpu_init();
+    clear_arena(&s_arena);
+
+    g_ram = push_arena(&s_arena, MEGABYTES(2));
+    g_scratch = push_arena(&s_arena, KILOBYTES(1));
+
+    // initialize ram with known garbage debug value
+    memset32(g_ram, 0xdeadbeef, RAM_SIZE / 4);
+
+    scheduler_reset(&s_arena);
+    cpu_reset();
     gpu_reset();
-    dma_init();
+    dma_reset();
     spu_reset();
     cdrom_reset();
-    scheduler_reset();
-    schedule_event(spu_tick, 0, 768, 768);
-    // TODO: reschedule gpu events when display settings are changed
-    s32 cycles_per_scanline = (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE);
-    schedule_event(gpu_scanline_complete, 0, cycles_per_scanline, cycles_per_scanline);
+    sio_reset();
+
+    g_gpu.copy_buffer = push_arena(&s_arena, VRAM_SIZE);
+    g_gpu.readback_buffer = push_arena(&s_arena, VRAM_SIZE);
+    g_spu.dram = push_arena(&s_arena, KILOBYTES(512));
+}
+
+void psx_shutdown(void)
+{
+    free_arena(&s_arena);
 }
 
 b8 psx_can_boot(void)
 {
     return (g_bios != NULL); // TODO: validate bios
-}
-
-void psx_init(struct memory_arena *arena, void *bios)
-{
-    g_bios = bios;
-    
-    g_ram = push_arena(arena, MEGABYTES(2));
-    g_scratch = push_arena(arena, KILOBYTES(1));
-
-    g_gpu.copy_buffer = push_arena(arena, VRAM_SIZE);
-    g_gpu.readback_buffer = push_arena(arena, VRAM_SIZE);
-    //g_gpu.readback_buffer = push_arena(arena, VRAM_SIZE);
-    // set to NTSC timings by default
-    g_gpu.vertical_timing = 263;
-    g_gpu.horizontal_timing = NTSC_VIDEO_CYCLES_PER_SCANLINE;
-    // make sure we set draw area on the first draw in case it wasnt set by the program
-    g_gpu.draw_area_changed = true;
-
-    g_peripheral = push_arena(arena, 32); // temp
-
-    // initialize ram with known garbage debug value
-    memset32(g_ram, 0xdeadbeef, RAM_SIZE / 4);
-
-    g_spu.dram = push_arena(arena, KILOBYTES(512));
-
-    g_sio.stat.tx_fifo_not_full = 1;
-    g_sio.stat.tx_finished = 1;
-
-    scheduler_init(arena);
 }
 
 b32 psx_run(void)

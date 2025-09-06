@@ -2,6 +2,7 @@
 #include "cpu.h"
 #include "event.h"
 #include "debug.h"
+#include "psx.h"
 
 struct sio_context g_sio;
 
@@ -41,7 +42,7 @@ u16 sio_read(u32 offset)
 #define JOYMODE_WRITE_MASK 0x13f
 #define JOY_WRITE_DELAY 1088
 
-static void pad_ack_callback(u32 param)
+static void pad_ack_callback(u32 param, s32 ticks_late)
 {
     g_sio.stat.ack_is_low = param;
     // might not be accurate to check here
@@ -55,14 +56,6 @@ static void pad_ack_callback(u32 param)
 static void sio_cmd(u8 cmd)
 {
     u8 port = (g_sio.control >> 13) & 0x1;
-    // TODO: check if controller is connected
-    if (port) // TODO: temp, 2nd port is always disconnected
-    {
-        //SY_ASSERT(0);
-        g_sio.rx_buffer = 0xff;
-        g_sio.stat.rx_fifo_not_empty = 1;
-        return;
-    }
 
     switch (g_sio.state)
     {
@@ -72,11 +65,11 @@ static void sio_cmd(u8 cmd)
         {
             if (cmd == 0x1)
             {
-                /* controller */
+                // controller
                 g_sio.rx_buffer = 0xff;
                 g_sio.stat.rx_fifo_not_empty = 1;
 
-                struct input_device_base *dev = g_sio.devices[port];
+                struct input_device_base *dev = g_psx.controllers[port];
                 if (!dev) {
                     return;
                 }
@@ -95,7 +88,7 @@ static void sio_cmd(u8 cmd)
                 g_sio.stat.ack_is_low = 1;
                 g_sio.state = SIO_STATE_READ_CONTROLLER;
                 g_sio.sequence_index = 0;
-                schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY, false);
+                schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY);
             }
             else
             {
@@ -107,12 +100,13 @@ static void sio_cmd(u8 cmd)
     } break;
     case SIO_STATE_READ_CONTROLLER:
     {
+        struct input_device_base *dev = g_psx.controllers[port];
         switch (g_sio.sequence_index)
         {
         case 0:
             if (cmd == 0x42) 
             {
-                switch (g_sio.devices[port]->type) // TODO: make sure the port stays the same
+                switch (dev->type) // TODO: make sure the port stays the same
                 {
                 case INPUT_DEVICE_DIGITAL_PAD:
                     g_sio.rx_buffer = 0x41;
@@ -138,29 +132,29 @@ static void sio_cmd(u8 cmd)
             g_sio.stat.rx_fifo_not_empty = 1;
             break;
         case 2:
-            g_sio.devices[port]->input_get_data(g_sio.devices[port]); // TODO: when is the controller data polled?
+            dev->input_get_data(dev); // TODO: when is the controller data polled?
 
-            g_sio.rx_buffer = g_sio.devices[port]->data[0];
+            g_sio.rx_buffer = dev->data[0];
             g_sio.stat.rx_fifo_not_empty = 1;
             break;
         case 3:
-            g_sio.rx_buffer = g_sio.devices[port]->data[1];
+            g_sio.rx_buffer = dev->data[1];
             g_sio.stat.rx_fifo_not_empty = 1;
             break;
         case 4:
-            g_sio.rx_buffer = g_sio.devices[port]->data[2];
+            g_sio.rx_buffer = dev->data[2];
             g_sio.stat.rx_fifo_not_empty = 1;
             break;
         case 5:
-            g_sio.rx_buffer = g_sio.devices[port]->data[3];
+            g_sio.rx_buffer = dev->data[3];
             g_sio.stat.rx_fifo_not_empty = 1;
             break;
         case 6:
-            g_sio.rx_buffer = g_sio.devices[port]->data[4];
+            g_sio.rx_buffer = dev->data[4];
             g_sio.stat.rx_fifo_not_empty = 1;
             break;
         case 7:
-            g_sio.rx_buffer = g_sio.devices[port]->data[5];
+            g_sio.rx_buffer = dev->data[5];
             g_sio.stat.rx_fifo_not_empty = 1;
             break;
         }
@@ -175,13 +169,20 @@ static void sio_cmd(u8 cmd)
         {
             g_sio.stat.ack_is_low = 1;
             // /ACK signal width is about 2usec?
-            schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY, false);
+            schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY);
         }
     } break;
     INVALID_CASE;
     }
 
     g_sio.stat.rx_fifo_not_empty = 1;
+}
+
+void sio_reset(void)
+{
+    memset(&g_sio, 0, sizeof(struct sio_context));
+    g_sio.stat.tx_fifo_not_full = 1;
+    g_sio.stat.tx_finished = 1;
 }
 
 void sio_store(u32 offset, u16 value)

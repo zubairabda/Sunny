@@ -32,6 +32,7 @@ struct memory_pool allocate_pool(struct memory_arena *arena, u32 element_size, u
 void pool_free_all(struct memory_pool *pool);
 
 b8 string_ends_with_ignore_case(const char *str, const char *end);
+b8 string_equals_ignore_case(const char *a, const char *b, u32 len);
 
 inline void *push_arena(struct memory_arena *arena, size_t size)
 {

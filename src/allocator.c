@@ -10,7 +10,6 @@ struct memory_arena allocate_arena(size_t size)
 
 void free_arena(struct memory_arena *arena)
 {
-    /*VirtualFree(arena->base, 0, MEM_RELEASE);*/
     free(arena->base);
     arena->base = NULL;
     arena->size = 0;
@@ -64,4 +63,20 @@ b8 string_ends_with_ignore_case(const char *str, const char *end)
         return 1;
     }
     return 0;
+}
+
+b8 string_equals_ignore_case(const char *a, const char *b, u32 len)
+{
+    while (len--)
+    {
+        char c1 = *a++;
+        char c2 = *b++;
+        if (c1 >= 65 && c1 <= 90)
+            c1 |= 32;
+        if (c2 >= 65 && c2 <= 90)
+            c2 |= 32;
+        if (c1 != c2)
+            return false;
+    }
+    return true;
 }

@@ -131,12 +131,6 @@ static void gpu_copy_vram_to_cpu(struct gpu_transfer *transfer)
     g_gpu.readback_buffer_len = buffer_len;
 }
 
-static inline void reset_gpu_draw_state(void)
-{
-    g_gpu.copy_buffer_len = 0;
-    g_gpu.draw_area_changed = true;
-}
-
 u32 gpuread(void)
 {
     if (g_gpu.pending_store)
@@ -159,23 +153,26 @@ u32 gpuread(void)
     }
 }
 
-void gpu_reset(void)
+static void gpu_softreset(void)
 {
-    // TODO: clear vram
-    g_gpu.fifo_len = 0;
-    g_gpu.pending_load = 0;
-    g_gpu.pending_store = 0;
-    g_gpu.pending_words = 0;
-    g_gpu.vram_display_x = 0;
-    g_gpu.vram_display_y = 0;
     g_gpu.horizontal_display_x1 = 512;
     g_gpu.horizontal_display_x2 = 3072;
     g_gpu.vertical_display_y1 = 16;
     g_gpu.vertical_display_y2 = 256;
-    //g_gpu.copy_buffer_len = 0;
-    //g_gpu.readback_buffer_len = 0;
     g_gpu.stat.value = 0x14802000;
     g_gpu.dot_div = dotclks[g_gpu.stat.horizontal_res_1];
+}
+
+void gpu_reset(void)
+{
+    // TODO: clear vram
+    memset(&g_gpu, 0, sizeof(struct gpu_state));
+    gpu_softreset();
+    u32 cycles_per_scanline = NTSC_VIDEO_CYCLES_PER_SCANLINE * 451584;
+    g_gpu.remainder_cycles = cycles_per_scanline % 715909;
+    s32 ticks_for_scanline = cycles_per_scanline / 715090;
+
+    schedule_event(gpu_scanline_complete, 0, ticks_for_scanline);
 }
 
 void execute_gp1_command(u32 command)
@@ -187,7 +184,7 @@ void execute_gp1_command(u32 command)
     case 0x0:
     {
         SY_ASSERT(!g_gpu.pending_words);
-        gpu_reset();
+        gpu_softreset();
         break;
     }
     case 0x1:
@@ -238,7 +235,7 @@ void execute_gp1_command(u32 command)
     }
     case 0x6:
     {
-        gpu_hsync();
+        //gpu_hsync();
         g_gpu.horizontal_display_x1 = command & 0xfff;
         g_gpu.horizontal_display_x2 = (command >> 12) & 0xfff;
         break;
@@ -544,14 +541,10 @@ void execute_gp0_command(u32 word)
                     // NOTE: v2 gpu has 10 bits for top
                     g_gpu.drawing_area.left = (commands[0] & 0x3ff);
                     g_gpu.drawing_area.top = ((commands[0] >> 10) & 0x3ff);
-                    g_gpu.draw_area_changed = true;
-                    //push_draw_area(g_gpu.renderer, g_gpu.drawing_area);
                     break;
                 case 0xe4:
                     g_gpu.drawing_area.right = (commands[0] & 0x3ff);
                     g_gpu.drawing_area.bottom = ((commands[0] >> 10) & 0x3ff);
-                    g_gpu.draw_area_changed = true;
-                    //push_draw_area(g_gpu.renderer, g_gpu.drawing_area);
                     break;
                 case 0xe5:
                     g_gpu.draw_offset_x = SIGN_EXTEND32(11, commands[0] & 0x7ff);
@@ -571,7 +564,87 @@ void execute_gp0_command(u32 word)
     }
 }
 
-void gpu_scanline_complete(u32 param)
+void tick_hblank_timer(void)
+{
+    struct root_counter *counter1 = &g_counters[1];
+#if 0
+    if (counter1->mode.clock_source & 0x1)
+    {
+        b8 paused = false;
+        if (counter1->mode.sync_enable)
+        {
+            switch (counter1->mode.sync_mode)
+            {
+            case 0:
+                paused = in_vblank();
+                break;
+            case 1:
+                if (g_gpu.scanline == g_gpu.vertical_display_y1 || g_gpu.scanline == g_gpu.vertical_display_y2)
+                    counter1->value = 0;
+                break;
+            case 2:
+                if (g_gpu.scanline == g_gpu.vertical_display_y1 || g_gpu.scanline == g_gpu.vertical_display_y2)
+                    counter1->value = 0;
+                paused = !in_vblank();
+                break;
+            case 3:
+                if (!counter1->gate)
+                {
+                    paused = true;
+                    if (g_gpu.scanline == g_gpu.vertical_display_y2)
+                        counter1->gate = true;
+                }
+                break;
+            }
+        }
+        if (!paused)
+            ++counter1->value;
+    }
+#else
+    if (counter1->mode.sync_enable)
+    {
+        switch (counter1->mode.sync_mode)
+        {
+        case 0:
+            if (g_gpu.scanline == g_gpu.vertical_display_y2)
+                counter1->timestamp = g_cycles_elapsed;
+            else if (g_gpu.scanline == g_gpu.vertical_display_y1)
+                counter1->pause_ticks += safe_truncate32(g_cycles_elapsed - counter1->timestamp);
+            break;
+        case 1:
+            if (g_gpu.scanline == g_gpu.vertical_display_y1 || g_gpu.scanline == g_gpu.vertical_display_y2)
+            {
+                counter1->timestamp = g_cycles_elapsed;
+                counter1->value = 0;
+            }
+            break;
+        case 2:
+            if (g_gpu.scanline == g_gpu.vertical_display_y1)
+            {
+                counter1->value = 0;
+            }
+            else if (g_gpu.scanline == g_gpu.vertical_display_y2)
+            {
+                counter1->timestamp = g_cycles_elapsed;
+                counter1->value = 0;
+            }
+            break;
+        case 3:
+            if (!counter1->gate)
+            {
+                if (g_gpu.scanline == g_gpu.vertical_display_y2)
+                {
+                    counter1->begin_ticks = g_cycles_elapsed;
+                    counter1->gate = true;
+                }
+            }
+            break;
+        }
+    }
+#endif
+}
+
+void gpu_scanline_complete(u32 param, s32 ticks_late)
 {
     ++g_gpu.scanline;
     if (g_gpu.scanline == 263) 
@@ -583,294 +656,29 @@ void gpu_scanline_complete(u32 param)
     {
         g_gpu.stat.odd_line = 0;
     }
-    else if (!g_gpu.stat.vertical_res) // in 240 lines mode, bit 31 changes per scanline
+    else if (!g_gpu.stat.vertical_res)
     {
-        g_gpu.stat.odd_line = g_gpu.scanline & 0x1;
+        g_gpu.stat.odd_line = g_gpu.scanline & 0x1; // in 240 lines mode, bit 31 changes per scanline
     }
-    else // in 480 lines mode, bit 31 changes per frame
+    else
     {
-        g_gpu.stat.odd_line = g_vblank_counter & 0x1;
+        g_gpu.stat.odd_line = g_vblank_counter & 0x1; // in 480 lines mode, bit 31 changes per frame
     }
     
-    if (g_gpu.scanline == g_gpu.vertical_display_y1)
-    {
-        // end of vblank
-#if 1
-        struct root_counter *counter1 = &g_counters[1];
-        
-        if (counter1->mode.sync_enable)
-        {
-            switch (counter1->mode.sync_mode)
-            {
-            case 0:
-                counter1->pause_ticks += g_cycles_elapsed - counter1->timestamp;
-                break;
-            case 1:
-                break;
-            case 2:
-                //counter1->paused = 1;
-
-                break;
-            case 3:
-                break;
-            }
-        }
-#endif
-    }
-    else if (g_gpu.scanline == g_gpu.vertical_display_y2)
+    if (g_gpu.scanline == g_gpu.vertical_display_y2)
     {
         // vblank begins
-        struct root_counter *counter1 = &g_counters[1];
-        if (counter1->mode.sync_enable)
-        {
-            switch (counter1->mode.sync_mode)
-            {
-            case 0: // pause during vblank
-                counter1->timestamp = g_cycles_elapsed;
-                break;
-            case 1: // reset to 0 at vblank
-                counter1->prev_cycle_count = g_cycles_elapsed;
-                counter1->value = 0;
-                break;
-            case 2: // reset to 0 at vblank and pause outside of it
-                counter1->prev_cycle_count = g_cycles_elapsed;
-                counter1->value = 0;
-                //timer1->paused = 0;
-                break;
-            case 3: // pause until vblank occurs, then free run
-                //timer1->paused = 0;
-                counter1->prev_cycle_count = g_cycles_elapsed;
-                break;
-            }
-            counter1->sync = true;
-        }
-
         update_vram();
         
         ++g_vblank_counter;
         g_cpu.i_stat |= INTERRUPT_VBLANK;
-
-        if (g_debug.pause_on_vblank)
-            g_debug.pause = true;
     }
-    //s32 cycles_until_event = (s32)video_to_cpu_cycles(NTSC_VIDEO_CYCLES_PER_SCANLINE) - cycles_late;
-    //schedule_event(gpu_scanline_complete, 0, cycles_until_event);
-}
 
-/* advance gpu cycle count to determine horizontal timings */
-void gpu_hsync(void)
-{
-    struct root_counter *counter0 = &g_counters[0];
-    
-    if (g_gpu.horizontal_display_x2 == 0)
-        return;
-    
-    //u64 hblanks = 0;
-    u64 elapsed = g_cycles_elapsed - g_gpu.timestamp;
-#if 1
-    /* NTSC video clock is 53.693175 MHz */
-    elapsed *= 715909;
-    elapsed += g_gpu.remainder_cycles;
-    u64 video_cycles = elapsed / 451584;
-    g_gpu.remainder_cycles = elapsed % 451584;
-#else
-    u64 video_cycles = cpu_to_video_cycles(elapsed);
-#endif
-    u32 remaining_ticks = NTSC_VIDEO_CYCLES_PER_SCANLINE - g_gpu.scanline_cycles; /* ticks remaining before adding cycles */
-    u32 current_ticks = (u32)((g_gpu.scanline_cycles + video_cycles) % NTSC_VIDEO_CYCLES_PER_SCANLINE); /* current video cycles in scanline */
-    u32 hblank_width = g_gpu.horizontal_display_x2 - g_gpu.horizontal_display_x1;
-    
-    u64 hblank_cycles = 0;
-    
-    if (g_gpu.scanline_cycles >= g_gpu.horizontal_display_x2)
-    {
-        if (video_cycles >= remaining_ticks)
-        {
-            // TODO: broken code, in test case, hblank_cycles should have been 188, became 137?
-            // not accounting for the remaining ticks to x1
-            video_cycles -= remaining_ticks;
-            hblank_cycles += remaining_ticks;
+    tick_hblank_timer();
 
-            u32 hblanks = (u32)(video_cycles / g_gpu.horizontal_display_x2);
-            g_gpu.hblanks += hblanks;
-
-            hblank_cycles +=  hblank_width * hblanks;
-
-            if (current_ticks >= g_gpu.horizontal_display_x2)
-            {
-                hblank_cycles -= NTSC_VIDEO_CYCLES_PER_SCANLINE - current_ticks;
-            }
-            else
-            {
-                hblank_cycles += MIN(g_gpu.horizontal_display_x1, current_ticks);
-            }
-        }
-        else
-        {
-            hblank_cycles = video_cycles;
-        }
-    }
-    else
-    {
-        u32 ticks_to_hblank = g_gpu.horizontal_display_x2 - g_gpu.scanline_cycles;
-        if (video_cycles >= ticks_to_hblank)
-        {
-            u32 hblanks = 1;
-            video_cycles -= ticks_to_hblank;
-            u32 ticks_left = NTSC_VIDEO_CYCLES_PER_SCANLINE - g_gpu.horizontal_display_x2;
-            if (video_cycles >= remaining_ticks)
-            {
-                video_cycles -= remaining_ticks;
-                hblank_cycles += remaining_ticks;
-
-                hblanks += (u32)(video_cycles / g_gpu.horizontal_display_x2);
-                hblank_cycles += hblank_width * hblanks;
-
-                if (current_ticks >= g_gpu.horizontal_display_x2)
-                {
-                    hblank_cycles -= NTSC_VIDEO_CYCLES_PER_SCANLINE - current_ticks;
-                }
-                else
-                {
-                    hblank_cycles += MIN(g_gpu.horizontal_display_x1, current_ticks);
-                }
-            }
-            else
-            {
-                hblank_cycles = video_cycles;
-            }
-            g_gpu.hblanks += hblanks;
-        }
-    }
-    u64 result = hblank_cycles * 451584;
-    result += g_gpu.remainder_cycles;
-    u64 ticks = result / 715909;
-    counter0->pause_ticks += ticks;//video_to_cpu_cycles(hblank_cycles);
-
-    if (counter0->mode.sync_enable)
-    {
-        switch (counter0->mode.sync_mode)
-        {
-        case 1:
-            if (current_ticks >= g_gpu.horizontal_display_x2)
-            {
-                counter0->value = video_to_cpu_cycles(current_ticks - g_gpu.horizontal_display_x2);
-            }
-            else if (current_ticks < g_gpu.horizontal_display_x1)
-            {
-                counter0->value = video_to_cpu_cycles((3413 - g_gpu.horizontal_display_x2) + current_ticks);
-            }
-            else
-            {
-                counter0->value = video_to_cpu_cycles(current_ticks - g_gpu.horizontal_display_x1);
-            }
-            break;
-        case 2:
-            break;
-        case 3:
-            break;
-        }
-    }
-#if 0
-    if (counter0->mode.sync_enable)
-    {
-        switch (counter0->mode.sync_mode)
-        {
-        case 0:
-        {
-            u64 hblank_cycles = 0;
-            
-            if (g_gpu.scanline_cycles >= g_gpu.horizontal_display_x2)
-            {
-                if (video_cycles >= remaining_ticks)
-                {
-                    // TODO: broken code, in test case, hblank_cycles should have been 188, became 137?
-                    // not accounting for the remaining ticks to x1
-                    video_cycles -= remaining_ticks;
-                    hblank_cycles += remaining_ticks;
-
-                    u32 hblanks = (u32)(video_cycles / g_gpu.horizontal_display_x2);
-                    g_gpu.hblanks += hblanks;
-
-                    hblank_cycles +=  hblank_width * hblanks;
-
-                    if (current_ticks >= g_gpu.horizontal_display_x2)
-                    {
-                        hblank_cycles -= NTSC_VIDEO_CYCLES_PER_SCANLINE - current_ticks;
-                    }
-                    else
-                    {
-                        hblank_cycles += MIN(g_gpu.horizontal_display_x1, current_ticks);
-                    }
-                }
-                else
-                {
-                    hblank_cycles = video_cycles;
-                }
-            }
-            else
-            {
-                u32 ticks_to_hblank = g_gpu.horizontal_display_x2 - g_gpu.scanline_cycles;
-                if (video_cycles >= ticks_to_hblank)
-                {
-                    u32 hblanks = 1;
-                    video_cycles -= ticks_to_hblank;
-                    u32 ticks_left = NTSC_VIDEO_CYCLES_PER_SCANLINE - g_gpu.horizontal_display_x2;
-                    if (video_cycles >= remaining_ticks)
-                    {
-                        video_cycles -= remaining_ticks;
-                        hblank_cycles += remaining_ticks;
-
-                        hblanks += (u32)(video_cycles / g_gpu.horizontal_display_x2);
-                        hblank_cycles += hblank_width * hblanks;
-
-                        if (current_ticks >= g_gpu.horizontal_display_x2)
-                        {
-                            hblank_cycles -= NTSC_VIDEO_CYCLES_PER_SCANLINE - current_ticks;
-                        }
-                        else
-                        {
-                            hblank_cycles += MIN(g_gpu.horizontal_display_x1, current_ticks);
-                        }
-                    }
-                    else
-                    {
-                        hblank_cycles = video_cycles;
-                    }
-                    g_gpu.hblanks += hblanks;
-                }
-            }
-            u64 result = hblank_cycles * 451584;
-            result += g_gpu.remainder_cycles;
-            u64 ticks = result / 715909;
-            counter0->pause_ticks += ticks;//video_to_cpu_cycles(hblank_cycles);
-
-            break;
-        }
-        case 1:
-        {
-            if (current_ticks >= g_gpu.horizontal_display_x2)
-            {
-                counter0->value = video_to_cpu_cycles(current_ticks - g_gpu.horizontal_display_x2);
-            }
-            else if (current_ticks < g_gpu.horizontal_display_x1)
-            {
-                counter0->value = video_to_cpu_cycles((3413 - g_gpu.horizontal_display_x2) + current_ticks);
-            }
-            else
-            {
-                counter0->value = video_to_cpu_cycles(current_ticks - g_gpu.horizontal_display_x1);
-            }
-            break;
-        }
-        case 2:
-            break;
-        case 3:
-            break;
-        }
-    }
-#endif
-    g_gpu.timestamp = g_cycles_elapsed;
-    g_gpu.scanline_cycles = current_ticks;
-    g_gpu.video_cycles += video_cycles;
+    u32 cycles_per_scanline = NTSC_VIDEO_CYCLES_PER_SCANLINE * 451584;
+    cycles_per_scanline += g_gpu.remainder_cycles;
+    g_gpu.remainder_cycles = cycles_per_scanline % 715909;
+    s32 ticks_for_scanline = cycles_per_scanline / 715090;
+    schedule_event(gpu_scanline_complete, 0, ticks_for_scanline - ticks_late);
 }

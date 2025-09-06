@@ -123,13 +123,15 @@ enum interrupt_code
     INTERRUPT_PIO = 0x400
 };
 
-typedef struct {
+typedef struct reg_tuple
+{
     u32 index;
     u32 value;
 } reg_tuple;
 
 struct cpu_state
 {
+    u64 kcall_counter; // TODO: remove
     u32 registers[32];
     u32 hi;
     u32 lo;
@@ -149,7 +151,7 @@ struct cpu_state
 
 extern struct cpu_state g_cpu;
 
-void cpu_init(void);
+void cpu_reset(void);
 u32 fetch_instruction(u32 pc);
 int execute_instructions(void);
 void set_interrupt(u32 irq);
