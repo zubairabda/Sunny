@@ -184,7 +184,7 @@ static void io_write16(u32 addr, u32 value)
         }
         else if (addr >= 0x1f801040 && addr < 0x1f801050)
         {
-            sio_store(addr & 0x1f, value);
+            sio_write(addr & 0x1f, value);
         }
         else
         {
@@ -210,7 +210,7 @@ static void io_write8(u32 addr, u32 value)
         }
         else if (addr >= 0x1f801040 && addr < 0x1f801050)
         {
-            sio_store(addr & 0x1f, value);
+            sio_write(addr & 0x1f, value);
         }
         else
         {

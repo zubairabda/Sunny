@@ -1137,7 +1137,7 @@ static void cdrom_command(u32 command, s32 ticks_late)
     g_cdrom.status.PRMWRDY = true;
     g_cdrom.param_fifo_count = 0;
 
-    g_cdrom.response_fifo_current = 0; // TODO: lol
+    g_cdrom.response_fifo_current = 0;
 
     if ((g_cdrom.interrupt_flag & 0x7) == 0)
     {
@@ -1250,8 +1250,6 @@ void cdrom_write(u32 offset, u8 value)
         // NOTE: this seems to behave more like a latch?
         if (value & BFRD)
         {
-            // TODO: not sure on the behavior here, right now
-            // we simply reset the data fifo every time BFRD is set
             // TODO: requested data should be locked- no further reads should overwrite it
             if (!g_cdrom.status.DRQSTS)
             {

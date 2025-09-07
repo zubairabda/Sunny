@@ -566,7 +566,7 @@ void spu_tick(u32 param, s32 ticks_late)
             step = sign_extend16_32(step);
             step = (step * factor) >> 15;
             step &= 0xffff;
-            SY_ASSERT(0);
+            SY_ASSERT(0); // TODO: threads of fate hits this
         }
         if (step > 0x3fff)
         {

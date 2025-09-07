@@ -40,17 +40,22 @@ u16 sio_read(u32 offset)
 
 #define JOYCTRL_WRITE_MASK 0x3f2f
 #define JOYMODE_WRITE_MASK 0x13f
-#define JOY_WRITE_DELAY 1088
 
 static void pad_ack_callback(u32 param, s32 ticks_late)
 {
-    g_sio.stat.ack_is_low = param;
-    // might not be accurate to check here
-    /* DSR interrupt enable bit */
+    g_sio.stat.ack_is_low = 0;
     if (g_sio.control & 0x1000)
     {
         g_cpu.i_stat |= INTERRUPT_CONTROLLER;
     }
+}
+
+static void pad_tx_event(u32 param, s32 ticks_late)
+{
+    g_sio.stat.ack_is_low = 1;
+    // might not be accurate to check here
+    /* DSR interrupt enable bit */
+    schedule_event(pad_ack_callback, 0, 100);
 }
 
 static void sio_cmd(u8 cmd)
@@ -70,9 +75,8 @@ static void sio_cmd(u8 cmd)
                 g_sio.stat.rx_fifo_not_empty = 1;
 
                 struct input_device_base *dev = g_psx.controllers[port];
-                if (!dev) {
+                if (!dev)
                     return;
-                }
 
                 switch (dev->type)
                 {
@@ -85,10 +89,10 @@ static void sio_cmd(u8 cmd)
                 INVALID_CASE;
                 }
 
-                g_sio.stat.ack_is_low = 1;
+                //g_sio.stat.ack_is_low = 1;
                 g_sio.state = SIO_STATE_READ_CONTROLLER;
                 g_sio.sequence_index = 0;
-                schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY);
+                schedule_event(pad_tx_event, 0, g_sio.baud_reload * 8);
             }
             else
             {
@@ -167,9 +171,8 @@ static void sio_cmd(u8 cmd)
         }
         else
         {
-            g_sio.stat.ack_is_low = 1;
-            // /ACK signal width is about 2usec?
-            schedule_event(pad_ack_callback, 0, JOY_WRITE_DELAY);
+            //g_sio.stat.ack_is_low = 1;
+            schedule_event(pad_tx_event, 0, g_sio.baud_reload * 8);
         }
     } break;
     INVALID_CASE;
@@ -185,7 +188,7 @@ void sio_reset(void)
     g_sio.stat.tx_finished = 1;
 }
 
-void sio_store(u32 offset, u16 value)
+void sio_write(u32 offset, u16 value)
 {
     switch (offset)
     {

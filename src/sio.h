@@ -3,7 +3,7 @@
 
 #include "common.h"
 
-enum digital_pad_switches
+enum digital_pad_button
 {
     PAD_SELECT   = (1 << 0),
     PAD_L3       = (1 << 1),
@@ -80,7 +80,7 @@ extern struct sio_context g_sio;
 
 void sio_reset(void);
 u16 sio_read(u32 offset);
-void sio_store(u32 offset, u16 value);
+void sio_write(u32 offset, u16 value);
 
 
 #endif /* PAD_H */
