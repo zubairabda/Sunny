@@ -41,5 +41,6 @@ extern struct root_counter g_counters[3];
 u32 counters_read(u32 offset);
 void counters_store(u32 offset, u32 value);
 void tick_counter(u32 index);
+void counters_reset(void);
 
 #endif /* COUNTERS_H */

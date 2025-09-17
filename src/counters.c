@@ -4,6 +4,7 @@
 #include "cpu.h"
 
 struct root_counter g_counters[3];
+static u32 timer_callback_id;
 
 static inline void add_sysclk_ticks(struct root_counter *counter)
 {
@@ -221,7 +222,7 @@ static void timer_interrupt(u32 timer_index, s32 ticks_late)
             counter->mode.irq = 0; // TODO: temp
         }
 
-        counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
+        counter->interrupt_event = schedule_event(timer_callback_id, timer_index, get_timer_ticks_until_interrupt(timer_index));
     }
     else
     {
@@ -230,6 +231,13 @@ static void timer_interrupt(u32 timer_index, s32 ticks_late)
 
     if (counter->mode.irq == 0)
         g_cpu.i_stat |= (u32)INTERRUPT_TIMER0 << timer_index;
+}
+
+void counters_reset(void)
+{
+    for (int i = 0; i < 3; ++i)
+        memset(&g_counters[i], 0, sizeof(struct root_counter));
+    timer_callback_id = register_callback(timer_interrupt);
 }
 
 u32 counters_read(u32 offset)
@@ -279,7 +287,7 @@ void counters_store(u32 offset, u32 value)
         if (counter->interrupt_event)
         {
             remove_event(counter->interrupt_event);
-            counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
+            counter->interrupt_event = schedule_event(timer_callback_id, timer_index, get_timer_ticks_until_interrupt(timer_index));
         }
         //printf("set timer %d value: %d\n", timer_index, counter->value);
         break;
@@ -307,7 +315,7 @@ void counters_store(u32 offset, u32 value)
         if (counter->mode.value & (0x3 << 4)) 
         {
             SY_ASSERT(timer_index == 2);
-            counter->interrupt_event = schedule_event(timer_interrupt, timer_index, get_timer_ticks_until_interrupt(timer_index));
+            counter->interrupt_event = schedule_event(timer_callback_id, timer_index, get_timer_ticks_until_interrupt(timer_index));
         }
         break;
     case 0x8:

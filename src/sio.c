@@ -5,6 +5,8 @@
 #include "psx.h"
 
 struct sio_context g_sio;
+static u32 pad_callback_id;
+static u32 tx_callback_id;
 
 u16 sio_read(u32 offset)
 {
@@ -17,7 +19,6 @@ u16 sio_read(u32 offset)
         //debug_log("JOY_RX_DATA read: %04x\n", result);
         break;
     case 0x4:
-        //result = 0x3;
         result = g_sio.stat.value;
         //debug_log("JOY_STAT read: %04x\n", result);
         break;
@@ -44,6 +45,8 @@ u16 sio_read(u32 offset)
 static void pad_ack_callback(u32 param, s32 ticks_late)
 {
     g_sio.stat.ack_is_low = 0;
+    // might not be accurate to check here
+    // DSR interrupt enable bit
     if (g_sio.control & 0x1000)
     {
         g_cpu.i_stat |= INTERRUPT_CONTROLLER;
@@ -53,9 +56,8 @@ static void pad_ack_callback(u32 param, s32 ticks_late)
 static void pad_tx_event(u32 param, s32 ticks_late)
 {
     g_sio.stat.ack_is_low = 1;
-    // might not be accurate to check here
-    /* DSR interrupt enable bit */
-    schedule_event(pad_ack_callback, 0, 100);
+    // /ACK signal width is about 2us
+    schedule_event(pad_callback_id, 0, 100);
 }
 
 static void sio_cmd(u8 cmd)
@@ -92,7 +94,7 @@ static void sio_cmd(u8 cmd)
                 //g_sio.stat.ack_is_low = 1;
                 g_sio.state = SIO_STATE_READ_CONTROLLER;
                 g_sio.sequence_index = 0;
-                schedule_event(pad_tx_event, 0, g_sio.baud_reload * 8);
+                schedule_event(tx_callback_id, 0, g_sio.baud_reload * 8);
             }
             else
             {
@@ -172,7 +174,7 @@ static void sio_cmd(u8 cmd)
         else
         {
             //g_sio.stat.ack_is_low = 1;
-            schedule_event(pad_tx_event, 0, g_sio.baud_reload * 8);
+            schedule_event(tx_callback_id, 0, g_sio.baud_reload * 8);
         }
     } break;
     INVALID_CASE;
@@ -186,6 +188,8 @@ void sio_reset(void)
     memset(&g_sio, 0, sizeof(struct sio_context));
     g_sio.stat.tx_fifo_not_full = 1;
     g_sio.stat.tx_finished = 1;
+    pad_callback_id = register_callback(pad_ack_callback);
+    tx_callback_id = register_callback(pad_tx_event);
 }
 
 void sio_write(u32 offset, u16 value)
@@ -206,8 +210,6 @@ void sio_write(u32 offset, u16 value)
         }
 #endif
         sio_cmd((u8)value);
-        //schedule_event(cpu, )
-        // begins transfer?
         break;
     case 0x8:
         //debug_log("JOY_MODE store: %04x\n", value);

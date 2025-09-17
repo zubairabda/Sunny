@@ -1,69 +1,68 @@
 #include "event.h"
 
-#define MAX_EVENT_COUNT 16
-
 u64 g_cycles_elapsed;
 u64 g_target_cycles;
 
-typedef struct tick_event
-{
-    struct tick_event *next;
-    struct tick_event *prev;
-    event_callback callback;
-    u32 param;
-    u32 reserved;
-    u64 system_cycles_at_event;
-    u64 id;
-} tick_event;
-
-static struct memory_pool s_event_pool;
-static tick_event *s_sentinel_event;
-static u64 id_count;
-
-static u32 event_count; // TODO: remove
+struct scheduler_state g_scheduler;
 
 #define MIN_TICK_COUNT 384
 
 void scheduler_reset(struct memory_arena *arena)
 {
-    event_count = 0;
-
-    s_event_pool = allocate_pool(arena, sizeof(struct tick_event), MAX_EVENT_COUNT);
-    s_sentinel_event = pool_alloc(&s_event_pool);
-    s_sentinel_event->next = s_sentinel_event;
-    s_sentinel_event->prev = s_sentinel_event;
-    s_sentinel_event->system_cycles_at_event = 0;
-    g_target_cycles = g_cycles_elapsed + MIN_TICK_COUNT;
+    memset(&g_scheduler, 0, sizeof(struct scheduler_state));
+    g_scheduler.event_pool = allocate_pool(arena, sizeof(struct event_list_node), MAX_EVENT_COUNT);
+    g_scheduler.sentinel = pool_alloc(&g_scheduler.event_pool);
+    g_scheduler.sentinel->next = g_scheduler.sentinel;
+    g_scheduler.sentinel->prev = g_scheduler.sentinel;
+    g_scheduler.sentinel->data.timestamp = 0;
+    g_target_cycles = UINT64_MAX;//g_cycles_elapsed + MIN_TICK_COUNT;
 }
 
-static inline void event_dealloc(tick_event *event)
+void clear_events(void)
 {
+    pool_free_all(&g_scheduler.event_pool);
+    g_scheduler.sentinel = pool_alloc(&g_scheduler.event_pool);
+    g_scheduler.sentinel->next = g_scheduler.sentinel;
+    g_scheduler.sentinel->prev = g_scheduler.sentinel;
+    g_scheduler.event_count = 0;
+    g_target_cycles = UINT64_MAX;
+}
+
+u32 register_callback(event_callback callback)
+{
+    u32 result = g_scheduler.callback_count;
+    g_scheduler.callback_list[g_scheduler.callback_count++] = callback;
+    return result;
+}
+
+static inline void event_dealloc(struct event_list_node *event)
+{
+    --g_scheduler.event_count;
     event->next->prev = event->prev;
     event->prev->next = event->next;
-    pool_dealloc(&s_event_pool, event);
+    pool_dealloc(&g_scheduler.event_pool, event);
 }
 
 void remove_event(u64 id)
 {
-    tick_event *current = s_sentinel_event->next;
-    while (current != s_sentinel_event)
+    struct event_list_node *current = g_scheduler.sentinel->next;
+    while (current != g_scheduler.sentinel)
     {
-        if (current->id == id)
+        if (current->data.id == id)
         {
             event_dealloc(current);
-            --event_count;
             return;
         }
         current = current->next;
     }
 }
 
-static void insert_event(tick_event *event)
+void insert_event(struct event_list_node *event)
 {
-    tick_event *current = s_sentinel_event->next;
-    while (current != s_sentinel_event)
+    struct event_list_node *current = g_scheduler.sentinel->next;
+    while (current != g_scheduler.sentinel)
     {
-        if (current->system_cycles_at_event > event->system_cycles_at_event)
+        if (current->data.timestamp > event->data.timestamp)
             break;
         current = current->next;
     }
@@ -73,65 +72,46 @@ static void insert_event(tick_event *event)
     event->next = current;
 
     // update the target if the event is scheduled before the current target
-    if (g_target_cycles > event->system_cycles_at_event)
+    if (g_target_cycles > event->data.timestamp)
     {
-        g_target_cycles = event->system_cycles_at_event;
+        g_target_cycles = event->data.timestamp;
     }
 }
 
-u64 schedule_event(event_callback callback, u32 param, s32 cycles_until_event)
+u64 schedule_event(u32 callback_id, u32 param, s32 cycles_until_event)
 {
-    tick_event *event = pool_alloc(&s_event_pool);
-    event->callback = callback;
-    event->system_cycles_at_event = g_cycles_elapsed + cycles_until_event;
-    event->id = ++id_count;
-    event->param = param;
-    if (event_count > 2)
-        SY_ASSERT(1);
+    SY_ASSERT(callback_id < g_scheduler.callback_count);
+    ++g_scheduler.event_count;
+    struct event_list_node *event = pool_alloc(&g_scheduler.event_pool);
+    event->data.callback_id = callback_id;
+    event->data.timestamp = g_cycles_elapsed + cycles_until_event;
+    event->data.id = ++g_scheduler.id_count;
+    event->data.param = param;
     insert_event(event);
-    ++event_count;
 
-    return event->id;
+    return event->data.id;
 }
 
 void tick_events(void)
 {
-    tick_event *current = s_sentinel_event->next;
-    while (current != s_sentinel_event)
+    u64 next_tick = UINT64_MAX;
+    struct event_list_node *current = g_scheduler.sentinel->next;
+    while (current != g_scheduler.sentinel)
     {
-        if (g_cycles_elapsed >= current->system_cycles_at_event)
+        if (g_cycles_elapsed >= current->data.timestamp)
         {
-            current->next->prev = current->prev;
-            current->prev->next = current->next;
+            s32 cycles_late = (s32)(g_cycles_elapsed - current->data.timestamp);
+            event_callback callback = g_scheduler.callback_list[current->data.callback_id];
+            callback(current->data.param, cycles_late);
 
-            s32 cycles_late = (s32)(g_cycles_elapsed - current->system_cycles_at_event);
-            current->callback(current->param, cycles_late);
-
-            pool_dealloc(&s_event_pool, current);
-            --event_count;
-#if 0
-            if (current->period)
-            {
-                s32 cycles_late = (s32)(g_cycles_elapsed - current->system_cycles_at_event);
-                s32 next_run = current->period - cycles_late;
-                current->system_cycles_at_event = g_cycles_elapsed + next_run;
-                insert_event(current);
-            }
-            else
-            {
-                pool_dealloc(&s_event_pool, current);
-            }
-#endif
-            current = s_sentinel_event->next;
+            event_dealloc(current);
+            current = g_scheduler.sentinel->next;
         }
         else
         {
+            next_tick = current->data.timestamp;
             break;
         }
     }
-
-    if (s_sentinel_event->next != s_sentinel_event)
-        g_target_cycles = s_sentinel_event->next->system_cycles_at_event;
-    else
-        g_target_cycles = g_cycles_elapsed + MIN_TICK_COUNT;
+    g_target_cycles = next_tick;
 }

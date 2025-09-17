@@ -131,7 +131,6 @@ typedef struct reg_tuple
 
 struct cpu_state
 {
-    u64 kcall_counter; // TODO: remove
     u32 registers[32];
     u32 hi;
     u32 lo;

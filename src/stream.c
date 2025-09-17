@@ -56,12 +56,20 @@ struct cue_track
     u32 file_index;
     u32 pregap;
     u32 file_offset;
-    u32 flags;
+    struct cue_track *next; // next in file (may not be consecutive)
+    struct cue_track *prev;
+};
+
+struct cue_file
+{
+    const char *file_name;
+    struct cue_track *first;
+    struct cue_track *last;
 };
 
 typedef struct cue_data
 {
-    const char **files;
+    struct cue_file *files;
     u32 file_count;
     struct cue_track *tracks;
     u32 track_count;
@@ -91,6 +99,12 @@ static inline char to_lower(char c)
 static inline s32 to_digit(char c)
 {
     return (s32)c - 48;
+}
+
+static void lba_to_string(u32 lba, char *buffer, size_t count)
+{
+    MSF msf = lba_to_msf(lba);
+    snprintf(buffer, count, "%02d:%02d:%02d", msf.m, msf.s, msf.f);
 }
 
 b8 allocate_and_read_file(const char *path, u32 flags, struct file_dat *out_file)
@@ -300,7 +314,7 @@ static b8 parse_msf(struct cue_parser *parser, s32 *out_lba)
             if (!(res[0] & res[1] & res[2]))
                 return false;
 
-            *out_lba = (((mm * 60) + ss) * 75 + ff);
+            *out_lba = msf_to_lba(mm, ss, ff);
 
             return true;
         }
@@ -322,11 +336,6 @@ static inline char *push_cue_string(struct memory_arena *arena, cue_string strin
 
 #define MAX_CUE_TRACKS 99
 #define MAX_CUE_FILES 99
-
-enum
-{
-    CUE_TRACK_FLAG_LAST_TRACK = (1 << 0)
-};
 
 static void free_cue_sheet(cue_data *data)
 {
@@ -364,8 +373,8 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
     s32 prev_track_offset = 0;
 
     cue_data *result = malloc(sizeof(cue_data));
-    result->tracks = malloc(sizeof(struct cue_track) * MAX_CUE_TRACKS);
-    result->files = malloc(sizeof(const char *) * MAX_CUE_FILES);
+    result->tracks = calloc(MAX_CUE_TRACKS, sizeof(struct cue_track));
+    result->files = calloc(MAX_CUE_FILES, sizeof(struct cue_file));
     result->arena = allocate_arena(KILOBYTES(8));
 
     enum cue_context_type context = CUE_CONTEXT_NONE;
@@ -399,7 +408,7 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
             b8 found = false;
             for (u32 i = 0; i < file_count; ++i)
             {
-                if (token_equals(file, result->files[i]))
+                if (token_equals(file, result->files[i].file_name))
                 {
                     current_file_index = i;
                     found = true;
@@ -410,7 +419,7 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
             if (!found)
             {
                 current_file_index = file_count;
-                result->files[file_count++] = push_cue_string(&result->arena, file);
+                result->files[file_count++].file_name = push_cue_string(&result->arena, file);
             }
 
             printf("FILE: %.*s\n", (int)file.length, file.str);
@@ -459,7 +468,19 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
 
             struct cue_track *track = &result->tracks[track_count++];
             track->file_index = current_file_index;
-            track->flags = 0;
+
+            // append track to currently referenced file
+            struct cue_file *file = &result->files[current_file_index];
+            if (!file->last)
+            {
+                file->first = file->last = track;
+            }
+            else
+            {
+                file->last->next = track;
+                track->prev = file->last;
+                file->last = track;
+            }
 
             printf("  Track: %d\n", index);
         }
@@ -513,15 +534,26 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
                 if (prev_track_index == 0)
                 {
                     track->pregap = offset - prev_track_offset; // pregap is defined
-                    track->file_offset = prev_track_offset;   
+                    track->file_offset = prev_track_offset;
                 }
                 else
                 {
                     track->pregap = 0;
-                    track->file_offset = offset; // TODO: is this right?
+                    track->file_offset = offset;
+                }
+
+                if (track->prev)
+                {
+                    if (track->file_offset <= track->prev->file_offset)
+                    {
+                        // NOTE: we could work around this by sorting tracks in a file, but we will have strict ordering requirements
+                        parser_error(&parser, "Error: tracks must not overlap/have discontiguous timestamps\n");
+                        break;
+                    }
                 }
             }
-
+#if 0
+            // TODO: remove
             if (index <= 1 && track_count > 1)
             {
                 struct cue_track *prev_track = &result->tracks[track_count - 2];
@@ -531,6 +563,7 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
                     prev_track->flags |= CUE_TRACK_FLAG_LAST_TRACK;
                 }
             }
+#endif
             prev_track_offset = offset;
 
             printf("    Index: %d\n", index);
@@ -553,12 +586,13 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
         printf("Error: each file requires at least one track\n");
         goto error;
     }
-
+    // TODO: remove
+#if 0
     if (track_count)
     {
         result->tracks[track_count - 1].flags |= CUE_TRACK_FLAG_LAST_TRACK;
     }
-
+#endif
     result->track_count = track_count;
     result->file_count = file_count;
     *data = result;
@@ -616,7 +650,8 @@ disk_image *open_disk(const char *path, psx_image_type type)
             result->files = calloc(data->file_count, sizeof(platform_file));
             for (u32 i = 0; i < data->file_count; ++i)
             {
-                strcat(file_path, data->files[i]);
+                struct cue_file *file = &data->files[i];
+                strcat(file_path, file->file_name);
                 if (!platform_open_file(file_path, &result->files[i]))
                 {
                     close_disk(result); // TODO:
@@ -626,29 +661,32 @@ disk_image *open_disk(const char *path, psx_image_type type)
                 file_path[dir_index + 1] = '\0';
             }
 
-            u32 track_offset = 0;
+            u32 track_lba = 0;
 
             for (u32 i = 0; i < data->track_count; ++i)
             {
                 platform_file *file = &result->files[data->tracks[i].file_index];
                 result->tracks[i].file = file;
-                u32 file_size = safe_truncate32(platform_get_file_size(file));
+                u32 file_size_lba = safe_truncate32(platform_get_file_size(file) / DISK_SECTOR_SIZE);
                 result->tracks[i].pregap = data->tracks[i].pregap;
                 u32 track_length = 0;
-                // if this is the last track within a file, the size is calculated differently
-                if (data->tracks[i].flags & CUE_TRACK_FLAG_LAST_TRACK)
-                {
-                    track_length = (file_size / DISK_SECTOR_SIZE) - data->tracks[i].file_offset;
-                }
+                
+                struct cue_track *track = &data->tracks[i];
+                if (track->next)
+                    track_length = track->next->file_offset - track->file_offset;
                 else
-                {
-                    track_length = data->tracks[i + 1].file_offset - data->tracks[i].file_offset;
-                }
-                result->tracks[i].start = track_offset;
-                result->tracks[i].end = track_offset + track_length;
-                //prev_track_offset = data->tracks[i].file_offset;
-                track_offset += track_length;
-                printf("Track #%2d, start: %d, end: %d, len: %d\n", (i + 1), result->tracks[i].start, result->tracks[i].end, track_length);
+                    track_length = file_size_lba - track->file_offset;
+
+                result->tracks[i].start = track_lba;
+                result->tracks[i].end = track_lba + track_length;
+                result->tracks[i].file_offset = data->tracks[i].file_offset;
+                track_lba += track_length;
+
+                char startbuf[32];
+                char lenbuf[32];
+                lba_to_string(result->tracks[i].start + 150, startbuf, 32);
+                lba_to_string(track_length, lenbuf, 32);
+                printf("Track #%2d, start: %s, len: %s, pregap: %d\n", (i + 1), startbuf, lenbuf, result->tracks[i].pregap);
             }
             result->file_count = data->file_count;
             result->track_count = data->track_count;
@@ -686,7 +724,7 @@ b8 read_disk_data(disk_image *disk, u32 lba, size_t size, void *buffer)
         struct disk_track *track = &disk->tracks[i];
         if (lba >= track->start && lba < track->end)
         {
-            u32 offset = (lba - track->start) * DISK_SECTOR_SIZE;
+            u64 offset = ((lba - track->start) + track->file_offset) * DISK_SECTOR_SIZE;
             platform_read_file(track->file, offset, buffer, size);
             return true;
         }

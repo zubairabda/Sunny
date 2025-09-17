@@ -9,6 +9,7 @@
 #include "memory.h"
 
 struct dma_state g_dma;
+static u32 dma_callback_id;
 
 #define CHCR_CHOPPING_ENABLE 0x100
 
@@ -93,7 +94,7 @@ b8 spu_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
     while (size--)
     {
         word = U32FromPtr(g_ram + addr);
-        U32FromPtr(g_spu.dram + g_spu.current_transfer_addr) = word;
+        U32FromPtr(g_dram + g_spu.current_transfer_addr) = word;
         g_spu.current_transfer_addr += 4;
         addr += step;
     }
@@ -260,7 +261,7 @@ static void dma_handle_next_transfer(u32 channel, s32 ticks_late)
                 s32 next_channel = dma_select_channel();
                 if (next_channel >= 0)
                 {
-                    g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0);
+                    g_dma.event = schedule_event(dma_callback_id, next_channel, 0);
                 }
                 return;
             }
@@ -269,7 +270,7 @@ static void dma_handle_next_transfer(u32 channel, s32 ticks_late)
                 break;
         }
 
-        g_dma.event = schedule_event(dma_handle_next_transfer, channel, 20);
+        g_dma.event = schedule_event(dma_callback_id, channel, 20);
         return;
     }
     }
@@ -282,7 +283,7 @@ static void dma_handle_next_transfer(u32 channel, s32 ticks_late)
         {
             //debug_log("[DMA] scheduling next block in %u ticks\n", next_run);
             port->madr = transfer->current_addr; // update MADR every slice, also probably needed when interrupted by a higher priority channel
-            g_dma.event = schedule_event(dma_handle_next_transfer, channel, next_run);
+            g_dma.event = schedule_event(dma_callback_id, channel, next_run);
         }
         else
         {
@@ -298,7 +299,7 @@ static void dma_handle_next_transfer(u32 channel, s32 ticks_late)
             s32 next_channel = dma_select_channel();
             if (next_channel >= 0)
             {
-                g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0);
+                g_dma.event = schedule_event(dma_callback_id, next_channel, 0);
             }
         }
     }
@@ -364,6 +365,7 @@ void dma_reset(void)
     g_dma.control = 0x07654321; // inital value of control register
     g_dma.active_channel = -1;
     dma_expand_priorities();
+    dma_callback_id = register_callback(dma_handle_next_transfer);
 }
 
 void dma_write(u32 offset, u32 value)
@@ -445,7 +447,7 @@ void dma_write(u32 offset, u32 value)
                     s32 next_channel = dma_select_channel();
                     if (next_channel >= 0)
                     {
-                        g_dma.event = schedule_event(dma_handle_next_transfer, next_channel, 0);
+                        g_dma.event = schedule_event(dma_callback_id, next_channel, 0);
                     }
                 }
             }

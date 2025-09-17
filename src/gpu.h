@@ -3,6 +3,7 @@
 
 #include "gpu_common.h"
 #include "renderer/renderer.h"
+#include "allocator.h"
 
 #define NTSC_VIDEO_CYCLES_PER_SCANLINE 3413
 
@@ -88,9 +89,6 @@ struct gpu_state
     u32 copy_buffer_len;
     u32 readback_buffer_len;
     u32 read_index;
-    u16 *copy_buffer;
-    u16 *readback_buffer;
-    u16 *copy_buffer_at;
     
     rect2 drawing_area;
     s16 draw_offset_x;
@@ -112,6 +110,8 @@ struct gpu_state
 };
 
 extern struct gpu_state g_gpu;
+extern u16 *g_copy_buffer;
+extern u16 *g_readback_buffer;
 
 inline u64 video_to_cpu_cycles(u64 video_cycles)
 {
@@ -128,7 +128,7 @@ inline b8 in_vblank(void)
     return g_gpu.scanline < g_gpu.vertical_display_y1 || g_gpu.scanline >= g_gpu.vertical_display_y2;
 }
 
-void gpu_reset(void);
+void gpu_reset(struct memory_arena *arena);
 u32 gpuread(void);
 void execute_gp1_command(u32 command);
 void execute_gp0_command(u32 word);

@@ -5,60 +5,22 @@
 #include "event.h"
 #include "debug.h"
 
-#define DATA_FIFO_SIZE 32768
-
-typedef union
-{
-    struct
-    {
-        u32 parameters_left : 16;
-        u32 current_block : 3;
-        u32 : 4;
-        u32 depth_only : 1;
-        u32 signed_output : 1;
-        u32 output_depth : 2;
-        u32 data_out_req : 1;
-        u32 data_in_req : 1;
-        u32 busy : 1;
-        u32 data_in_fifo_full : 1;
-        u32 data_out_fifo_empty : 1;
-    };
-    u32 value;
-} mdec_status;
-
-static mdec_status stat;
-static u32 parameters_left;
-static u32 parameter_fifo[65536];
-static u32 parameter_fifo_count;
-static u32 halfwords;
-static u32 decode_index;
-static u32 command;
-
-static u32 data_fifo[DATA_FIFO_SIZE];
-static u32 data_fifo_tail;  // 
-static u32 data_fifo_head;  // measured in words
-static u32 data_fifo_count; // 
-
-static b8 dma_in_enabled;
-static b8 dma_out_enabled;
-
-static u8 iq_table[128]; // luminance + color
-static s16 scale_table[64];
+struct mdec_state g_mdec;
 
 void mdec_reset(u32 flags)
 {
     if (flags & MDEC_RESET)
     {
-        stat.busy = 0;
+        g_mdec.stat.busy = 0;
         //stat.data_out_fifo_empty = 1;
-        parameter_fifo_count = 0;
-        parameters_left = 0;
-        data_fifo_head = data_fifo_tail = 0;
-        data_fifo_count = 0;
+        g_mdec.parameter_fifo_count = 0;
+        g_mdec.parameters_left = 0;
+        g_mdec.data_fifo_head = g_mdec.data_fifo_tail = 0;
+        g_mdec.data_fifo_count = 0;
     }
 
-    dma_out_enabled = (flags & MDEC_ENABLE_DATAOUT) ? true : false;
-    dma_in_enabled = (flags & MDEC_ENABLE_DATAIN) ? true : false;
+    g_mdec.dma_out_enabled = (flags & MDEC_ENABLE_DATAOUT) ? true : false;
+    g_mdec.dma_in_enabled = (flags & MDEC_ENABLE_DATAIN) ? true : false;
 }
 
 enum
@@ -72,15 +34,15 @@ enum
 
 u32 mdec_getstat(void)
 {
-    u32 result = stat.value;
+    u32 result = g_mdec.stat.value;
 #if 0
     memcpy(&result, &stat, sizeof(u32));
 #else
-    result |= (parameters_left - 1) & 0xffff;
-    if (dma_out_enabled && data_fifo_count)
-        result |= MDEC_STAT_DATA_OUT_REQ; // NOTE: docs mention that this flag is unset once the first few words are read
+    result |= (g_mdec.parameters_left - 1) & 0xffff;
+    if (g_mdec.dma_out_enabled && g_mdec.data_fifo_count)
+        result |= MDEC_STAT_DATA_OUT_REQ; // ref: this flag is unset once the first few words are read
     // TODO: data-in fifo, depth/signed/set bits
-    if (!data_fifo_count)
+    if (!g_mdec.data_fifo_count)
         result |= MDEC_STAT_OUT_FIFO_EMPTY;
 #endif
     return result;
@@ -170,7 +132,7 @@ static void idct_core(u16 *blk)
                 s32 sum = 0;
                 for (u8 z = 0; z < 8; ++z)
                 {
-                    sum += (s16)src[y + z * 8] * (s32)(scale_table[x + z * 8] / 8);
+                    sum += (s16)src[y + z * 8] * (s32)(g_mdec.scale_table[x + z * 8] / 8);
                 }
                 dst[x + y * 8] = (sum + 0xfff) / 0x2000;
             }
@@ -183,12 +145,12 @@ static void idct_core(u16 *blk)
 
 static b8 rl_decode_block(u16 *blk, u8 *iq) 
 {
-    u16 *data = (u16 *)parameter_fifo;
+    u16 *data = (u16 *)g_mdec.parameter_fifo;
     memset(blk, 0, sizeof(u16) * 64);
 
     do
     {
-        u16 dct = data[decode_index++]; // the first value is the DC
+        u16 dct = data[g_mdec.decode_index++]; // the first value is the DC
         if (dct == MDEC_DATA_END) // padding value
             continue;
         
@@ -207,7 +169,7 @@ static b8 rl_decode_block(u16 *blk, u8 *iq)
                 blk[zagzig[k]] = val;
             else if (q == 0)
                 blk[k] = val;
-            u16 rle = data[decode_index++];
+            u16 rle = data[g_mdec.decode_index++];
             //if (rle == 0xfe00)
             //    break;
             u16 ac = rle & 0x3ff;
@@ -217,7 +179,7 @@ static b8 rl_decode_block(u16 *blk, u8 *iq)
         }
         idct_core(blk);
         return true;
-    } while (decode_index < halfwords);
+    } while (g_mdec.decode_index < g_mdec.halfwords);
 
     return false;
 }
@@ -262,12 +224,12 @@ static void yuv_to_rgb15(u16 *dst, u16 *crblk, u16 *cbblk, u16 *yblk, u8 xx, u8 
 
 static void mdec_decode(void)
 {
-    u32 bit_depth = (command >> 27) & 0x3; // TODO: move
-    b8 signed_output = (command >> 26) & 0x1;
-    b8 set_bit15 = (command >> 25) & 0x1;
-    u16 *data = (u16 *)parameter_fifo;
+    u32 bit_depth = (g_mdec.command >> 27) & 0x3; // TODO: move
+    b8 signed_output = (g_mdec.command >> 26) & 0x1;
+    b8 set_bit15 = (g_mdec.command >> 25) & 0x1;
+    u16 *data = (u16 *)g_mdec.parameter_fifo;
 
-    u32 end = ((data_fifo_head - 1) & (DATA_FIFO_SIZE - 1));
+    u32 end = ((g_mdec.data_fifo_head - 1) & (DATA_FIFO_SIZE - 1));
     for (;;)
     {
 #if 0
@@ -275,15 +237,15 @@ static void mdec_decode(void)
         if (dct == MDEC_DATA_END)
             continue;
 #endif
-        if (decode_index == halfwords)
+        if (g_mdec.decode_index == g_mdec.halfwords)
             break;
 
         if (bit_depth & 0x2)
         {
             u32 block_size = (bit_depth == MDEC_DEPTH_24) ? 192 : 128;
-            if ((data_fifo_count + block_size) > DATA_FIFO_SIZE)
+            if ((g_mdec.data_fifo_count + block_size) > DATA_FIFO_SIZE)
                 break;
-            u8 *iq_uv = &iq_table[64];
+            u8 *iq_uv = &g_mdec.iq_table[64];
             //u16 output[16 * 16];
             u16 crblk[64];
             u16 cbblk[64];
@@ -291,10 +253,10 @@ static void mdec_decode(void)
             if (rl_decode_block(crblk, iq_uv))
             {
                 rl_decode_block(cbblk, iq_uv);
-                rl_decode_block(yblk[0], iq_table);
-                rl_decode_block(yblk[1], iq_table);
-                rl_decode_block(yblk[2], iq_table);
-                rl_decode_block(yblk[3], iq_table);
+                rl_decode_block(yblk[0], g_mdec.iq_table);
+                rl_decode_block(yblk[1], g_mdec.iq_table);
+                rl_decode_block(yblk[2], g_mdec.iq_table);
+                rl_decode_block(yblk[3], g_mdec.iq_table);
             }
             else
             {
@@ -334,14 +296,14 @@ static void mdec_decode(void)
                 yuv_to_rgb15(result, crblk, cbblk, yblk[1], 8, 0, signed_output);
                 yuv_to_rgb15(result, crblk, cbblk, yblk[2], 0, 8, signed_output);
                 yuv_to_rgb15(result, crblk, cbblk, yblk[3], 8, 8, signed_output);
-                u32 idx = data_fifo_tail;
+                u32 idx = g_mdec.data_fifo_tail;
                 for (u16 i = 0; i < 128; ++i)
                 {
-                    data_fifo[idx] = dst[i];
+                    g_mdec.data_fifo[idx] = dst[i];
                     idx = (idx + 1) & (DATA_FIFO_SIZE - 1);
                 }
-                data_fifo_tail = (data_fifo_tail + 128) & (DATA_FIFO_SIZE - 1);
-                data_fifo_count += 128;
+                g_mdec.data_fifo_tail = (g_mdec.data_fifo_tail + 128) & (DATA_FIFO_SIZE - 1);
+                g_mdec.data_fifo_count += 128;
             }
             else
             {
@@ -354,75 +316,75 @@ static void mdec_decode(void)
         }
     }
 
-    SY_ASSERT(data_fifo_count <= DATA_FIFO_SIZE);
+    SY_ASSERT(g_mdec.data_fifo_count <= DATA_FIFO_SIZE);
 }
 
 void mdec_command(u32 word)
 {
-    if (!parameters_left)
+    if (!g_mdec.parameters_left)
     {
         //debug_log("[MDEC] Send command: %d\n", (word >> 29));
-        command = word;
+        g_mdec.command = word;
         u32 cmd = word >> 29;
         switch (cmd)
         {
         case 0x1:
-            parameters_left = word & 0xffff;
+            g_mdec.parameters_left = word & 0xffff;
             break;
         case 0x2:
-            parameters_left = word & 0x1 ? 32 : 16;
+            g_mdec.parameters_left = word & 0x1 ? 32 : 16;
             break;
         case 0x3:
-            parameters_left = 32;
+            g_mdec.parameters_left = 32;
             break;
         default:
             break;
         }
-        stat.busy = 1;
-        parameter_fifo_count = 0;
+        g_mdec.stat.busy = 1;
+        g_mdec.parameter_fifo_count = 0;
     }
     else
     {
         //debug_log("[MDEC] Send parameter: %08x\n", word);
-        parameter_fifo[parameter_fifo_count++] = word;
+        g_mdec.parameter_fifo[g_mdec.parameter_fifo_count++] = word;
 
-        --parameters_left;
-        if (!parameters_left)
+        --g_mdec.parameters_left;
+        if (!g_mdec.parameters_left)
         {
-            u32 cmd = command >> 29;
+            u32 cmd = g_mdec.command >> 29;
             switch (cmd)
             {
             case 1:
-                halfwords = parameter_fifo_count << 1;
-                decode_index = 0;
+                g_mdec.halfwords = g_mdec.parameter_fifo_count << 1;
+                g_mdec.decode_index = 0;
                 mdec_decode();
                 struct dma_transfer *transfer = &g_dma.transfers[CH_MDECOUT];
-                if (transfer->pending && (data_fifo_count >= transfer->pending_words))
+                if (transfer->pending && (g_mdec.data_fifo_count >= transfer->pending_words))
                     transfer->pending = false;
                 break;
             case 2:
                 u8 src = 0;
-                u8 count = (command & 0x1) ? 128 : 64;
+                u8 count = (g_mdec.command & 0x1) ? 128 : 64;
                 for (u8 i = 0; i < count; i += 4)
                 {
-                    u32 param = parameter_fifo[src++];
-                    iq_table[i] = param & 0xff;
-                    iq_table[i + 1] = (param >> 8) & 0xff;
-                    iq_table[i + 2] = (param >> 16) & 0xff;
-                    iq_table[i + 3] = (param >> 24) & 0xff;
+                    u32 param = g_mdec.parameter_fifo[src++];
+                    g_mdec.iq_table[i] = param & 0xff;
+                    g_mdec.iq_table[i + 1] = (param >> 8) & 0xff;
+                    g_mdec.iq_table[i + 2] = (param >> 16) & 0xff;
+                    g_mdec.iq_table[i + 3] = (param >> 24) & 0xff;
                 }
                 break;
             case 3:
                 for (u8 i = 0; i < 32; ++i)
                 {
-                    scale_table[i * 2] = parameter_fifo[i] & 0xffff;
-                    scale_table[i * 2 + 1] = (parameter_fifo[i] >> 16) & 0xffff;
+                    g_mdec.scale_table[i * 2] = g_mdec.parameter_fifo[i] & 0xffff;
+                    g_mdec.scale_table[i * 2 + 1] = (g_mdec.parameter_fifo[i] >> 16) & 0xffff;
                 }
                 break;
             default:
                 break;
             }
-            stat.busy = 0;
+            g_mdec.stat.busy = 0;
         }
     }
 
@@ -436,31 +398,31 @@ u32 mdec_read(void)
 
 b8 mdecout_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
 {
-    if (dma_out_enabled)
+    if (g_mdec.dma_out_enabled)
     {
         SY_ASSERT(size < DATA_FIFO_SIZE);
-        if (size > data_fifo_count)
+        if (size > g_mdec.data_fifo_count)
         {
             mdec_decode();
-            if (size > data_fifo_count)
+            if (size > g_mdec.data_fifo_count)
                 return false;
         }
 
         //u32 *at = (u32 *)(g_ram + dst);
         u32 addr = *paddr;
-        u32 src = data_fifo_head;
+        u32 src = g_mdec.data_fifo_head;
         u32 left = size;
         while (left--)
         {
             u32 *dst = (u32 *)(g_ram + addr);
-            *dst = data_fifo[src];
+            *dst = g_mdec.data_fifo[src];
             src = (src + 1) & (DATA_FIFO_SIZE - 1);
             addr += step;
         }
         *paddr = addr;
-        data_fifo_count -= size;
-        data_fifo_head = (data_fifo_head + size) & (DATA_FIFO_SIZE - 1);
-        debug_log("[MDEC] transferring block of %u bytes, %u left in queue..\n", size, data_fifo_count);
+        g_mdec.data_fifo_count -= size;
+        g_mdec.data_fifo_head = (g_mdec.data_fifo_head + size) & (DATA_FIFO_SIZE - 1);
+        debug_log("[MDEC] transferring block of %u bytes, %u left in queue..\n", size, g_mdec.data_fifo_count);
 
         //if (data_fifo_count == 0)
         //    stat.data_out_fifo_empty = 1;

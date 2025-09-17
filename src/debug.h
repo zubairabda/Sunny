@@ -31,8 +31,6 @@ struct debug_state
     u8 max_psl;
     struct debug_breakpoint bp[MAX_BREAKPOINTS];
     b8 pause;
-    u64 timestamp;
-    u64 cpu_ticks;
 };
 
 extern struct debug_state g_debug;

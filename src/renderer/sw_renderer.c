@@ -58,10 +58,16 @@ void update_vram(void)
     win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
     u16 *vram = renderer->sw.vram;
     u32 *vram_texture = renderer->vram_data;
-
-    for (int i = 0; i < (VRAM_SIZE >> 1); ++i)
+    if (g_gpu.stat.display_depth_24_bit)
     {
-        vram_texture[i] = swizzle_16_32(vram[i]);
+
+    }
+    else
+    {
+        for (int i = 0; i < (VRAM_SIZE >> 1); ++i)
+        {
+            vram_texture[i] = swizzle_16_32(vram[i]);
+        }
     }
 #endif
 }
@@ -281,9 +287,15 @@ static void update_display(void)
 
     memset(renderer->fullscreen_data, 0, (window_width * window_height * 4));
 
+    // TODO: implement
+    if (g_gpu.stat.display_depth_24_bit)
+    {
+
+    }
+
     StretchBlt(renderer->fullscreen_dc, screen_x, screen_y, screen_w, screen_h, renderer->vram_dc, src_x, src_y, src_w, src_h, SRCCOPY);
 #else
-    StretchBlt(renderer->fullscreen_dc, 0, 0, width, height, renderer->vram_dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);
+    StretchBlt(renderer->fullscreen_dc, 0, 0, window_width, window_height, renderer->vram_dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);
 #endif
 
     draw_debug_ui(renderer->fullscreen_data, window_width, window_height);

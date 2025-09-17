@@ -101,12 +101,16 @@ enum
 };
 
 struct spu_state g_spu;
+u8 *g_dram;
+static u32 spu_tick_id;
 
-void spu_reset(void)
+void spu_reset(struct memory_arena *arena)
 {
     memset(&g_spu, 0, sizeof(struct spu_state));
     g_spu.regs.control.endx = 0x00ffffff;
-    schedule_event(spu_tick, 0, 768);
+    spu_tick_id = register_callback(spu_tick);
+    schedule_event(spu_tick_id, 0, 768);
+    g_dram = push_arena(arena, DRAM_SIZE);
 }
 
 u32 spu_read(u32 offset)
@@ -303,7 +307,7 @@ static inline s16 *reverb_load(u32 base, u32 addr, u32 offset)
     u32 relative = (addr + offset - base) % len;
     u32 result = (base + relative) & 0x7fffe;
     SY_ASSERT(result >= base && result <= 0x7fffe);
-    return (s16 *)(g_spu.dram + result);
+    return (s16 *)(g_dram + result);
 }
 
 static inline s32 apply_volume(s32 level, s16 volume)
@@ -465,7 +469,7 @@ void spu_tick(u32 param, s32 ticks_late)
     if (g_spu.transfer_fifo_len)
     {
         u32 size = g_spu.transfer_fifo_len * 2;
-        memcpy((g_spu.dram + g_spu.current_transfer_addr), g_spu.transfer_fifo, size);
+        memcpy((g_dram + g_spu.current_transfer_addr), g_spu.transfer_fifo, size);
         g_spu.current_transfer_addr += size;
         g_spu.transfer_fifo_len = 0;
     }
@@ -491,7 +495,7 @@ void spu_tick(u32 param, s32 ticks_late)
             state->decoded_samples[1] = state->decoded_samples[29];
             state->decoded_samples[2] = state->decoded_samples[30];
 
-            u8 *data = g_spu.dram + (state->current_addr << 3);
+            u8 *data = g_dram + (state->current_addr << 3);
 
             u8 *adpcm_block = data;
             u8 shift = adpcm_block[0] & 0xf;
@@ -561,12 +565,12 @@ void spu_tick(u32 param, s32 ticks_late)
         s32 step = regs->sample_rate;
         if (g_spu.regs.control.pmon & (1 << i) && (i > 0))
         {
+            // TODO: fix
             s16 factor = g_spu.voice_data[i - 1].amplitude;
             factor += 0x8000;
             step = sign_extend16_32(step);
             step = (step * factor) >> 15;
             step &= 0xffff;
-            SY_ASSERT(0); // TODO: threads of fate hits this
         }
         if (step > 0x3fff)
         {
@@ -644,7 +648,7 @@ void spu_tick(u32 param, s32 ticks_late)
             SY_ASSERT((g_spu.cd_buffer_length & 0x1) == 0);
             s16 raw_left = read_cd_buffer();
             s16 raw_right = read_cd_buffer();
-            //g_spu.cd_buffer_length -= 2;
+
             s32 left = clamp16(((raw_left * g_cdrom.vol_LL) >> 7) + ((raw_right * g_cdrom.vol_RL) >> 7));
             s32 right = clamp16(((raw_right * g_cdrom.vol_RR) >> 7) + ((raw_left * g_cdrom.vol_LR) >> 7));
 
@@ -725,5 +729,5 @@ void spu_tick(u32 param, s32 ticks_late)
 
     audio_buffer_write(mixed_left, mixed_right);
 
-    schedule_event(spu_tick, 0, 768 - ticks_late);
+    schedule_event(spu_tick_id, 0, 768 - ticks_late);
 }

@@ -22,12 +22,10 @@ typedef enum
 struct disk_track
 {
     platform_file *file;
-    //u32 size;
-    //u32 offset;
     u32 start;
     u32 end;
     u32 pregap;
-    u32 reserved;
+    u32 file_offset; // NOTE: this is for tracks that have unaddressable content in their file (before the first specified index)
 };
 
 typedef struct disk_image
@@ -48,16 +46,15 @@ typedef struct MSF
 inline MSF lba_to_msf(u32 lba)
 {
     MSF result;
-    lba += 150;
     result.m = lba / (60 * 75);
     result.s = (lba / 75) % 60;
     result.f = lba % 75;
     return result;
 }
 
-inline u32 msf_to_lba(MSF pos)
+inline u32 msf_to_lba(u8 m, u8 s, u8 f)
 {
-    return (((pos.m * 60) + pos.s) * 75 + pos.f) - 150;
+    return (((m * 60) + s) * 75 + f);
 }
 
 enum

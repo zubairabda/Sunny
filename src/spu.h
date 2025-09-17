@@ -2,6 +2,7 @@
 #define SPU_H
 
 #include "common.h"
+#include "allocator.h"
 
 enum adsr_stage
 {
@@ -161,13 +162,14 @@ struct spu_state
     s32 cd_buffer_index;
     s32 cd_buffer_length;
     s16 cd_buffer[8192];
-
-    u8 *dram;
 };
 
-extern struct spu_state g_spu;
+#define DRAM_SIZE KILOBYTES(512)
 
-void spu_reset(void);
+extern struct spu_state g_spu;
+extern u8 *g_dram;
+
+void spu_reset(struct memory_arena *arena);
 
 u32 spu_read(u32 offset);
 void spu_write16(u32 offset, u32 value);

@@ -86,6 +86,12 @@ enum cdrom_command
 };
 
 struct cdrom_context g_cdrom;
+static u32 command_callback_id;
+static u32 first_response_callback_id;
+static u32 second_response_callback_id;
+static u32 read_callback_id;
+static u32 play_callback_id;
+static u32 seek_callback_id;
 
 static const char *cdrom_cmd_to_string(enum cdrom_command command)
 {
@@ -150,18 +156,6 @@ static const char *cdrom_cmd_to_string(enum cdrom_command command)
     default:
         return "";
     }
-}
-
-void cdrom_reset(void)
-{
-    memset(&g_cdrom, 0, sizeof(struct cdrom_context));
-    g_cdrom.status.value = 0x18; // param fifo not full, param fifo empty
-
-    g_cdrom.sector_size = 0x800;
-    g_cdrom.sector_offset = 24;
-
-    g_cdrom.vol_LL = g_cdrom.pending_vol_LL = 0x80;
-    g_cdrom.vol_RR = g_cdrom.pending_vol_RR = 0x80;
 }
 
 static u8 cdrom_get_stat(void)
@@ -358,7 +352,7 @@ static u32 cdrom_read_next_sector(void)
     // preload next sector
     if (read_disk_sector(g_psx.disk, g_cdrom.loc, sector))
     {
-        u32 lba = g_cdrom.loc;
+        u32 lba = g_cdrom.loc + 150;
         MSF pos = lba_to_msf(lba);
         debug_log("[CDROM] Reading sector %d:%d:%d\n", pos.m, pos.s, pos.f);
         g_cdrom.is_xa_sector = false;
@@ -370,7 +364,7 @@ static u32 cdrom_read_next_sector(void)
             // ref: if xa-adpcm and/or xa-filter is enabled, INT1 is only generated for non-xa sectors
             u8 flags = g_cdrom.mode & (CDR_MODE_XAADPCM | CDR_MODE_XAFILTER);
             if (flags)
-            {                
+            {
                 u8 *at = sector + 12 + 4; // skip sync and header bytes
                 u8 file = at[0];
                 u8 channel = at[1];
@@ -380,9 +374,9 @@ static u32 cdrom_read_next_sector(void)
                 // I actually don't even know if this is a valid way to check for XA-ADPCM sectors
                 if (submode & 0x4)
                 {
-                    g_cdrom.is_xa_sector = true; // lets us know in read_handler to not set INT1
+                    g_cdrom.is_xa_sector = true; // lets us know in read_handler to not send INT1
 
-                    if (g_cdrom.mode & CDR_MODE_XAFILTER)
+                    if (flags & CDR_MODE_XAFILTER)
                     {
                         if (file != g_cdrom.xa_file && channel != g_cdrom.xa_channel)
                             return next_int;
@@ -421,7 +415,8 @@ static u32 cdrom_play_next_sector(void)
     {
         ++g_cdrom.loc;
         g_spu.cd_buffer_index = 0;
-        g_spu.cd_buffer_length = DISK_SECTOR_SIZE;
+        g_spu.cd_buffer_length = DISK_SECTOR_SIZE / 2;
+
         char sync[12] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
         if (memcmp(buffer, sync, 12) == 0)
         {
@@ -500,17 +495,18 @@ static void cdrom_play_handler(u32 param, s32 ticks_late)
             g_cdrom.response_fifo[0] = cdrom_get_stat();
             g_cdrom.response_fifo[1] = track;
             g_cdrom.response_fifo[2] = 1; // TODO: index
-            // relative time within the track is returned if sector is 10h,30h,50h,70h
+            
             MSF pos;
-            u32 absolute_lba = g_cdrom.loc;
+            // relative time within the track is returned if sector is 10h,30h,50h,70h
             if (pos.f & 0x10)
             {
                 u32 track_start_lba = current_track->start;
-                pos = lba_to_msf(absolute_lba - track_start_lba);
+                pos = lba_to_msf(g_cdrom.loc - track_start_lba);
                 pos.s |= 0x80;
             }
             else
             {
+                u32 absolute_lba = g_cdrom.loc + 150;
                 pos = lba_to_msf(absolute_lba);
             }
             g_cdrom.response_fifo[3] = decimal_to_bcd(pos.m);
@@ -525,7 +521,7 @@ static void cdrom_play_handler(u32 param, s32 ticks_late)
     if (g_cdrom.state == CDROM_STATE_PLAYING)
     {
         u32 next_int = cdrom_play_next_sector();
-        g_cdrom.active_event = schedule_event(cdrom_play_handler, 0, next_int - ticks_late);
+        g_cdrom.active_event = schedule_event(play_callback_id, 0, next_int - ticks_late);
     }
 }
 
@@ -566,16 +562,16 @@ static void cdrom_read_handler(u32 param, s32 ticks_late)
     if (!g_cdrom.read_error)
     {
         u32 next_int = cdrom_read_next_sector();
-        g_cdrom.active_event = schedule_event(cdrom_read_handler, 0, next_int - ticks_late);
+        g_cdrom.active_event = schedule_event(read_callback_id, 0, next_int - ticks_late);
     }
 }
 
-static void cdrom_seek_event(u32 param, s32 ticks_late)
+static void cdrom_seek_handler(u32 param, s32 ticks_late)
 {
     g_cdrom.state = CDROM_STATE_IDLE;
 }
 
-static void cdrom_response_event(u32 param, s32 ticks_late)
+static void cdrom_second_response_event(u32 param, s32 ticks_late)
 {
     g_cdrom.response_event = 0;
     g_cdrom.status.RSLRRDY = true;
@@ -615,6 +611,7 @@ static void cdrom_begin_read(void)
     g_cdrom.first_response.count = 1;
     g_cdrom.first_response.cause = 3;
 
+    remove_event(g_cdrom.active_event);
     //g_cdrom.state = CDROM_STATE_READING;
 
     u32 delay = 0;
@@ -635,7 +632,7 @@ static void cdrom_begin_read(void)
     g_cdrom.read_error = 0;
 
     u32 next_int = cdrom_read_next_sector();
-    g_cdrom.active_event = schedule_event(cdrom_read_handler, 0, next_int + delay);
+    g_cdrom.active_event = schedule_event(read_callback_id, 0, next_int + delay);
 }
 
 static void cdrom_command(u32 command, s32 ticks_late)
@@ -687,7 +684,12 @@ static void cdrom_command(u32 command, s32 ticks_late)
             break;
         }
         
-        u32 lba = (((bcd_to_decimal(amm) * 60) + bcd_to_decimal(ass)) * 75 + bcd_to_decimal(asect)) - 150;
+        u8 mm = bcd_to_decimal(amm);
+        u8 ss = bcd_to_decimal(ass);
+        u8 ff = bcd_to_decimal(asect);
+        u32 lba = msf_to_lba(mm, ss, ff);
+        SY_ASSERT(lba >= 150);
+        lba -= 150;
 
         g_cdrom.seek_target = lba;
         g_cdrom.seek_pending = true;
@@ -708,6 +710,8 @@ static void cdrom_command(u32 command, s32 ticks_late)
         g_cdrom.first_response.fifo[0] = cdrom_get_stat() | CDR_STAT_MOTOR;
         g_cdrom.first_response.count = 1;
         g_cdrom.first_response.cause = 3;
+
+        remove_event(g_cdrom.active_event);
 
         g_cdrom.state = CDROM_STATE_PLAYING;
 
@@ -730,7 +734,7 @@ static void cdrom_command(u32 command, s32 ticks_late)
         }
 
         u32 next_int = cdrom_play_next_sector();
-        g_cdrom.active_event = schedule_event(cdrom_play_handler, 0, next_int);
+        g_cdrom.active_event = schedule_event(play_callback_id, 0, next_int);
 
         break;
     }
@@ -780,7 +784,7 @@ static void cdrom_command(u32 command, s32 ticks_late)
 
         remove_event(g_cdrom.active_event);
 
-        g_cdrom.loc = 150;
+        g_cdrom.loc = 0;
 
         g_cdrom.state = CDROM_STATE_STOPPED;
         g_cdrom.response_pending = true;
@@ -930,6 +934,29 @@ static void cdrom_command(u32 command, s32 ticks_late)
 
         break;
     }
+    case GetlocP:
+    {
+        MSF amsf = lba_to_msf(g_cdrom.loc + 150);
+        u8 track_no = cdrom_get_current_track();
+        struct disk_track *track = &g_psx.disk->tracks[track_no - 1];
+        u32 lba = g_cdrom.loc - (track->start + track->pregap);
+        if ((s32)lba < 0)
+            lba = -lba;
+
+        MSF msf = lba_to_msf(lba);
+
+        g_cdrom.first_response.cause = 3;
+        g_cdrom.first_response.count = 8;
+        g_cdrom.first_response.fifo[0] = track_no;
+        g_cdrom.first_response.fifo[1] = lba >= track->pregap ? 1 : 0; // TODO:
+        g_cdrom.first_response.fifo[2] = decimal_to_bcd(msf.m);
+        g_cdrom.first_response.fifo[3] = decimal_to_bcd(msf.s);
+        g_cdrom.first_response.fifo[4] = decimal_to_bcd(msf.f);
+        g_cdrom.first_response.fifo[5] = decimal_to_bcd(amsf.m);
+        g_cdrom.first_response.fifo[6] = decimal_to_bcd(amsf.s);
+        g_cdrom.first_response.fifo[7] = decimal_to_bcd(amsf.f);
+        break;
+    }
     case GetTN:
     {
         if (g_cdrom.param_fifo_count)
@@ -972,19 +999,23 @@ static void cdrom_command(u32 command, s32 ticks_late)
         }
 
         MSF pos;
+        u32 lba;
 
         if (track_no == 0)
         {
             // index 0 returns the end of the last track
             struct disk_track *track = &disk->tracks[disk->track_count - 1];
-            pos = lba_to_msf(track->end);
+            lba = track->end;
         }
         else
         {
             struct disk_track *track = &disk->tracks[track_no - 1];
-            u32 lba = track->start + track->pregap;
-            pos = lba_to_msf(lba);
+            lba = track->start + track->pregap;
         }
+
+        lba += 150;
+
+        pos = lba_to_msf(lba);
 
         g_cdrom.first_response.cause = 3;
         g_cdrom.first_response.count = 3;
@@ -1056,7 +1087,7 @@ static void cdrom_command(u32 command, s32 ticks_late)
             delay = INT_DELAY;
         }
 
-        g_cdrom.active_event = schedule_event(cdrom_seek_event, 0, delay + (CYCLES_PER_USEC * 1000));
+        g_cdrom.active_event = schedule_event(seek_callback_id, 0, delay + (CYCLES_PER_USEC * 1000));
 
         u8 seek_error = 0;
         SY_ASSERT(g_psx.disk);
@@ -1156,6 +1187,25 @@ static void cdrom_command(u32 command, s32 ticks_late)
     g_cdrom.timestamp = g_cycles_elapsed;
 }
 
+void cdrom_reset(void)
+{
+    memset(&g_cdrom, 0, sizeof(struct cdrom_context));
+    g_cdrom.status.value = 0x18; // param fifo not full, param fifo empty
+
+    g_cdrom.sector_size = 0x800;
+    g_cdrom.sector_offset = 24;
+
+    g_cdrom.vol_LL = g_cdrom.pending_vol_LL = 0x80;
+    g_cdrom.vol_RR = g_cdrom.pending_vol_RR = 0x80;
+
+    command_callback_id = register_callback(cdrom_command);
+    first_response_callback_id = register_callback(cdrom_first_response_event);
+    second_response_callback_id = register_callback(cdrom_second_response_event);
+    read_callback_id = register_callback(cdrom_read_handler);
+    play_callback_id = register_callback(cdrom_play_handler);
+    seek_callback_id = register_callback(cdrom_seek_handler);
+}
+
 u8 cdrom_read(u32 offset)
 {
     u8 result = 0;
@@ -1233,7 +1283,7 @@ void cdrom_write(u32 offset, u8 value)
         SY_ASSERT(!g_cdrom.status.BUSYSTS);
         // TODO: INTs must be ack'd before command is sent
         g_cdrom.status.BUSYSTS = true;
-        schedule_event(cdrom_command, value, INT_DELAY);
+        schedule_event(command_callback_id, value, INT_DELAY);
         break;
     case 2: // param fifo
         SY_ASSERT(g_cdrom.param_fifo_count < 16);
@@ -1286,7 +1336,7 @@ void cdrom_write(u32 offset, u8 value)
             if (g_cdrom.command_pending)
             {
                 g_cdrom.command_pending = false;
-                g_cdrom.first_resp_event = schedule_event(cdrom_first_response_event, 0, 15000);
+                g_cdrom.first_resp_event = schedule_event(first_response_callback_id, 0, 15000);
             }
             else if (g_cdrom.response_pending)
             {
@@ -1297,7 +1347,7 @@ void cdrom_write(u32 offset, u8 value)
                 {
                     g_cdrom.response_delay_cycles = 15000;
                 }
-                g_cdrom.response_event = schedule_event(cdrom_response_event, 0, g_cdrom.response_delay_cycles);
+                g_cdrom.response_event = schedule_event(second_response_callback_id, 0, g_cdrom.response_delay_cycles);
             }
             g_cdrom.response_fifo_current = 0;
         }

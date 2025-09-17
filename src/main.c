@@ -20,6 +20,7 @@
 #include "audio/audio.h"
 #include "renderer/sw_renderer.h"
 #include "renderer/win32_renderer.h"
+#include "savestate.h"
 
 static volatile b32 g_running = true;
 
@@ -343,6 +344,18 @@ static void update_debug_ui(u32 width, u32 height)
             }
         }
 
+        if (debug_ui_button("Save State"))
+        {
+            save_system_state();
+        }
+
+        if (debug_ui_button("Load State"))
+        {
+            load_system_state();
+        }
+
+
+
         debug_ui_end_window();
     }
 
@@ -588,7 +601,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     audio_set_volume(0.5f);
 
     debug_ui_init();
-    debug_ui_set_window_rect("Menu", r2(0, 0, 315, 200));
+    debug_ui_set_window_rect("Menu", r2(0, 0, 315, 250));
     debug_ui_set_window_rect("Voices", r2(100, 50, 500, 500));
     debug_ui_set_window_rect("Debugger", r2(0, 0, 600, 400));
 
@@ -606,7 +619,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     }
 
     g_debug.breakpoints_enabled = true; // TODO: temp
-    g_debug.log_level = LOG_DEBUG;
+    g_debug.log_level = LOG_ERROR;
 
     while (g_running)
     {

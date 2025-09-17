@@ -11,8 +11,6 @@
 
 psx_state g_psx;
 
-static struct memory_arena s_arena;
-
 b8 psx_load_exe(platform_file *file)
 {
     u64 fsize = platform_get_file_size(file);
@@ -57,9 +55,9 @@ b8 psx_load_image(const char *path)
         if (!platform_open_file(path, &exe))
             return false;
         psx_reset();
-        psx_load_exe(&exe);
+        b8 result = psx_load_exe(&exe);
         platform_close_file(&exe);
-        return true;
+        return result;
     }
     else if (string_ends_with_ignore_case(path, ".bin"))
     {
@@ -80,6 +78,7 @@ b8 psx_load_image(const char *path)
     {
         if (g_psx.disk != NULL)
             close_disk(g_psx.disk);
+        strncpy(g_psx.disk_path, path, 4096);
         g_psx.disk = disk;
         psx_reset();
         return true;
@@ -110,35 +109,33 @@ b8 psx_load_bios(const char *path)
 
 void psx_init(void)
 {
-    s_arena = allocate_arena(MEGABYTES(16));
+    g_psx.arena = allocate_arena(MEGABYTES(8));
 }
 
 void psx_reset(void)
 {
-    clear_arena(&s_arena);
+    struct memory_arena *arena = &g_psx.arena;
+    clear_arena(arena);
 
-    g_ram = push_arena(&s_arena, MEGABYTES(2));
-    g_scratch = push_arena(&s_arena, KILOBYTES(1));
+    g_ram = push_arena(arena, MEGABYTES(2));
+    g_scratch = push_arena(arena, KILOBYTES(1));
 
     // initialize ram with known garbage debug value
     memset32(g_ram, 0xdeadbeef, RAM_SIZE / 4);
 
-    scheduler_reset(&s_arena);
+    scheduler_reset(arena);
     cpu_reset();
-    gpu_reset();
+    gpu_reset(arena);
     dma_reset();
-    spu_reset();
+    spu_reset(arena);
     cdrom_reset();
     sio_reset();
-
-    g_gpu.copy_buffer = push_arena(&s_arena, VRAM_SIZE);
-    g_gpu.readback_buffer = push_arena(&s_arena, VRAM_SIZE);
-    g_spu.dram = push_arena(&s_arena, KILOBYTES(512));
+    counters_reset();
 }
 
 void psx_shutdown(void)
 {
-    free_arena(&s_arena);
+    free_arena(&g_psx.arena);
 }
 
 b8 psx_can_boot(void)

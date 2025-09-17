@@ -7,6 +7,11 @@
 #include "renderer/sw_renderer.h"
 
 struct gpu_state g_gpu;
+
+u16 *g_copy_buffer;
+u16 *g_readback_buffer;
+
+static u32 scanline_callback_id;
 static s32 dotclks[] = {10, 8, 5, 4};
 
 static void fill_vram(u32 *commands)
@@ -41,7 +46,7 @@ static void gpu_copy_cpu_to_vram(void)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
 
-    u16 *src = g_gpu.copy_buffer;
+    u16 *src = g_copy_buffer;
     u16 *dst = (u16 *)renderer->vram;
     u16 width = g_gpu.load.width;
     u16 height = g_gpu.load.height;
@@ -110,7 +115,7 @@ static void gpu_copy_vram_to_cpu(struct gpu_transfer *transfer)
 {
     software_renderer *renderer = (software_renderer *)g_renderer;
     u16 *vram = (u16 *)renderer->vram;
-    u16 *dst = g_gpu.readback_buffer;
+    u16 *dst = g_readback_buffer;
     u32 buffer_len = 0;
     u32 width = transfer->width;
     u32 height = transfer->height;
@@ -135,8 +140,8 @@ u32 gpuread(void)
 {
     if (g_gpu.pending_store)
     {
-        u32 first = (u32)g_gpu.readback_buffer[g_gpu.read_index];
-        u32 second = (u32)g_gpu.readback_buffer[g_gpu.read_index + 1];
+        u32 first = (u32)g_readback_buffer[g_gpu.read_index];
+        u32 second = (u32)g_readback_buffer[g_gpu.read_index + 1];
         u32 result = first | (second << 16);
         g_gpu.read_index += 2;
         if (g_gpu.read_index >= g_gpu.readback_buffer_len)
@@ -163,7 +168,7 @@ static void gpu_softreset(void)
     g_gpu.dot_div = dotclks[g_gpu.stat.horizontal_res_1];
 }
 
-void gpu_reset(void)
+void gpu_reset(struct memory_arena *arena)
 {
     // TODO: clear vram
     memset(&g_gpu, 0, sizeof(struct gpu_state));
@@ -171,8 +176,10 @@ void gpu_reset(void)
     u32 cycles_per_scanline = NTSC_VIDEO_CYCLES_PER_SCANLINE * 451584;
     g_gpu.remainder_cycles = cycles_per_scanline % 715909;
     s32 ticks_for_scanline = cycles_per_scanline / 715090;
-
-    schedule_event(gpu_scanline_complete, 0, ticks_for_scanline);
+    scanline_callback_id = register_callback(gpu_scanline_complete);
+    schedule_event(scanline_callback_id, 0, ticks_for_scanline);
+    g_copy_buffer = push_arena(arena, VRAM_SIZE);
+    g_readback_buffer = push_arena(arena, VRAM_SIZE);
 }
 
 void execute_gp1_command(u32 command)
@@ -392,8 +399,8 @@ void execute_gp0_command(u32 word)
 
     if (g_gpu.pending_load)
     {
-        g_gpu.copy_buffer[g_gpu.copy_buffer_len++] = (u16)word;
-        g_gpu.copy_buffer[g_gpu.copy_buffer_len++] = (u16)(word >> 16);
+        g_copy_buffer[g_gpu.copy_buffer_len++] = (u16)word;
+        g_copy_buffer[g_gpu.copy_buffer_len++] = (u16)(word >> 16);
         
         if (!g_gpu.pending_words)
         {
@@ -494,7 +501,6 @@ void execute_gp0_command(u32 word)
 
                 g_gpu.pending_words = (size + (size & 0x1)) >> 1;
                 g_gpu.pending_load = true; // we are now in a pending load, don't push values to the command buffer
-                g_gpu.copy_buffer_at = g_gpu.copy_buffer + g_gpu.copy_buffer_len;
                 g_gpu.load.x = dst_x;
                 g_gpu.load.y = dst_y;
                 g_gpu.load.width = width;
@@ -680,5 +686,5 @@ void gpu_scanline_complete(u32 param, s32 ticks_late)
     cycles_per_scanline += g_gpu.remainder_cycles;
     g_gpu.remainder_cycles = cycles_per_scanline % 715909;
     s32 ticks_for_scanline = cycles_per_scanline / 715090;
-    schedule_event(gpu_scanline_complete, 0, ticks_for_scanline - ticks_late);
+    schedule_event(scanline_callback_id, 0, ticks_for_scanline - ticks_late);
 }

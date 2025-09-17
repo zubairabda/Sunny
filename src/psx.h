@@ -2,6 +2,7 @@
 #define PSX_H
 
 #include "stream.h"
+#include "allocator.h"
 #include "sio.h"
 
 typedef enum
@@ -14,8 +15,10 @@ typedef enum
 typedef struct
 {
     system_state state;
+    struct memory_arena arena;
     disk_image *disk;
     struct input_device_base *controllers[2];
+    char disk_path[4096];
 } psx_state;
 
 extern psx_state g_psx;

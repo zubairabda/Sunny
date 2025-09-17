@@ -67,7 +67,6 @@ struct sio_context
     u32 sequence_index;
     enum sio_state state;
     //struct input_device_base *devices[2];
-
     SIO_STAT stat;
     u16 mode;
     u16 control; 
