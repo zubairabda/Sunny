@@ -80,3 +80,14 @@ b8 string_equals_ignore_case(const char *a, const char *b, u32 len)
     }
     return true;
 }
+
+s32 string_last_index_of_char(const char *str, char c)
+{
+    size_t len = strlen(str);
+    while (len--)
+    {
+        if (str[len] == c)
+            return len;
+    }
+    return -1;
+}

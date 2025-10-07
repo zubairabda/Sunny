@@ -229,7 +229,6 @@ static void update_display(void)
     int src_x = g_gpu.vram_display_x;
     int src_y = g_gpu.vram_display_y;
     // ref: displayed pixels is rounded to multiple of 4
-    // TODO: this can be cached
     int src_w = (((g_gpu.horizontal_display_x2 - g_gpu.horizontal_display_x1) / g_gpu.dot_div) + 2) & ~0x3;
     int src_h = g_gpu.vertical_display_y2 - g_gpu.vertical_display_y1;
     if ((g_gpu.stat.value >> 22) & 0x1)

@@ -46,9 +46,9 @@ void save_system_state(void)
     software_renderer *renderer = (software_renderer *)g_renderer;
     u16 *vram = renderer->vram;
 
-    u32 path_len = strlen(g_psx.disk_path);
+    u32 path_len = safe_truncate32(strlen(g_psx.image_path));
     savestate_add(save, &path_len, sizeof(path_len));
-    savestate_add(save, g_psx.disk_path, path_len);
+    savestate_add(save, g_psx.image_path, path_len);
 
     savestate_add(save, g_psx.arena.base, g_psx.arena.size);
     savestate_add(save, &g_cpu, sizeof(struct cpu_state));
@@ -94,11 +94,12 @@ b8 load_system_state(void)
     software_renderer *renderer = (software_renderer *)g_renderer;
     u16 *vram = renderer->vram;
 
-    u32 path_len = strlen(g_psx.disk_path);
+    u32 path_len;
     savestate_load(save, &path_len, sizeof(path_len));
-    savestate_load(save, g_psx.disk_path, path_len);
+    savestate_load(save, g_psx.image_path, path_len);
 
-    psx_load_image(g_psx.disk_path);
+    psx_image_type type = psx_get_image_type_from_path(g_psx.image_path);
+    psx_load_image(g_psx.image_path, type);
 
     savestate_load(save, g_psx.arena.base, g_psx.arena.size);
     savestate_load(save, &g_cpu, sizeof(struct cpu_state));

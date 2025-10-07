@@ -13,10 +13,11 @@ struct file_dat
 
 typedef enum
 {
-    EXE,
-    BIN,
-    CUE,
-    ISO
+    IMAGE_TYPE_NONE,
+    IMAGE_TYPE_EXE,
+    IMAGE_TYPE_BIN,
+    IMAGE_TYPE_CUE,
+    IMAGE_TYPE_ISO
 } psx_image_type;
 
 struct disk_track
@@ -56,11 +57,6 @@ inline u32 msf_to_lba(u8 m, u8 s, u8 f)
 {
     return (((m * 60) + s) * 75 + f);
 }
-
-enum
-{
-    FILE_FLAG_NULL_TERMINATE = (1 << 0)
-};
 
 inline b8 is_alpha(char c)
 {
@@ -103,7 +99,7 @@ inline b8 str_to_hex(const char *string, u32 *value)
     return true;
 }
 
-b8 allocate_and_read_file(const char *path, u32 flags, struct file_dat *out_file);
+b8 allocate_and_read_file(const char *path, b8 null_terminate, struct file_dat *out_file);
 b8 write_file(struct file_dat *file, char *out);
 
 disk_image *open_disk(const char *path, psx_image_type type);

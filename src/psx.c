@@ -24,6 +24,8 @@ b8 psx_load_exe(platform_file *file)
         return false;
     }
 
+    psx_reset();
+
     while (g_cpu.pc != 0x80030000)
         psx_step();
 
@@ -46,47 +48,153 @@ b8 psx_load_exe(platform_file *file)
     return true;
 }
 
-b8 psx_load_image(const char *path)
+psx_image_type psx_get_image_type_from_path(const char *path)
 {
-    psx_image_type type;
     if (string_ends_with_ignore_case(path, ".exe"))
     {
-        platform_file exe;
-        if (!platform_open_file(path, &exe))
-            return false;
-        psx_reset();
-        b8 result = psx_load_exe(&exe);
-        platform_close_file(&exe);
-        return result;
+        return IMAGE_TYPE_EXE;
     }
     else if (string_ends_with_ignore_case(path, ".bin"))
     {
-        type = BIN;
+        return IMAGE_TYPE_BIN;
     }
     else if (string_ends_with_ignore_case(path, ".cue"))
     {
-        type = CUE;
+        return IMAGE_TYPE_CUE;
     }
     else
     {
-        printf("Unrecognized file extension for file: %s\n", path);
+        return IMAGE_TYPE_NONE;
+    }
+}
+
+void psx_format_memcard(u8 *data)
+{
+    memset(data, 0, MEMCARD_SIZE);
+    data[0] = 'M';
+    data[1] = 'C';
+    data[0x7f] = 0xe;
+
+    // initialize directory frames
+    for (int i = 1; i < 16; ++i)
+    {
+        u8 *frame = &data[128 * i];
+        frame[0] = 0xa0;
+        frame[8] = 0xff;
+        frame[9] = 0xff;
+        frame[0x7f] = 0xa0;
+    }
+
+    // initialize broken sector list
+    for (int i = 16; i < 36; ++i)
+    {
+        u32 *frame = (u32 *)&data[128 * i];
+        frame[0] = 0xffffffff;
+    }
+
+    // sector replacement data / unused frames
+    for (int i = 36; i < 63; ++i)
+    {
+        u8 *frame = &data[128 * i];
+        memset(frame, 0xff, 128);
+    }
+
+    // write test frame - same as frame 0
+    memcpy(&data[128 * 63], &data[0], 128);
+#if 0
+    // initialize remaining 15 file blocks
+    for (int i = 0; i < 15; ++i)
+    {
+
+    }
+#endif
+}
+
+b8 psx_load_image(const char *path, psx_image_type type)
+{
+    b8 result = false;
+    switch (type)
+    {
+    case IMAGE_TYPE_EXE:
+    {
+        platform_file exe;
+        if (platform_open_file(path, FILE_OPEN_READ, &exe))
+        {
+            result = psx_load_exe(&exe);
+            platform_close_file(&exe);
+        }
+        break;
+    }
+    case IMAGE_TYPE_BIN:
+    case IMAGE_TYPE_CUE:
+    {
+        disk_image *disk = open_disk(path, type);
+        if (disk)
+        {
+            if (g_psx.disk != NULL)
+                close_disk(g_psx.disk);
+            g_psx.disk = disk;
+            psx_reset();
+            result = true;
+        }   
+        break;
+    }
+    default:
         return false;
     }
 
-    disk_image *disk = open_disk(path, type);
-    if (disk)
+    if (result)
     {
-        if (g_psx.disk != NULL)
-            close_disk(g_psx.disk);
-        strncpy(g_psx.disk_path, path, 4096);
-        g_psx.disk = disk;
-        psx_reset();
-        return true;
+        strcpy(g_psx.image_path, path);
+
+        platform_close_file(&g_psx.memcard);
+
+        char memcard_path[OS_PATH_MAX];
+        int len = sprintf(memcard_path, "memcards/");
+        if (platform_create_dir(memcard_path))
+        {
+            const char *str = NULL;
+            u32 name_len = platform_get_file_base_name(path, &str);
+            // should always succeed
+            SY_ASSERT(name_len);
+            
+            strncat(memcard_path, str, name_len);
+            strcat(memcard_path, ".mcd");
+
+            if (platform_open_file(memcard_path, FILE_OPEN_READ | FILE_OPEN_WRITE | FILE_OPEN_CREATE, &g_psx.memcard))
+            {
+                u64 temp = g_psx.arena.used;
+                u8 *data = push_arena(&g_psx.arena, MEMCARD_SIZE);
+
+                b8 format = false;
+                if (platform_read_file(&g_psx.memcard, 0, data, MEMCARD_SIZE) < MEMCARD_SIZE)
+                {
+                    format = true;
+                }
+                else
+                {
+                    if (data[0] != 'M' || data[1] != 'C' || data[0x7f] != 0xe)
+                    {
+                        format = true;
+                    }
+                }
+
+                if (format)
+                {
+                    // format memcard and write to disk
+                    platform_set_file_size(&g_psx.memcard, MEMCARD_SIZE);
+
+                    psx_format_memcard(data);
+
+                    platform_write_file(&g_psx.memcard, 0, data, MEMCARD_SIZE);
+                }
+
+                g_psx.arena.used = temp;
+            }
+        }
     }
-    else
-    {
-        return false;
-    }
+
+    return result;
 }
 
 b8 psx_load_bios(const char *path)
@@ -98,7 +206,7 @@ b8 psx_load_bios(const char *path)
     }
 
     struct file_dat file = {0};
-    if (allocate_and_read_file(path, 0, &file))
+    if (allocate_and_read_file(path, false, &file))
     {
         g_bios = file.memory;
         return true;
@@ -135,6 +243,9 @@ void psx_reset(void)
 
 void psx_shutdown(void)
 {
+    platform_close_file(&g_psx.memcard);
+    if (g_psx.disk)
+        close_disk(g_psx.disk);
     free_arena(&g_psx.arena);
 }
 

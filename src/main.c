@@ -40,7 +40,8 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
             g_renderer->handle_resize(width, height);
         }
-    } break;
+        break;
+    }
     case WM_CLOSE:
         g_running = false;
         break;
@@ -193,6 +194,7 @@ static void file_browser_window(u32 width, u32 height)
         }
 
         b8 result = false;
+        psx_image_type type = IMAGE_TYPE_NONE;
 
         if (drive_mask)
         {
@@ -223,7 +225,7 @@ static void file_browser_window(u32 width, u32 height)
         {
             char name[MAX_PATH];
             b8 is_dir = false;
-            int file_type = -1;
+
             const char *file;
             if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
             {
@@ -235,18 +237,8 @@ static void file_browser_window(u32 width, u32 height)
             }
             else 
             {
-                s32 file_type_index = -1;
-                const char *file_ext[] = {".exe", ".bin", ".cue"};
-                for (u32 i = 0; i < ARRAYCOUNT(file_ext); ++i)
-                {
-                    if (string_ends_with_ignore_case(data.cFileName, file_ext[i]))
-                    {
-                        file_type_index = i;
-                        break;
-                    }
-                }
-
-                if (file_type_index < 0)
+                type = psx_get_image_type_from_path(data.cFileName);
+                if (type == IMAGE_TYPE_NONE)
                     continue;
                 file = &data.cFileName[0];
             }
@@ -280,13 +272,13 @@ exit:
             show_files = false;
             if (psx_can_boot())
             {
-                if (psx_load_image(path))
+                if (psx_load_image(path, type))
                 {
                     g_psx.state = SYSTEM_STATE_RUNNING;
                 }
                 else
                 {
-                    printf("Error loading file: %s\n", path);
+                    debug_error("Error loading file: %s\n", path);
                 }
             }
         }
@@ -611,10 +603,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     if (psx_can_boot())
     {
+        b8 boots_into_bios = false;
         if (g_config.boot_file[0])
-            psx_load_image(g_config.boot_file);
+        {
+            if (!psx_load_image(g_config.boot_file, psx_get_image_type_from_path(g_config.boot_file)))
+            {
+                boots_into_bios = true;
+            }
+        }
         else
+        {
+            boots_into_bios = true;
+        }
+
+        if (boots_into_bios)
+        {
             psx_reset();
+
+            if (platform_open_file("memcards/default.mcd", FILE_OPEN_READ | FILE_OPEN_WRITE | FILE_OPEN_CREATE, &g_psx.memcard))
+            {
+                u64 temp = g_psx.arena.used;
+                u8 *data = push_arena(&g_psx.arena, MEMCARD_SIZE);
+                platform_set_file_size(&g_psx.memcard, MEMCARD_SIZE);
+                psx_format_memcard(data);
+                platform_write_file(&g_psx.memcard, 0, data, MEMCARD_SIZE);
+                g_psx.arena.used = temp;
+            }
+        }
         g_psx.state = SYSTEM_STATE_RUNNING;
     }
 

@@ -5,7 +5,7 @@
 
 #include <stdio.h>
 
-#include "audio.h"
+#include "audio/audio.h"
 #include "debug.h"
 #include "psx.h"
 

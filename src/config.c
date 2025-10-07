@@ -339,7 +339,7 @@ b8 load_config(void)
 {
     load_default_config();
     struct file_dat file;
-    if (allocate_and_read_file("sunny.cfg", FILE_FLAG_NULL_TERMINATE, &file))
+    if (allocate_and_read_file("sunny.cfg", true, &file))
     {
         struct config_table *table = parse_config(file.memory);
         if (!table)

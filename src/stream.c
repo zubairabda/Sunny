@@ -107,7 +107,7 @@ static void lba_to_string(u32 lba, char *buffer, size_t count)
     snprintf(buffer, count, "%02d:%02d:%02d", msf.m, msf.s, msf.f);
 }
 
-b8 allocate_and_read_file(const char *path, u32 flags, struct file_dat *out_file)
+b8 allocate_and_read_file(const char *path, b8 null_terminate, struct file_dat *out_file)
 {
     b8 result = false;
 
@@ -119,7 +119,7 @@ b8 allocate_and_read_file(const char *path, u32 flags, struct file_dat *out_file
     u64 size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    u64 alloc_sz = (flags & FILE_FLAG_NULL_TERMINATE) ? size + 1 : size;
+    u64 alloc_sz = null_terminate ? size + 1 : size;
     u8 *buf = malloc(alloc_sz);
     if (fread(buf, 1, size, f) != size)
     {
@@ -129,7 +129,7 @@ b8 allocate_and_read_file(const char *path, u32 flags, struct file_dat *out_file
     result = true;
     out_file->memory = buf;
     out_file->size = alloc_sz;
-    if (flags & FILE_FLAG_NULL_TERMINATE)
+    if (null_terminate)
     {
         buf[size] = '\0';
     }
@@ -354,7 +354,7 @@ static inline void parser_error(struct cue_parser *parser, const char *msg)
 static b8 parse_cue_sheet(const char *path, cue_data **data)
 {
     struct file_dat cue_sheet;
-    if (!allocate_and_read_file(path, FILE_FLAG_NULL_TERMINATE, &cue_sheet))
+    if (!allocate_and_read_file(path, true, &cue_sheet))
         return false;
 
     cue_string cue_dir = {0};
@@ -552,18 +552,7 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
                     }
                 }
             }
-#if 0
-            // TODO: remove
-            if (index <= 1 && track_count > 1)
-            {
-                struct cue_track *prev_track = &result->tracks[track_count - 2];
-                if (prev_track->file_index != current_file_index)
-                {
-                    track->file_offset = 0;
-                    prev_track->flags |= CUE_TRACK_FLAG_LAST_TRACK;
-                }
-            }
-#endif
+
             prev_track_offset = offset;
 
             printf("    Index: %d\n", index);
@@ -586,13 +575,7 @@ static b8 parse_cue_sheet(const char *path, cue_data **data)
         printf("Error: each file requires at least one track\n");
         goto error;
     }
-    // TODO: remove
-#if 0
-    if (track_count)
-    {
-        result->tracks[track_count - 1].flags |= CUE_TRACK_FLAG_LAST_TRACK;
-    }
-#endif
+    
     result->track_count = track_count;
     result->file_count = file_count;
     *data = result;
@@ -608,14 +591,14 @@ disk_image *open_disk(const char *path, psx_image_type type)
     disk_image *result = NULL;
     switch (type)
     {
-    case BIN:
+    case IMAGE_TYPE_BIN:
     {
         result = malloc(sizeof(disk_image));
         result->track_count = 1;
         result->file_count = 1;
         result->tracks = malloc(sizeof(struct disk_track));
         result->files = malloc(sizeof(platform_file));
-        if (!platform_open_file(path, &result->files[0]))
+        if (!platform_open_file(path, FILE_OPEN_READ, &result->files[0]))
         {
             return NULL;
         }
@@ -624,7 +607,7 @@ disk_image *open_disk(const char *path, psx_image_type type)
         result->tracks[0].start = 0;
         break;
     }
-    case CUE:
+    case IMAGE_TYPE_CUE:
     {
         cue_data *data = NULL;
         if (parse_cue_sheet(path, &data))
@@ -636,7 +619,7 @@ disk_image *open_disk(const char *path, psx_image_type type)
             u32 i = 0;
             for (const char *p = path; p[0] != '\0'; ++p, ++i)
             {
-                if (p[0] == '/' || p[0] == '\\')
+                if (platform_is_path_sep(p[0]))
                     dir_index = i;
             }
             if (dir_index >= 0)
@@ -652,7 +635,7 @@ disk_image *open_disk(const char *path, psx_image_type type)
             {
                 struct cue_file *file = &data->files[i];
                 strcat(file_path, file->file_name);
-                if (!platform_open_file(file_path, &result->files[i]))
+                if (!platform_open_file(file_path, FILE_OPEN_READ, &result->files[i]))
                 {
                     close_disk(result); // TODO:
                     return NULL;

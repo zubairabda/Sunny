@@ -3,6 +3,8 @@
 
 #include "common.h"
 
+#define MEMCARD_SIZE KILOBYTES(128)
+
 enum digital_pad_button
 {
     PAD_SELECT   = (1 << 0),
@@ -27,7 +29,14 @@ enum sio_state
 {
     SIO_STATE_NONE = 0,
     SIO_STATE_READ_CONTROLLER,
-    //SIO_STATE_READ_MEMCARD
+    SIO_STATE_READ_MEMCARD
+};
+
+enum mcd_command
+{
+    MCD_COMMAND_READ,
+    MCD_COMMAND_WRITE,
+    MCD_COMMAND_ID
 };
 
 typedef enum input_device_type
@@ -66,13 +75,18 @@ struct sio_context
     u32 sequence_len;
     u32 sequence_index;
     enum sio_state state;
-    //struct input_device_base *devices[2];
     SIO_STAT stat;
     u16 mode;
-    u16 control; 
+    u16 control;
     u16 baud_reload; // not sure if this needs a default value
-    u8 tx_buffer; // TODO: remove
     u8 rx_buffer;
+    u8 mcd_checksum;
+    enum mcd_command command;
+    u32 mcd_addr;
+    u8 flag;
+    u8 prev;
+    u8 mcd_buffer[128];
+
 };
 
 extern struct sio_context g_sio;
@@ -80,6 +94,5 @@ extern struct sio_context g_sio;
 void sio_reset(void);
 u16 sio_read(u32 offset);
 void sio_write(u32 offset, u16 value);
-
 
 #endif /* PAD_H */

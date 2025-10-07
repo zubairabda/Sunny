@@ -250,10 +250,8 @@ u32 counters_read(u32 offset)
     switch (timer_offset)
     {
     case 0x0:
-        //SY_ASSERT(timer_index != 0);
         tick_counter(timer_index);
         result = counter->value;
-        //printf("read timer %d value: %d\n", timer_index, result);
         break;
     case 0x4:
         tick_counter(timer_index);
@@ -267,7 +265,6 @@ u32 counters_read(u32 offset)
         break;
     INVALID_CASE;
     }
-    //debug_log("TIMER %u READ -> %u\n", timer_index, result);
     return result;
 }
 
@@ -289,11 +286,9 @@ void counters_store(u32 offset, u32 value)
             remove_event(counter->interrupt_event);
             counter->interrupt_event = schedule_event(timer_callback_id, timer_index, get_timer_ticks_until_interrupt(timer_index));
         }
-        //printf("set timer %d value: %d\n", timer_index, counter->value);
         break;
     case 0x4:
         // timer mode register
-        //printf("set timer %d mode: %d\n", timer_index, value & 0x3ff);
         if (timer_index < 2)
         {
             //gpu_hsync();
@@ -321,7 +316,6 @@ void counters_store(u32 offset, u32 value)
     case 0x8:
         // TODO: tick timer here?
         counter->target = value & 0xffff;
-        //printf("set timer %d target: %d\n", timer_index, counter->target);
         break;
     INVALID_CASE;
     }

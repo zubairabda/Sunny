@@ -18,14 +18,18 @@ typedef struct
     struct memory_arena arena;
     disk_image *disk;
     struct input_device_base *controllers[2];
-    char disk_path[4096];
+    platform_file memcard;
+    char image_path[OS_PATH_MAX];
 } psx_state;
 
 extern psx_state g_psx;
 
-b8 psx_load_image(const char *path);
+psx_image_type psx_get_image_type_from_path(const char *path);
+b8 psx_load_image(const char *path, psx_image_type type);
 b8 psx_load_bios(const char *path);
 b8 psx_can_boot(void);
+
+void psx_format_memcard(u8 *data);
 void psx_add_controller(u32 port, input_device_type type, void (*fp_read_data)(struct input_device_base *));
 void psx_remove_controller(u32 port);
 
