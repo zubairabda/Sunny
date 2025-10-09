@@ -462,9 +462,8 @@ static inline s16 read_cd_buffer(void)
 void spu_tick(u32 param, s32 ticks_late)
 {
     // not sure if we need to emulate this, but spustat applies its changes delayed, im assuming to the next tick
-    g_spu.regs.control.spustat &= ~(0x5f);
-    g_spu.regs.control.spustat |= (g_spu.regs.control.spustat & 0x1f);
-    g_spu.regs.control.spustat |= (g_spu.regs.control.spustat << 2) & 0x40;
+    g_spu.regs.control.spustat &= ~(0x3f);
+    g_spu.regs.control.spustat |= (g_spu.regs.control.spucnt & 0x3f);
     // pending transfers also happen on the next tick
     if (g_spu.transfer_fifo_len)
     {

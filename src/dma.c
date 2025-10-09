@@ -88,13 +88,20 @@ b8 cdrom_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
 
 b8 spu_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
 {
-    SY_ASSERT(from_ram);
     u32 addr = *paddr;
     u32 word;
     while (size--)
     {
-        word = U32FromPtr(g_ram + addr);
-        U32FromPtr(g_dram + g_spu.current_transfer_addr) = word;
+        if (from_ram)
+        {
+            word = U32FromPtr(g_ram + addr);
+            U32FromPtr(g_dram + g_spu.current_transfer_addr) = word;
+        }
+        else
+        {
+            word = U32FromPtr(g_dram + g_spu.current_transfer_addr);
+            U32FromPtr(g_ram + addr) = word;
+        }
         g_spu.current_transfer_addr += 4;
         addr += step;
     }
