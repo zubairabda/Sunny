@@ -378,7 +378,7 @@ static u32 cdrom_read_next_sector(void)
 
                     if (flags & CDR_MODE_XAFILTER)
                     {
-                        if (file != g_cdrom.xa_file && channel != g_cdrom.xa_channel)
+                        if (file != g_cdrom.xa_file || channel != g_cdrom.xa_channel)
                             return next_int;
                     }
 

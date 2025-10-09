@@ -143,16 +143,16 @@ enum gte_op
 
 static inline u32 lzcnt32(u32 value)
 {
-#if defined(__LZCNT__) 
+#if 0
     return _lzcnt_u32(value);
 #else
-    u32 r = 0;
-    u32 c = 31;
-    while (!(value & (1 << c))) {
-        --c;
-        ++r;
-    }
-    return r;
+    if (!value)
+        return 0;
+    u32 n = 0;
+    u32 m = 0x80000000;
+    for (u32 m = 0x80000000; !(value & m); m >>= 1)
+        ++n;
+    return n;
 #endif
 }
 

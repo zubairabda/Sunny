@@ -7,17 +7,20 @@
 #if defined(SY_PLATFORM_WIN32)
 typedef struct
 {
+    void *data;
+    HDC dc;
+    HBITMAP handle;
+} win32_bitmap;
+
+typedef struct
+{
     software_renderer sw;
     HWND window;
     int window_width;
     int window_height;
-    HDC vram_dc;
-    HBITMAP vram_bitmap;
-    void *vram_data;
-    HDC fullscreen_dc;
-    HBITMAP fullscreen_bitmap;
-    //BITMAPINFO window_bitmap_info;
-    void *fullscreen_data;
+    win32_bitmap vram_bmp;
+    win32_bitmap fullscreen_bmp;
+    win32_bitmap vram24_bmp;
 } win32_software_renderer;
 #endif
 

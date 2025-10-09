@@ -43,9 +43,9 @@ static void handle_resize(u32 width, u32 height)
     fullscreen.bmiHeader.biBitCount = 32;
     fullscreen.bmiHeader.biCompression = BI_RGB;
 
-    DeleteObject(renderer->fullscreen_bitmap);
-    renderer->fullscreen_bitmap = CreateDIBSection(renderer->fullscreen_dc, &fullscreen, DIB_RGB_COLORS, (void **)&renderer->fullscreen_data, 0, 0);
-    SelectObject(renderer->fullscreen_dc, renderer->fullscreen_bitmap);
+    DeleteObject(renderer->fullscreen_bmp.handle);
+    renderer->fullscreen_bmp.handle = CreateDIBSection(renderer->fullscreen_bmp.dc, &fullscreen, DIB_RGB_COLORS, (void **)&renderer->fullscreen_bmp.data, 0, 0);
+    SelectObject(renderer->fullscreen_bmp.dc, renderer->fullscreen_bmp.handle);
 
     renderer->window_width = width;
     renderer->window_height = height;
@@ -57,17 +57,10 @@ void update_vram(void)
 #if defined(SY_PLATFORM_WIN32)
     win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
     u16 *vram = renderer->sw.vram;
-    u32 *vram_texture = renderer->vram_data;
-    if (g_gpu.stat.display_depth_24_bit)
+    u32 *vram_bitmap = renderer->vram_bmp.data;
+    for (int i = 0; i < (VRAM_SIZE >> 1); ++i)
     {
-
-    }
-    else
-    {
-        for (int i = 0; i < (VRAM_SIZE >> 1); ++i)
-        {
-            vram_texture[i] = swizzle_16_32(vram[i]);
-        }
+        vram_bitmap[i] = swizzle_16_32(vram[i]);
     }
 #endif
 }
@@ -284,37 +277,86 @@ static void update_display(void)
     int screen_x = (window_width - screen_w) / 2;
     int screen_y = (window_height - screen_h) / 2;
 
-    memset(renderer->fullscreen_data, 0, (window_width * window_height * 4));
+    memset(renderer->fullscreen_bmp.data, 0, (window_width * window_height * 4));
 
     // TODO: implement
+    HDC src_dc = 0;
+    u32 disp_x = 0;
+    u32 disp_y = 0;
     if (g_gpu.stat.display_depth_24_bit)
     {
+        src_dc = renderer->vram24_bmp.dc;
+        u16 *data = renderer->sw.vram;
+        u32 *dst = renderer->vram24_bmp.data;
+        int sy = src_y;
 
+        for (int y = 0; y < src_h; ++y)
+        {
+            u8 *src = (u8 *)&data[src_x + (sy * VRAM_WIDTH)];
+            for (int x = 0; x < src_w; ++x)
+            {
+                u32 red = src[0];
+                u32 green = src[1];
+                u32 blue = src[2];
+                src += 3;
+                u32 result = (red << 16) | (green << 8) | blue;
+                
+                dst[x + (y * 640)] = result;
+            }
+            ++sy;
+        }
+    }
+    else
+    {
+        src_dc = renderer->vram_bmp.dc;
+        disp_x = src_x;
+        disp_y = src_y;
     }
 
-    StretchBlt(renderer->fullscreen_dc, screen_x, screen_y, screen_w, screen_h, renderer->vram_dc, src_x, src_y, src_w, src_h, SRCCOPY);
+    StretchBlt(renderer->fullscreen_bmp.dc, screen_x, screen_y, screen_w, screen_h, src_dc, disp_x, disp_y, src_w, src_h, SRCCOPY);
 #else
-    StretchBlt(renderer->fullscreen_dc, 0, 0, window_width, window_height, renderer->vram_dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);
+    StretchBlt(renderer->fullscreen_bmp.dc, 0, 0, window_width, window_height, renderer->vram_bmp.dc, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, SRCCOPY);
 #endif
 
-    draw_debug_ui(renderer->fullscreen_data, window_width, window_height);
+    draw_debug_ui(renderer->fullscreen_bmp.data, window_width, window_height);
 
     HDC window_dc = GetDC(renderer->window);
 
-    BitBlt(window_dc, 0, 0, window_width, window_height, renderer->fullscreen_dc, 0, 0, SRCCOPY);
+    BitBlt(window_dc, 0, 0, window_width, window_height, renderer->fullscreen_bmp.dc, 0, 0, SRCCOPY);
 
     ReleaseDC(renderer->window, window_dc);
 #endif
+}
+
+static void win32_delete_bitmap(win32_bitmap *bmp)
+{
+    DeleteObject(bmp->handle);
+    DeleteDC(bmp->dc);
+}
+
+static void win32_create_bitmap(int width, int height, int bpp, win32_bitmap *bmp)
+{
+    BITMAPINFO bitmap_info = {0};
+    bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
+    bitmap_info.bmiHeader.biWidth = width;
+    bitmap_info.bmiHeader.biHeight = -height; // negative height so we can use 0,0 as top-left
+    bitmap_info.bmiHeader.biPlanes = 1;
+    bitmap_info.bmiHeader.biBitCount = bpp;
+    bitmap_info.bmiHeader.biCompression = BI_RGB;
+
+    bmp->dc = CreateCompatibleDC(0);
+    bmp->handle = CreateDIBSection(bmp->dc, &bitmap_info, DIB_RGB_COLORS, &bmp->data, NULL, 0);
+
+    SelectObject(bmp->dc, bmp->handle);
 }
 
 void platform_shutdown_software_renderer(void)
 {
 #if defined(SY_PLATFORM_WIN32)
     win32_software_renderer *renderer = (win32_software_renderer *)g_renderer;
-    DeleteObject(renderer->vram_bitmap);
-    DeleteObject(renderer->fullscreen_bitmap);
-    DeleteDC(renderer->vram_dc);
-    DeleteDC(renderer->fullscreen_dc);
+    win32_delete_bitmap(&renderer->fullscreen_bmp);
+    win32_delete_bitmap(&renderer->vram_bmp);
+    win32_delete_bitmap(&renderer->vram24_bmp);
     free(renderer->sw.vram);
     free(renderer);
 #endif
@@ -324,40 +366,26 @@ software_renderer *platform_init_software_renderer(platform_window *window)
 {
 #if defined(SY_PLATFORM_WIN32)
     win32_software_renderer *result = malloc(sizeof(win32_software_renderer));
-    if (!result) {
+    if (!result)
         return NULL;
-    }
+
     memset(result, 0, sizeof(win32_software_renderer));
 
-    result->vram_dc = CreateCompatibleDC(0);
-#if 1
-    BITMAPINFO bitmap_info = {0};
-    bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
-    bitmap_info.bmiHeader.biWidth = VRAM_WIDTH;
-    bitmap_info.bmiHeader.biHeight = -VRAM_HEIGHT; // negative height so we can use 0,0 as top-left
-    bitmap_info.bmiHeader.biPlanes = 1;
-    bitmap_info.bmiHeader.biBitCount = 32;
-    bitmap_info.bmiHeader.biCompression = BI_RGB;
-#endif
     // actual vram data which draw commands write to
     void *vram = malloc(VRAM_SIZE);
-    if (!vram) {
-        DeleteDC(result->vram_dc);
+    if (!vram)
+    {
+        DeleteDC(result->vram_bmp.dc);
         free(result);
         return NULL;
     }
 
     // vram texture that is blitted to screen, copied from the original vram
-    result->vram_bitmap = CreateDIBSection(NULL, &bitmap_info, DIB_RGB_COLORS, (void **)&result->vram_data, 0, 0);
-
-    SelectObject(result->vram_dc, result->vram_bitmap);
+    win32_create_bitmap(VRAM_WIDTH, VRAM_HEIGHT, 32, &result->vram_bmp);
 
     result->sw.vram = vram;
 
     result->window = window->handle;
-
-    result->fullscreen_dc = CreateCompatibleDC(0);
-    SetStretchBltMode(result->fullscreen_dc, COLORONCOLOR);
 
     RECT client;
     GetClientRect(window->handle, &client);
@@ -365,17 +393,10 @@ software_renderer *platform_init_software_renderer(platform_window *window)
     int width = client.right - client.left;
     int height = client.bottom - client.top;
 
-    BITMAPINFO fullscreen = {0};
-    fullscreen.bmiHeader.biSize = sizeof(fullscreen.bmiHeader);
-    fullscreen.bmiHeader.biWidth = width;
-    fullscreen.bmiHeader.biHeight = -height;
-    fullscreen.bmiHeader.biPlanes = 1;
-    fullscreen.bmiHeader.biBitCount = 32;
-    fullscreen.bmiHeader.biCompression = BI_RGB;
+    win32_create_bitmap(width, height, 32, &result->fullscreen_bmp);
+    SetStretchBltMode(result->fullscreen_bmp.dc, COLORONCOLOR);
 
-    result->fullscreen_bitmap = CreateDIBSection(NULL, &fullscreen, DIB_RGB_COLORS, (void **)&result->fullscreen_data, 0, 0);
-
-    SelectObject(result->fullscreen_dc, result->fullscreen_bitmap);
+    win32_create_bitmap(640, 480, 32, &result->vram24_bmp);
 
     result->window_width = width;
     result->window_height = height;
