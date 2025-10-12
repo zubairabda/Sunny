@@ -278,8 +278,7 @@ static void update_display(void)
     int screen_y = (window_height - screen_h) / 2;
 
     memset(renderer->fullscreen_bmp.data, 0, (window_width * window_height * 4));
-
-    // TODO: implement
+    
     HDC src_dc = 0;
     u32 disp_x = 0;
     u32 disp_y = 0;
