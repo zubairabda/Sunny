@@ -12,7 +12,7 @@ u16 *g_copy_buffer;
 u16 *g_readback_buffer;
 
 static u32 scanline_callback_id;
-static s32 dotclks[] = {10, 8, 5, 4};
+static s8 dotclks[] = {10, 8, 5, 4};
 
 static void fill_vram(u32 *commands)
 {
@@ -280,6 +280,9 @@ void execute_gp1_command(u32 command)
         u32 register_index = (command & 0x00ffffff);
         switch (register_index)
         {
+        case 0x2:
+            g_gpu.read = g_gpu.texture_window_bits;
+            break;
         case 0x3:
             g_gpu.read = (g_gpu.drawing_area.left & 0x3ff) | (g_gpu.drawing_area.top << 10);
             break;
@@ -441,7 +444,8 @@ void execute_gp0_command(u32 word)
                     u16 texpage_attribute = (u16)((commands[op & POLYGON_FLAG_GOURAUD_SHADED ? 5 : 4]) >> 16);
                     g_gpu.stat.value &= 0xffff7e00;
                     g_gpu.stat.value |= (texpage_attribute & 0x1ff);
-                    if (g_gpu.allow_texture_disable) {
+                    if (g_gpu.allow_texture_disable)
+                    {
                         g_gpu.stat.value |= ((texpage_attribute & 0x800) << 4);
                     }
                 }
@@ -453,17 +457,18 @@ void execute_gp0_command(u32 word)
             {
                 if (op & LINE_FLAG_POLYLINE)
                 {
-                    if ((word & 0xf000f000) == 0x50005000) // terminator flag
+                    // terminator flag
+                    if ((word & 0xf000f000) != 0x50005000)
                     {
-
-                    }
-                    else if (op & LINE_FLAG_GOURAUD_SHADED) 
-                    {
-                        g_gpu.pending_words = 4;
-                    }
-                    else
-                    {
-                        g_gpu.pending_words = 3;
+                        if (op & LINE_FLAG_GOURAUD_SHADED)
+                        {
+                            g_gpu.pending_words = 2;
+                        }
+                        else
+                        {
+                            g_gpu.pending_words = 1;
+                        }
+                        g_gpu.fifo_len = 1; // truncate fifo to only contain the command word
                     }
                 }
                 break;
@@ -538,10 +543,17 @@ void execute_gp0_command(u32 word)
                     //debug_log("GP0: 0xE1\n");
                     break;
                 case 0xe2:
-                    g_gpu.texture_window_mask_x = commands[0] & 0x1f;
-                    g_gpu.texture_window_mask_y = (commands[0] >> 5) & 0x1f;
-                    g_gpu.texture_window_offset_x = (commands[0] >> 10) & 0x1f;
-                    g_gpu.texture_window_offset_y = (commands[0] >> 15) & 0x1f;
+                    g_gpu.texture_window_bits = commands[0] & 0xfffff;
+
+                    u32 texture_window_mask_x = commands[0] & 0x1f;
+                    u32 texture_window_mask_y = (commands[0] >> 5) & 0x1f;
+                    u32 texture_window_offset_x = (commands[0] >> 10) & 0x1f;
+                    u32 texture_window_offset_y = (commands[0] >> 15) & 0x1f;
+
+                    g_gpu.texture_window_premask_x = ~(texture_window_mask_x * 8);
+                    g_gpu.texture_window_premask_y = ~(texture_window_mask_y * 8);
+                    g_gpu.texture_window_postmask_x = (texture_window_offset_x & texture_window_mask_x) * 8;
+                    g_gpu.texture_window_postmask_y = (texture_window_offset_y & texture_window_mask_y) * 8;
                     break;
                 case 0xe3:
                     // NOTE: v2 gpu has 10 bits for top

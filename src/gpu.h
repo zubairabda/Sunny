@@ -73,17 +73,13 @@ typedef union
 struct gpu_state
 {
     gpu_command_type command_type;
-
+    u32 read;
     u32 fifo[16];
     u32 fifo_len;
-    u32 read;
     GPUSTAT stat;
-    // timings
+
     u32 remainder_cycles;
     u32 hblanks;
-    s32 dot_div;
-    
-    b8 allow_texture_disable;
 
     u32 scanline;
     u32 copy_buffer_len;
@@ -91,16 +87,21 @@ struct gpu_state
     u32 read_index;
     
     rect2 drawing_area;
+
     s16 draw_offset_x;
     s16 draw_offset_y;
+
+    b8 allow_texture_disable;
+    s8 dot_div;
     b8 pending_load;
     b8 pending_store;
-    u32 pending_words;
     struct load_params load;
-    u8 texture_window_mask_x;
-    u8 texture_window_mask_y;
-    u8 texture_window_offset_x;
-    u8 texture_window_offset_y;
+    u32 pending_words;
+    u32 texture_window_bits;
+    u32 texture_window_premask_x;
+    u32 texture_window_premask_y;
+    u32 texture_window_postmask_x;
+    u32 texture_window_postmask_y;
     u16 vram_display_x;
     u16 vram_display_y;
     u16 horizontal_display_x1;

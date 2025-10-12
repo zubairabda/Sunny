@@ -341,10 +341,8 @@ static void apply_fir_filter(struct fir_filter *filter, s32 left, s32 right, spu
         sum_r += (filter->buffer[index].right * fir_coefficients[i]) >> 15;
     }
 
-    //output->left = clamp16(sum_l);
-    //output->right = clamp16(sum_r);
-    SY_ASSERT(sum_l >= -0x8000 && sum_l <= 0x7fff); // TODO: remove
-    SY_ASSERT(sum_r >= -0x8000 && sum_r <= 0x7fff);
+    //SY_ASSERT(sum_l >= -0x8000 && sum_l <= 0x7fff); // TODO: remove
+    //SY_ASSERT(sum_r >= -0x8000 && sum_r <= 0x7fff);
     output->left = sum_l;
     output->right = sum_r;
 }

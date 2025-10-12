@@ -473,7 +473,51 @@ static inline u32 blend_texel(u32 r, u32 g, u32 b, u16 texel)
     u32 blue = ((b * texel_b) >> 7) >> 3;
     return red | (green << 5) | (blue << 10) | (texel & 0x8000);
 }
+#if 0
+static inline u32 sample_texture(u16 *vram, u32 mode, s32 texcoord_x, s32 texcoord_y, vec2i texpage, vec2i clut)
+{
+    u32 texel = 0;
+    switch (mode)
+    {
+    case TEXTURE_MODE_DIRECT:
+    {
+        s32 sample_x = texcoord_x + texpage.x;
+        s32 sample_y = texcoord_y + texpage.y;
+        texel = vram[sample_x + (sample_y * VRAM_WIDTH)];
+        break;
+    }
+    case TEXTURE_MODE_4BPP:
+    {
+        s32 sample_x = (texcoord_x >> 2) + texpage.x;
+        s32 sample_y = texcoord_y + texpage.y;
 
+        s32 shift = (texcoord_x & 0x3) << 2;
+
+        u16 sample = vram[sample_x + (sample_y * VRAM_WIDTH)];
+
+        int index = (sample >> shift) & 0xf;
+
+        texel = vram[(clut.x + index) + (clut.y * VRAM_WIDTH)];
+        break;
+    }
+    case TEXTURE_MODE_8BPP:
+    {
+        s32 sample_x = (texcoord_x >> 1) + texpage.x;
+        s32 sample_y = texcoord_y + texpage.y;
+
+        s32 shift = (texcoord_x & 0x1) << 3;
+
+        u16 sample = vram[sample_x + (sample_y * VRAM_WIDTH)];
+
+        int index = (sample >> shift) & 0xff;
+
+        texel = vram[(clut.x + index) + (clut.y * VRAM_WIDTH)];
+        break;
+    }
+    }
+    return texel;
+}
+#endif
 static inline s32 edge(vec2i a, vec2i b, vec2i p)
 {
     return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
@@ -605,7 +649,11 @@ static void rasterize_triangle(vertex v0, vertex v1, vertex v2, draw_params *par
                     s32 texcoord_x = (w0 * v0.uv.x + w1 * v1.uv.x + w2 * v2.uv.x) / area;
                     s32 texcoord_y = (w0 * v0.uv.y + w1 * v1.uv.y + w2 * v2.uv.y) / area;
 
-                    //u32 texel = (u32)sample_texture(vram, mode, texcoord_x, texcoord_y, texture_page, clut);
+                    texcoord_x = (texcoord_x & g_gpu.texture_window_premask_x) | g_gpu.texture_window_postmask_x;
+                    texcoord_y = (texcoord_y & g_gpu.texture_window_premask_y) | g_gpu.texture_window_postmask_y;
+#if 0
+                    u32 texel = sample_texture(vram, mode, texcoord_x, texcoord_y, texpage, clut);
+#else
                     u32 texel = 0;
 
                     switch (mode)
@@ -646,7 +694,7 @@ static void rasterize_triangle(vertex v0, vertex v1, vertex v2, draw_params *par
                         break;
                     }
                     }
-
+#endif
                     if (!texel)
                     {
                         e0 += dy0;
@@ -952,6 +1000,9 @@ void draw_rectangle(u32 *commands, u32 op)
                     if (vram[x + y * VRAM_WIDTH] & 0x8000)
                         continue;
                 }
+
+                texcoord_x = (texcoord_x & g_gpu.texture_window_premask_x) | g_gpu.texture_window_postmask_x;
+                texcoord_y = (texcoord_y & g_gpu.texture_window_premask_y) | g_gpu.texture_window_postmask_y;
 
                 u16 texel = 0;
 
