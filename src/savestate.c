@@ -97,6 +97,7 @@ b8 load_system_state(void)
     u32 path_len;
     savestate_load(save, &path_len, sizeof(path_len));
     savestate_load(save, g_psx.image_path, path_len);
+    g_psx.image_path[path_len] = '\0';
 
     psx_image_type type = psx_get_image_type_from_path(g_psx.image_path);
     psx_load_image(g_psx.image_path, type);

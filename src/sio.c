@@ -341,9 +341,9 @@ void sio_reset(void)
     tx_callback_id = register_callback(pad_tx_event);
 }
 
-u16 sio_read(u32 offset)
+u32 sio_read(u32 offset)
 {
-    u16 result = 0;
+    u32 result = 0;
     switch (offset)
     {
     case 0x0:

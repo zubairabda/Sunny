@@ -8,7 +8,7 @@
 extern u8 *g_bios;
 extern u8 *g_ram;
 extern u8 *g_scratch;
-extern u8 *g_peripheral;
+extern u8 *g_memctrl_1;
 
 u32 get_read_delay(u32 addr);
 

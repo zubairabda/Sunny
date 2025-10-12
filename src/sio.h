@@ -92,7 +92,7 @@ struct sio_context
 extern struct sio_context g_sio;
 
 void sio_reset(void);
-u16 sio_read(u32 offset);
+u32 sio_read(u32 offset);
 void sio_write(u32 offset, u16 value);
 
 #endif /* PAD_H */

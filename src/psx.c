@@ -227,6 +227,7 @@ void psx_reset(void)
 
     g_ram = push_arena(arena, MEGABYTES(2));
     g_scratch = push_arena(arena, KILOBYTES(1));
+    g_memctrl_1 = push_arena(arena, 0x24);
 
     // initialize ram with known garbage debug value
     memset32(g_ram, 0xdeadbeef, RAM_SIZE / 4);

@@ -108,7 +108,7 @@ void close_disk(disk_image *disk);
 b8 read_disk_sector(disk_image *disk, u32 lba, void *buffer);
 b8 read_disk_data(disk_image *disk, u32 lba, size_t size, void *buffer);
 
-void write_bmp(int width, int height, void *data, const char *path);
+void write_bmp(int width, int height, int bytes_per_pixel, void *data, const char *path);
 void write_wav_file(void *sample_data, u32 size_in_bytes, const char *path);
 
 #endif /* STREAM_H */

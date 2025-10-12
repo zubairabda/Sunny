@@ -295,7 +295,6 @@ static void dma_handle_next_transfer(u32 channel, s32 ticks_late)
         else
         {
             //debug_log("[DMA] finished transfer for channel %u\n", channel);
-
             port->control &= ~(0x1000000);
             dma_set_interrupt(channel);
 
@@ -315,6 +314,15 @@ static void dma_handle_next_transfer(u32 channel, s32 ticks_late)
         SY_ASSERT(channel == CH_MDECOUT); // we haven't experienced this with any other channel
         transfer->pending = true;
         transfer->pending_words = transfer_size;
+
+        // NOTE: since some games interrupt an MDECin transfer with an MDECout one, we need to also handle channel switching here
+        g_dma.active_channel = -1;
+        g_dma.event = 0;
+        s32 next_channel = dma_select_channel();
+        if (next_channel >= 0)
+        {
+            g_dma.event = schedule_event(dma_callback_id, next_channel, 0);
+        }
     }
 
     // NOTE: if priorities are changed during a transfer, it should be checked here
@@ -443,18 +451,22 @@ void dma_write(u32 offset, u32 value)
             else
             {
                 debug_warn("[DMA] stop transfer for channel %u\n", channel);
-                g_dma.transfers[channel].in_progress = false;
-                if (g_dma.event)
+                if (g_dma.transfers[channel].in_progress)
                 {
-                    remove_event(g_dma.event);
-                    g_dma.event = 0;
-                    // since the next channel to transfer relies on the current channel to re-select a channel,
-                    // we need to do it here
-                    g_dma.active_channel = -1;
-                    s32 next_channel = dma_select_channel();
-                    if (next_channel >= 0)
+                    g_dma.transfers[channel].in_progress = false;
+                    if ((s32)channel == g_dma.active_channel)
                     {
-                        g_dma.event = schedule_event(dma_callback_id, next_channel, 0);
+                        SY_ASSERT(g_dma.event);
+                        remove_event(g_dma.event);
+                        g_dma.event = 0;
+                        // since the next channel to transfer relies on the current channel to re-select a channel,
+                        // we need to do it here
+                        g_dma.active_channel = -1;
+                        s32 next_channel = dma_select_channel();
+                        if (next_channel >= 0)
+                        {
+                            g_dma.event = schedule_event(dma_callback_id, next_channel, 0);
+                        }
                     }
                 }
             }

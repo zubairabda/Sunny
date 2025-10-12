@@ -716,7 +716,7 @@ b8 read_disk_data(disk_image *disk, u32 lba, size_t size, void *buffer)
     return false;    
 }
 
-void write_bmp(int width, int height, void *data, const char *path)
+void write_bmp(int width, int height, int bytes_per_pixel, void *data, const char *path)
 {
 #pragma pack(push, 1)
     typedef struct
@@ -744,21 +744,21 @@ void write_bmp(int width, int height, void *data, const char *path)
 #pragma pack(pop)
     FILE *file = fopen(path, "wb");
 
-    u32 image_width = width;
-    // if the width is odd, must pad scanlines to 4-byte boundary
-    if (width & 0x1)
-        image_width += 1;
+    // scanlines are padded to 4-byte boundaries
+    int width_size = width * bytes_per_pixel;
+    int row = (width_size + 3) & ~0x3;
+    int pad = row - width_size;
 
-    u32 px_data_size = image_width * height * 2;
+    int px_data_size = row * height;
 
-    u16 *pixels = calloc(image_width * height, 2);
+    u8 *pixels = calloc(px_data_size, 1);
     if (!pixels)
         return;
     
-    u16 *src = data;
+    u8 *src = data;
 
     for (int i = 0; i < height; ++i)
-        memcpy(&pixels[i * image_width], &src[i * width], width * 2);
+        memcpy(&pixels[i * row], &src[i * width_size], width_size);
     
     u32 filesize = px_data_size + sizeof(BmpHeader) + sizeof(BmpInfo);
     
@@ -773,7 +773,7 @@ void write_bmp(int width, int height, void *data, const char *path)
     info.width = width;
     info.height = -height;
     info.planes = 1;
-    info.bpp = 16;
+    info.bpp = bytes_per_pixel * 8;
 
     fwrite(&header, sizeof(BmpHeader), 1, file);
     fwrite(&info, sizeof(BmpInfo), 1, file);

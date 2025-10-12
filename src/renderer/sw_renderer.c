@@ -395,7 +395,6 @@ software_renderer *platform_init_software_renderer(platform_window *window)
 
     win32_create_bitmap(width, height, 32, &result->fullscreen_bmp);
     SetStretchBltMode(result->fullscreen_bmp.dc, COLORONCOLOR);
-
     win32_create_bitmap(640, 480, 32, &result->vram24_bmp);
 
     result->window_width = width;

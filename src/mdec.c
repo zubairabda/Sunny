@@ -208,20 +208,39 @@ static void yuv_to_rgb15(u16 *dst, u16 *crblk, u16 *cbblk, u16 *yblk, u8 xx, u8 
             r = clamp8(r + Y);
             g = clamp8(g + Y);
             b = clamp8(b + Y);
-            #if 0
-            u16 red = (r >> 3) & 0x1f;
-            u16 green = (g >> 3) & 0x1f;
-            u16 blue = (b >> 3) & 0x1f;
-            u16 result = r | (g << 5) | (b << 10);
-            #else
             u32 result = r | (g << 8) | (b << 16);
             result ^= (0x808080 * !signed_output);
-            #endif
             dst[(x + xx) + (y + yy) * 16] = color16from24(result);
         }
     }
 }
 
+static void yuv_to_rgb24(u8 *dst, u16 *crblk, u16 *cbblk, u16 *yblk, u8 xx, u8 yy, b8 signed_output)
+{
+    for (u8 y = 0; y < 8; ++y)
+    {
+        for (u8 x = 0; x < 8; ++x)
+        {
+            s16 cr = *(crblk + ((x + xx) / 2) + ((y + yy) / 2) * 8);
+            s16 cb = *(cbblk + ((x + xx) / 2) + ((y + yy) / 2) * 8);
+            u32 g = (-0.3437f * cb) + (-0.7143f * cr);
+            u32 r = cr * 1.402f;
+            u32 b = cb * 1.772f;
+            s16 Y = *(yblk + x + y * 8);
+            r = clamp8(r + Y);
+            g = clamp8(g + Y);
+            b = clamp8(b + Y);
+            u32 result = r | (g << 8) | (b << 16);
+            result ^= (0x808080 * !signed_output);
+            u32 index = ((x + xx) + (y + yy) * 16) * 3;
+            dst[index + 0] = result & 0xff;
+            dst[index + 1] = (result >> 8) & 0xff;
+            dst[index + 2] = (result >> 16) & 0xff;
+        }
+    }
+}
+#include "stream.h"
+static u8 strip_buffer[5760];
 static void mdec_decode(void)
 {
     u32 bit_depth = (g_mdec.command >> 27) & 0x3; // TODO: move
@@ -262,32 +281,8 @@ static void mdec_decode(void)
             {
                 break;
             }
-#if 0
-            // reorder blocks into contiguous buffer
-            u16 lum[256];
-            for (int x = 0; x < 16; ++x)
-            {
-                for (int y = 0; y < 16; ++y)
-                {
-                    int b = y >= 8 ? 2 : 0;
-                    u16 Y = 0;
-                    int row = y & 0x7; // normalize coords
-                    int col = x & 0x7;
-                    if (x < 8)
-                    {
-                        Y = yblk[b][row * 8 + col];
-                    }
-                    else
-                    {
-                        Y = yblk[1 + b][row * 8 + col];
-                    }
-                    u8 grayscale = Y >> 8;
-                    u32 value = grayscale | (grayscale << 8) | (grayscale << 16);
-                    value ^= (0x808080 * !signed_output);
-                    lum[y * 16 + x] = color16from24(value);
-                }
-            }
-#endif
+
+            // TODO: please do better
             if (bit_depth == MDEC_DEPTH_15)
             {
                 u32 dst[128];
@@ -302,13 +297,29 @@ static void mdec_decode(void)
                     g_mdec.data_fifo[idx] = dst[i];
                     idx = (idx + 1) & (DATA_FIFO_SIZE - 1);
                 }
-                g_mdec.data_fifo_tail = (g_mdec.data_fifo_tail + 128) & (DATA_FIFO_SIZE - 1);
+                //g_mdec.data_fifo_tail = (g_mdec.data_fifo_tail + 128) & (DATA_FIFO_SIZE - 1);
+                g_mdec.data_fifo_tail = idx;
                 g_mdec.data_fifo_count += 128;
             }
             else
             {
-                SY_ASSERT(0);
+                u32 dst[192];
+                u8 *result = (u8 *)dst;
+                yuv_to_rgb24(result, crblk, cbblk, yblk[0], 0, 0, signed_output);
+                yuv_to_rgb24(result, crblk, cbblk, yblk[1], 8, 0, signed_output);
+                yuv_to_rgb24(result, crblk, cbblk, yblk[2], 0, 8, signed_output);
+                yuv_to_rgb24(result, crblk, cbblk, yblk[3], 8, 8, signed_output);
+
+                u32 idx = g_mdec.data_fifo_tail;
+                for (u16 i = 0; i < 192; ++i)
+                {
+                    g_mdec.data_fifo[idx] = dst[i];
+                    idx = (idx + 1) & (DATA_FIFO_SIZE - 1);
+                }
+                g_mdec.data_fifo_tail = idx;
+                g_mdec.data_fifo_count += 192;
             }
+
         }
         else
         {
@@ -422,7 +433,7 @@ b8 mdecout_on_dma(b8 from_ram, s8 step, u32 size, u32 *paddr)
         *paddr = addr;
         g_mdec.data_fifo_count -= size;
         g_mdec.data_fifo_head = (g_mdec.data_fifo_head + size) & (DATA_FIFO_SIZE - 1);
-        debug_log("[MDEC] transferring block of %u bytes, %u left in queue..\n", size, g_mdec.data_fifo_count);
+        //debug_log("[MDEC] transferring block of %u bytes, %u left in queue..\n", size, g_mdec.data_fifo_count);
 
         //if (data_fifo_count == 0)
         //    stat.data_out_fifo_empty = 1;

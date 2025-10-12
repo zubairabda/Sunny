@@ -13,7 +13,7 @@
 u8 *g_bios;
 u8 *g_ram;
 u8 *g_scratch;
-u8 *g_peripheral;
+u8 *g_memctrl_1;
 
 #define RAM_READ_DELAY 4
 #define SPU_READ_DELAY 18
@@ -50,7 +50,11 @@ static u32 io_read32(u32 addr)
     case 0x1f801824:
         return mdec_getstat();
     default:
-        if (addr >= 0x1f801080 && addr < 0x1f8010f8)
+        if (addr >= 0x1f801040 && addr < 0x1f801050)
+        {
+            return sio_read(addr & 0x1f);
+        }        
+        else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
         {
             return dma_read(addr & 0x7f);
         }
@@ -72,17 +76,17 @@ static u16 io_read16(u32 addr)
     case 0x1f801074:
         return (u16)g_cpu.i_mask;
     default:
-        if (addr >= 0x1f801100 && addr < 0x1f801130)
+        if (addr >= 0x1f801040 && addr < 0x1f801050)
+        {
+            return sio_read(addr & 0x1f);
+        }
+        else if (addr >= 0x1f801100 && addr < 0x1f801130)
         {
             return counters_read(addr & 0x3f);
         }
         else if (addr >= 0x1f801c00 && addr < 0x1f801fff)
         {
             return spu_read(addr & 0x3ff);
-        }
-        else if (addr >= 0x1f801040 && addr < 0x1f801050)
-        {
-            return sio_read(addr & 0x1f);
         }
         debug_warn("Unknown 16-bit read address: %08x\n", addr);
         return 0;
@@ -98,6 +102,10 @@ static u8 io_read8(u32 addr)
         {
             return 0xff; // exp 1 read
         }
+        else if (addr >= 0x1f801040 && addr < 0x1f801050)
+        {
+            return sio_read(addr & 0x1f);
+        }
         else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
         {
             u32 shift = (addr & 0x3) * 8;
@@ -106,10 +114,6 @@ static u8 io_read8(u32 addr)
         else if (addr >= 0x1f801800 && addr < 0x1f801804)
         {
             return cdrom_read(addr & 0x3);
-        }
-        else if (addr >= 0x1f801040 && addr < 0x1f801050)
-        {
-            return sio_read(addr & 0x1f);
         }
         debug_warn("Unknown 8-bit read address: %08x\n", addr);
         return 0;
@@ -139,9 +143,9 @@ static void io_write32(u32 addr, u32 value)
         mdec_reset(value);
         break;
     default:
-        if (addr >= 0x1f801000 && addr < 0x1f801024)
+        if (addr >= 0x1f801040 && addr < 0x1f801050)
         {
-            debug_warn("Unhandled 32-bit store to Memory Control 1\n");
+            sio_write(addr & 0x1f, value & 0xffff);
         }
         else if (addr >= 0x1f801080 && addr < 0x1f8010f8)
         {
@@ -231,6 +235,10 @@ void *mem_read(u32 addr)
     {
         result = g_scratch + (addr & 0x3ff);
     }
+    else if (addr >= 0x1f801000 && addr < 0x1f801024)
+    {
+        result = g_memctrl_1 + (addr & 0x3f);
+    }
     else if (addr >= 0x1fc00000 && addr < 0x1fc80000)
     {
         result = g_bios + (addr & 0x7ffff);
@@ -247,15 +255,15 @@ void *mem_write(u32 addr)
     }
     else if (addr >= 0x1f000000 && addr < 0x1f800000)
     {
-        debug_warn("Unhandled read from EXP 1\n");
+        debug_warn("Unhandled write to EXP 1\n");
     }
     else if (addr >= 0x1f800000 && addr < 0x1f800400)
     {
         result = g_scratch + (addr & 0x3ff);
     }
-    else if (addr >= 0x1fc00000 && addr < 0x1fc80000)
+    else if (addr >= 0x1f801000 && addr < 0x1f801024)
     {
-        result = g_bios + (addr & 0x7ffff);
+        result = g_memctrl_1 + (addr & 0x3f);
     }
     return result;
 }
