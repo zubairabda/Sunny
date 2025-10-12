@@ -149,7 +149,6 @@ static inline u32 lzcnt32(u32 value)
     if (!value)
         return 0;
     u32 n = 0;
-    u32 m = 0x80000000;
     for (u32 m = 0x80000000; !(value & m); m >>= 1)
         ++n;
     return n;

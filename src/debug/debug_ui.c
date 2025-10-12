@@ -347,7 +347,6 @@ vec2i debug_ui_next_pos(void)
 void debug_ui_layout_row(void)
 {
     struct debug_ui_layout *layout = &g_debug_ui.layout_stack[g_debug_ui.layout_stack_index - 1];
-    struct debug_ui_style *style = &g_debug_ui.style;
     layout->at_y = layout->bounds.bottom;
     layout->at_x = layout->start_x;
 }
@@ -555,7 +554,7 @@ b8 debug_ui_button(const char *text)
     int text_width = get_text_width(text, &len);
 
     int ascender = 14;
-    int descender = 4;
+    //int descender = 4;
     int height = 18;
 
     struct debug_ui_style *style = &g_debug_ui.style;
@@ -911,7 +910,7 @@ nointeraction:
 
 void debug_ui_end_window(void)
 {
-    struct debug_ui_panel *window = get_current_panel();
+    //struct debug_ui_panel *window = get_current_panel();
     debug_ui_pop_clip_rect(); // window_rect
     debug_ui_pop_layout();
     debug_ui_pop_id();
@@ -1113,7 +1112,7 @@ b8 debug_ui_textbox(char *buffer, u32 buffer_len, u32 flags)
     
     struct debug_ui_style *style = &g_debug_ui.style;
 
-    struct debug_ui_panel *panel = get_current_panel();
+    //struct debug_ui_panel *panel = get_current_panel();
 
     s32 width = 120 + style->pad_x * 2;
     s32 height = font_line_height + style->pad_y * 2;

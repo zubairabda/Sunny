@@ -113,7 +113,7 @@ struct gpu_state
 extern struct gpu_state g_gpu;
 extern u16 *g_copy_buffer;
 extern u16 *g_readback_buffer;
-
+#if 0
 inline u64 video_to_cpu_cycles(u64 video_cycles)
 {
     return (video_cycles * 451584) / 715909;
@@ -121,9 +121,9 @@ inline u64 video_to_cpu_cycles(u64 video_cycles)
 
 inline u64 cpu_to_video_cycles(u64 cpu_cycles, u64 remainder)
 {
-    return (cpu_cycles * 715909) / 451584;
+    return (cpu_cycles * 715909 + remainder) / 451584;
 }
-
+#endif
 inline b8 in_vblank(void)
 {
     return g_gpu.scanline < g_gpu.vertical_display_y1 || g_gpu.scanline >= g_gpu.vertical_display_y2;

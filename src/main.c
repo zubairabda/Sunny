@@ -471,7 +471,6 @@ static void update_debug_ui(u32 width, u32 height)
 
     if (debug_ui_begin_window("Voices", 0, &show_voices))
     {
-        vec2i pos = debug_ui_next_pos();
         char buf[256];
         for (int i = 0; i < 24; ++i)
         {

@@ -43,14 +43,6 @@ inline void *push_arena(struct memory_arena *arena, u64 size)
     return memory;
 }
 
-inline void *push_arena_aligned(struct memory_arena *arena, size_t size, size_t alignment)
-{
-    size_t mask = alignment - 1;
-    uintptr_t at = (uintptr_t)(arena->base + arena->used);
-    uintptr_t aligned = (at + mask) & ~mask;
-    return (void *)aligned;
-}
-
 inline void clear_arena(struct memory_arena *arena)
 {
     arena->used = 0;

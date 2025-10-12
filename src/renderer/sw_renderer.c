@@ -747,11 +747,7 @@ void draw_polygon(u32 *commands, u32 op)
 {
     // op is commands[0] >> 24, passed for convenience
     u32 stride = 1;
-
     u32 mode = 0;
-    vec2i texture_page;
-    vec2i clut_base;
-    rect2 clip = g_gpu.drawing_area;
 
     int draw_offset_x = (int)g_gpu.draw_offset_x;
     int draw_offset_y = (int)g_gpu.draw_offset_y;
