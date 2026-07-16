@@ -7,5 +7,7 @@ src/old
 *.exe
 *.pdb
 *.ilk
+*.json
+*.cache
 
 build.bat

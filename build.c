@@ -19,6 +19,7 @@ int main(int argc, char **argv)
     opt.dependency_kind = DEPS_KIND_SCAN;
     opt.output_dir = "bin";
     opt.include_paths = include_paths;
+    opt.generate_compile_commands = 1;
 
     StringArray *sources = string_array_alloc(65536);
     add_files(sources, "src/*.c");
