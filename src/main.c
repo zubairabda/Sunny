@@ -347,7 +347,6 @@ static void update_debug_ui(u32 width, u32 height)
         }
 
 
-
         debug_ui_end_window();
     }
 
@@ -596,10 +595,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     debug_ui_set_window_rect("Voices", r2(100, 50, 500, 500));
     debug_ui_set_window_rect("Debugger", r2(0, 0, 600, 400));
 
-    LARGE_INTEGER begin_counter, end_counter, frequency;
-    QueryPerformanceFrequency(&frequency);
-    QueryPerformanceCounter(&begin_counter);
-
     if (psx_can_boot())
     {
         b8 boots_into_bios = false;
@@ -634,6 +629,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     g_debug.breakpoints_enabled = true; // TODO: temp
     g_debug.log_level = LOG_ERROR;
+
+    LARGE_INTEGER begin_counter, end_counter, frequency;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&begin_counter);
 
     while (g_running)
     {
